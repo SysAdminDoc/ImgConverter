@@ -851,7 +851,25 @@ def convert_file(
 
         # Format-specific options
         if out_fmt == "JPEG":
-            if img.mode in ("RGBA", "LA", "PA", "P"):
+            # ICC-aware mode flattening — Pillow's blind .convert("RGB") on
+            # CMYK / LAB / wide-gamut RGB loses the embedded profile and
+            # produces the canonical iPhone "Display P3 → sRGB shift" bug
+            # (Apple Community 254814534, ImageMagick #4391).
+            if img.mode == "CMYK" and meta.get("icc_profile"):
+                try:
+                    src_p = ImageCms.ImageCmsProfile(io.BytesIO(meta["icc_profile"]))
+                    dst_p = ImageCms.createProfile("sRGB")
+                    img = ImageCms.profileToProfile(img, src_p, dst_p, outputMode="RGB")
+                    meta["icc_profile"] = ImageCms.ImageCmsProfile(dst_p).tobytes()
+                    save_kwargs["icc_profile"] = meta["icc_profile"]
+                except Exception as e:
+                    result.warnings.append(f"ICC-aware CMYK→RGB failed, falling back: {e}")
+                    img = img.convert("RGB")
+            elif img.mode == "CMYK":
+                # CMYK without ICC — use Pillow's built-in conversion (lossy but unavoidable).
+                img = img.convert("RGB")
+                result.warnings.append("CMYK input had no ICC profile; used naive K-channel conversion")
+            elif img.mode in ("RGBA", "LA", "PA", "P"):
                 img = img.convert("RGB")
             save_kwargs["quality"] = jpeg_quality
             save_kwargs["subsampling"] = 2 if chroma_subsampling else 0
