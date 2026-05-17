@@ -52,8 +52,8 @@ Highest-leverage, lowest-risk. Closes known CVE exposure, ships the metadata-fid
 ### CLI & automation
 
 - [x] **Output path template language** — converges IrfanView `$D`/`$N`/`###` ([helpmax docs](http://irfanview.helpmax.net/en/file-menu/batch-conversionrename/), [multi-folder pattern](https://onezeronull.com/2015/06/27/multi-folder-usage-of-irfanviews-batch-mode/)) and RawTherapee `%p1/%f/%s3` ([RawPedia Queue](https://rawpedia.rawtherapee.com/Queue)) into one substitution language: `{stem} {ext} {width} {height} {date:%Y-%m} {seq:###} {src_dir} {rel_dir}`. Replaces today's anemic prefix/suffix. Effort 2, Impact 4.
-- **JSON report mode** (`--report out.json`) — current CSV is human-first; CI / Ansible / cron need NDJSON streamed to stdout *and* a final summary file. Schema per file: `{src, dst, fmt, size_in, size_out, elapsed, warnings[], ok}`. Effort 2, Impact 3.
-- **Preset JSON load** (`--preset name` + `~/.heicshift/presets/*.json`) — already in 2026-04 draft. Dump the four built-in `PRESETS` to disk on first run; expose `--preset` and `--list-presets`. Effort 2, Impact 3.
+- [x] **JSON report mode** (`--report out.json`) — current CSV is human-first; CI / Ansible / cron need NDJSON streamed to stdout *and* a final summary file. Schema per file: `{src, dst, fmt, size_in, size_out, elapsed, warnings[], ok}`. Effort 2, Impact 3.
+- [x] **Preset JSON load** (`--preset name` + `~/.heicshift/presets/*.json`) — already in 2026-04 draft. Dump the four built-in `PRESETS` to disk on first run; expose `--preset` and `--list-presets`. Effort 2, Impact 3.
 - [x] **Structured exit-code matrix** — `0 OK · 1 partial · 2 input-error · 3 dep-missing · 4 disk-full · 5 cancelled`. Today's `0 / 1 / 2` collapses "no JXL plugin" with "directory missing." Effort 1, Impact 2.
 - [x] **`--exclude PATTERN` glob filter** — extends scan with negation; matches XnConvert / find-style usage. Effort 1, Impact 2.
 

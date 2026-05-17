@@ -1370,6 +1370,56 @@ def _create_app_icon() -> QIcon:
 
 # ── Conversion Presets ────────────────────────────────────────────────────────
 
+USER_PRESET_DIR = Path.home() / ".heicshift" / "presets"
+
+
+def _seed_user_preset_dir():
+    """Dump built-in presets to disk on first launch so users can edit them."""
+    try:
+        USER_PRESET_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    for name, payload in PRESETS.items():
+        slug = name.lower().replace(" ", "-").replace("/", "-")
+        target = USER_PRESET_DIR / f"{slug}.json"
+        if not target.exists():
+            try:
+                target.write_text(json.dumps({"name": name, **payload}, indent=2))
+            except OSError:
+                pass
+
+
+def list_presets() -> dict[str, dict]:
+    """Return a merged dict of built-in + user-supplied presets (user wins)."""
+    merged = {k: dict(v) for k, v in PRESETS.items()}
+    if USER_PRESET_DIR.is_dir():
+        for path in sorted(USER_PRESET_DIR.glob("*.json")):
+            try:
+                data = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            display = data.get("name") or path.stem
+            merged[display] = {k: v for k, v in data.items() if k != "name"}
+    return merged
+
+
+def load_preset(name: str) -> dict | None:
+    """Resolve ``name`` against built-ins + user dir; return preset dict or None."""
+    presets = list_presets()
+    # Exact match first, then case-insensitive, then slug match.
+    if name in presets:
+        return presets[name]
+    lc = name.lower()
+    for k, v in presets.items():
+        if k.lower() == lc:
+            return v
+    slug_target = name.lower().replace("-", " ")
+    for k, v in presets.items():
+        if k.lower() == slug_target:
+            return v
+    return None
+
+
 PRESETS = {
     "Web Optimized": {
         "fmt": 1,              # JPEG
@@ -2659,6 +2709,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         "{src_dir} {rel_dir} {width} {height} {date[:FMT]} "
                         "{seq[:###]}. Example: --template '{rel_dir}/{stem}_{width}x{height}'. "
                         "Overrides --prefix/--suffix.")
+    p.add_argument("--report", type=str, default=None, metavar="PATH",
+                   help="Write structured per-file JSON report to PATH after conversion. "
+                        "Top-level object: {summary: {...}, files: [...]}")
+    p.add_argument("--preset", type=str, default=None, metavar="NAME",
+                   help="Load preset from ~/.heicshift/presets/NAME.json before applying other flags")
+    p.add_argument("--list-presets", action="store_true",
+                   help="List available presets (built-ins + ~/.heicshift/presets/*.json) and exit")
     return p
 
 
@@ -2680,9 +2737,58 @@ def _log_dep_versions_cli():
         print(f"Optional: {', '.join(opt_vers)}")
 
 
+_PRESET_ARG_KEYS = (
+    "format", "quality", "progressive", "chroma_420", "lossless", "srgb",
+    "tiff_compression", "png_level", "prefix", "suffix", "template",
+    "strip_metadata", "in_place", "skip_existing", "resize",
+    "no_structure", "workers", "no_exiftool",
+)
+
+
+def _apply_preset_to_args(args, preset: dict):
+    """Overlay a preset dict onto argparse Namespace; CLI args still win for non-defaults."""
+    # Map preset GUI-shaped keys to CLI flag keys when needed.
+    fmt_map = {0: "auto", 1: "jpeg", 2: "png", 3: "webp", 4: "avif", 5: "tiff", 6: "jxl"}
+    for k, v in preset.items():
+        if k == "fmt" and isinstance(v, int):
+            args.format = fmt_map.get(v, args.format)
+        elif k == "progressive_jpeg":
+            args.progressive = v
+        elif k == "chroma_subsampling":
+            args.chroma_420 = v
+        elif k == "lossless_webp":
+            args.lossless = v
+        elif k == "convert_to_srgb":
+            args.srgb = v
+        elif k == "png_compress_level":
+            args.png_level = v
+        elif k == "resize_enabled" and not v:
+            args.resize = None
+        elif k == "resize_mode":
+            mode_map = {0: "max_dim", 1: "scale"}
+            mode = mode_map.get(v, v)
+            if args.resize is None and "resize_value" in preset:
+                args.resize = f"{mode}:{preset['resize_value']}"
+        elif k == "tiff_compression" and isinstance(v, int):
+            args.tiff_compression = ("none", "lzw", "deflate")[v] if 0 <= v < 3 else "none"
+        elif k in _PRESET_ARG_KEYS and hasattr(args, k):
+            setattr(args, k, v)
+
+
 def _run_cli(args):
     """Run headless CLI conversion."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Apply preset overlay (called before other arg-driven branches).
+    if getattr(args, "preset", None):
+        preset = load_preset(args.preset)
+        if preset is None:
+            available = ", ".join(list_presets().keys())
+            print(f"[ERROR] Unknown preset: {args.preset!r}. Available: {available}",
+                  file=sys.stderr)
+            sys.exit(EXIT_INPUT_ERROR)
+        _apply_preset_to_args(args, preset)
+        print(f"[preset] applied: {args.preset}")
 
     input_dir = Path(args.input).resolve()
     if not input_dir.is_dir():
@@ -2808,6 +2914,7 @@ def _run_cli(args):
 
     t0 = time.perf_counter()
 
+    all_results: list[ConvertResult] = []
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {}
         for seq_i, f in enumerate(scan.files, start=1):
@@ -2825,6 +2932,7 @@ def _run_cli(args):
 
         for fut in as_completed(futures):
             result = fut.result()
+            all_results.append(result)
             done_count += 1
             if result.skipped:
                 skip_count += 1
@@ -2850,6 +2958,45 @@ def _run_cli(args):
     speed = ok_count / wall_time if wall_time > 0 else 0
     print(f"\nDone: {ok_count} converted, {fail_count} failed, {skip_count} skipped in {wall_time:.0f}s ({speed:.1f} files/sec)")
 
+    # JSON report — structured per-file output for CI / Ansible / cron pipelines.
+    if getattr(args, "report", None):
+        report = {
+            "summary": {
+                "version": APP_VERSION,
+                "input": str(input_dir),
+                "output": str(output_dir),
+                "format": args.format,
+                "quality": args.quality,
+                "workers": args.workers,
+                "total": total,
+                "ok": ok_count,
+                "skipped": skip_count,
+                "failed": fail_count,
+                "elapsed_seconds": wall_time,
+                "files_per_second": speed,
+            },
+            "files": [
+                {
+                    "src": str(r.src),
+                    "dst": str(r.dst) if r.dst else None,
+                    "ok": r.success,
+                    "skipped": r.skipped,
+                    "size_in": r.size_before,
+                    "size_out": r.size_after,
+                    "elapsed": r.elapsed,
+                    "src_deleted": r.src_deleted,
+                    "error": r.error or None,
+                    "warnings": list(r.warnings),
+                }
+                for r in all_results
+            ],
+        }
+        try:
+            Path(args.report).write_text(json.dumps(report, indent=2, default=str))
+            print(f"\n[report] wrote {args.report}")
+        except OSError as e:
+            print(f"[report] failed to write {args.report}: {e}", file=sys.stderr)
+
     # Structured exit-code matrix — see EXIT_CODES at module top.
     if fail_count == total and total > 0:
         sys.exit(EXIT_TOTAL_FAILURE)
@@ -2869,6 +3016,15 @@ def main():
     if getattr(args, "install_deps", False):
         sys.exit(_install_deps(include_optional=True))
 
+    if getattr(args, "list_presets", False):
+        _seed_user_preset_dir()
+        for name, payload in list_presets().items():
+            print(f"  {name}")
+            for k, v in sorted(payload.items()):
+                print(f"      {k}: {v}")
+        sys.exit(EXIT_OK)
+
+    _seed_user_preset_dir()
     _warn_below_floor()
 
     # CLI mode if --input is provided
