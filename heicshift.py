@@ -688,6 +688,78 @@ def scan_directory(
     return result
 
 
+_TEMPLATE_TOKENS = """
+Supported tokens (case-sensitive, surrounded by curly braces):
+  {stem}      source basename without extension
+  {ext}       output extension (jpg / png / webp / avif / tiff / jxl)
+  {fmt}       output format, lowercase ("jpeg", "png", ...)
+  {src_dir}   leaf source directory name
+  {rel_dir}   source path relative to scan root (preserves subdirs)
+  {width}     output pixel width
+  {height}    output pixel height
+  {date}      file mtime as YYYY-MM-DD; override format via {date:%Y%m}
+  {seq}       1-based sequence number; pad width via {seq:###} for zero-pad
+"""
+
+
+def _apply_output_template(
+    template: str,
+    src: Path,
+    base_dir: Path | None,
+    width: int,
+    height: int,
+    fmt: str,
+    ext: str,
+    seq: int,
+) -> str:
+    """Substitute roadmap-defined tokens in ``template``. Unknown tokens left intact."""
+    import re
+    from datetime import datetime
+
+    rel_dir = ""
+    if base_dir is not None:
+        try:
+            rel_dir = str(src.parent.relative_to(base_dir)).replace("\\", "/")
+            if rel_dir == ".":
+                rel_dir = ""
+        except ValueError:
+            rel_dir = ""
+
+    src_dir = src.parent.name
+
+    try:
+        mtime = datetime.fromtimestamp(src.stat().st_mtime)
+    except OSError:
+        mtime = datetime.now()
+
+    def repl(match: "re.Match[str]") -> str:
+        key = match.group(1)
+        spec = match.group(2)
+        if key == "stem":
+            return src.stem
+        if key == "ext":
+            return ext.lstrip(".")
+        if key == "fmt":
+            return fmt.lower()
+        if key == "src_dir":
+            return src_dir
+        if key == "rel_dir":
+            return rel_dir
+        if key == "width":
+            return str(width)
+        if key == "height":
+            return str(height)
+        if key == "date":
+            return mtime.strftime(spec) if spec else mtime.strftime("%Y-%m-%d")
+        if key == "seq":
+            if spec and set(spec) == {"#"}:
+                return str(seq).zfill(len(spec))
+            return str(seq)
+        return match.group(0)  # leave unknown token untouched
+
+    return re.sub(r"\{([a-z_]+)(?::([^}]*))?\}", repl, template)
+
+
 def has_transparency(img: Image.Image) -> bool:
     """Check if image has actual transparency data."""
     if img.mode in ("RGBA", "LA", "PA"):
@@ -754,6 +826,8 @@ def convert_file(
     tiff_compression: str = "none",
     png_compress_level: int = 6,
     use_exiftool: bool = True,
+    name_template: str | None = None,
+    seq: int = 1,
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
@@ -875,9 +949,28 @@ def convert_file(
         else:
             dest_dir = output_dir
 
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        stem = prefix + src.stem + suffix
-        out_path = dest_dir / (stem + ext)
+        # Output filename — template language wins; prefix/suffix is the
+        # backward-compat path when name_template is None.
+        if name_template:
+            applied = _apply_output_template(
+                name_template, src, base_dir, img.size[0], img.size[1],
+                fmt, ext, seq,
+            )
+            # Template may include subdirectories; resolve relative to dest_dir.
+            cand = Path(applied)
+            if cand.is_absolute():
+                out_path = cand
+            else:
+                out_path = dest_dir / cand
+            # If user's template forgot the extension, append it.
+            if out_path.suffix.lower() != ext.lower():
+                out_path = out_path.with_suffix(ext)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            stem = out_path.stem
+        else:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            stem = prefix + src.stem + suffix
+            out_path = dest_dir / (stem + ext)
 
         # Skip if output already exists
         if skip_existing and out_path.exists():
@@ -2561,6 +2654,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Glob pattern to exclude (repeatable). Example: --exclude '*.thumb.*' --exclude 'cache/**'")
     p.add_argument("--no-exiftool", action="store_true",
                    help="Skip ExifTool tag-copy pass even when exiftool is on PATH (uses Pillow EXIF/ICC/XMP only)")
+    p.add_argument("--template", type=str, default=None, metavar="STR",
+                   help="Output filename template. Tokens: {stem} {ext} {fmt} "
+                        "{src_dir} {rel_dir} {width} {height} {date[:FMT]} "
+                        "{seq[:###]}. Example: --template '{rel_dir}/{stem}_{width}x{height}'. "
+                        "Overrides --prefix/--suffix.")
     return p
 
 
@@ -2712,14 +2810,16 @@ def _run_cli(args):
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {}
-        for f in scan.files:
+        for seq_i, f in enumerate(scan.files, start=1):
             fut = pool.submit(
                 convert_file, f, output_dir, args.format, args.quality,
                 preserve_meta, not args.no_structure, input_dir, args.in_place,
                 args.skip_existing, resize_mode, resize_value,
                 args.prefix, args.suffix, args.lossless, args.progressive,
                 args.chroma_420, args.srgb, args.tiff_compression, args.png_level,
-                not args.no_exiftool,  # use_exiftool
+                not args.no_exiftool,           # use_exiftool
+                getattr(args, "template", None), # name_template
+                seq_i,                          # seq
             )
             futures[fut] = f
 

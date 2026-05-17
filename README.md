@@ -199,6 +199,10 @@ python heicshift.py --version
 | `--srgb` | Convert embedded ICC profiles to sRGB |
 | `--prefix` | Prepend text to output filenames |
 | `--suffix` | Append text to output filenames |
+| `--template STR` | Output filename template with tokens (overrides prefix/suffix). Tokens: `{stem}` `{ext}` `{fmt}` `{src_dir}` `{rel_dir}` `{width}` `{height}` `{date[:FMT]}` `{seq[:###]}`. Example: `--template '{rel_dir}/{stem}_{width}x{height}'` |
+| `--exclude PATTERN` | Glob pattern to exclude from scan (repeatable) |
+| `--no-exiftool` | Skip the ExifTool tag-copy pass (use Pillow's EXIF/ICC/XMP only) |
+| `--install-deps` | Install/upgrade all required + optional Python deps, then exit |
 | `--tiff-compression` | TIFF compression: `none`, `lzw`, `deflate` (default: none) |
 | `--png-level` | PNG compression level 1–9 (default: 6) |
 | `--no-structure` | Flatten output (no subdirectory mirroring) |
