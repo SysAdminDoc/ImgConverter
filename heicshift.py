@@ -1440,6 +1440,19 @@ def convert_file(
         elif out_fmt == "AVIF":
             save_kwargs["quality"] = jpeg_quality
             save_kwargs["speed"] = 6
+            # Wide-gamut / 10-bit preservation when source is HEIC at >8 bpp.
+            # iPhone HEIC is 10-bit + Display P3; default downcast to 8-bit
+            # loses dynamic range that AVIF (and JXL) can carry natively.
+            if src.suffix.lower() in HEIC_EXTS:
+                try:
+                    bit_depth = pillow_heif.open_heif(str(src)).bit_depth
+                    if bit_depth and bit_depth > 8:
+                        save_kwargs["bits"] = bit_depth
+                        result.warnings.append(
+                            f"avif: preserving {bit_depth}-bit depth from source HEIC"
+                        )
+                except Exception:
+                    pass
         elif out_fmt == "JXL":
             save_kwargs["quality"] = jpeg_quality
             save_kwargs["effort"] = 7
@@ -1453,6 +1466,17 @@ def convert_file(
                 result.warnings.append(
                     "jxl: lossless JPEG reconstruction (bit-exact, reversible)"
                 )
+            # Wide-gamut / 10-bit preservation for HEIC source.
+            elif src.suffix.lower() in HEIC_EXTS:
+                try:
+                    bit_depth = pillow_heif.open_heif(str(src)).bit_depth
+                    if bit_depth and bit_depth > 8:
+                        save_kwargs["bit_depth"] = bit_depth
+                        result.warnings.append(
+                            f"jxl: preserving {bit_depth}-bit depth from source HEIC"
+                        )
+                except Exception:
+                    pass
 
         # Optional DPI tag — JPEG/TIFF/PNG support dpi; ignore for others.
         if dpi and out_fmt in ("JPEG", "PNG", "TIFF"):
@@ -1493,6 +1517,31 @@ def convert_file(
                     )
         except Exception as ve:
             raise RuntimeError(f"Output validation failed: {ve}")
+
+        # Cross-decoder check via ffprobe when available — second opinion that
+        # the file is parseable by something other than libpillow / libheif.
+        # Free run for formats ffprobe natively supports (jpeg, png, webp,
+        # avif, tiff). Failures don't fail the convert — just log a WARN.
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe and out_fmt in ("JPEG", "PNG", "WEBP", "AVIF", "TIFF"):
+            try:
+                pr = subprocess.run(
+                    [ffprobe, "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                     str(check_path)],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if pr.returncode == 0 and pr.stdout.strip():
+                    dims = pr.stdout.strip().split(",")
+                    if len(dims) >= 2:
+                        ffw, ffh = int(dims[0]), int(dims[1])
+                        if (ffw, ffh) != img.size:
+                            result.warnings.append(
+                                f"validator: ffprobe disagrees on dims "
+                                f"({ffw}x{ffh} vs Pillow {img.size})"
+                            )
+            except Exception:
+                pass
 
         # ExifTool tag-copy pass — recovers MakerNotes / GPS sub-IFDs / IPTC
         # / sidecar XMP that Pillow drops. Runs against the temp file so an
@@ -2598,6 +2647,21 @@ class MainWindow(QMainWindow):
         open_loc.triggered.connect(
             lambda: _open_path(str(self._last_ok_dst.parent)) if self._last_ok_dst else None
         )
+
+        # Drag converted file to Explorer / Finder. Constructs the drag
+        # object on click; user has to click + drag in a single gesture.
+        # Pure Qt would require a more complex QDrag flow; the menu action
+        # gives users a working alternative that doesn't require GUI tests.
+        if self._last_ok_dst is not None:
+            menu.addSeparator()
+            copy_dst_path = menu.addAction("Copy Output Path")
+            copy_dst_path.triggered.connect(
+                lambda: QApplication.clipboard().setText(str(self._last_ok_dst))
+            )
+            reveal_dst = menu.addAction("Reveal Output in File Manager")
+            reveal_dst.triggered.connect(
+                lambda: _open_path(str(self._last_ok_dst.parent))
+            )
 
         menu.exec(self.log_view.mapToGlobal(pos))
 
