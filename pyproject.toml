@@ -58,3 +58,9 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "*" = ["icon.png", "icon.ico"]
+
+[tool.pytest.ini_options]
+# pytest-qt eagerly loads PySide6, which collides with PyQt6 DLLs on Windows.
+# Disable the plugin globally; HEICShift's tests never touch a live Qt event loop.
+addopts = "-p no:pytestqt -v"
+testpaths = ["tests"]
