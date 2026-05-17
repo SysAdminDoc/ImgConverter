@@ -32,48 +32,99 @@ def _branding_icon_path() -> Path:
 
 APP_VERSION = "2.9.0"
 
-def _bootstrap():
-    """Auto-install dependencies before imports."""
-    required = {
-        "PIL": "Pillow",
-        "pillow_heif": "pillow-heif",
-        "PyQt6": "PyQt6",
-    }
-    for module, package in required.items():
+# Dependency floors — see requirements.txt / ROADMAP Appendix A6 for CVE rationale.
+# Older versions of these expose users to known libheif / libjxl / Pillow RCEs.
+DEP_FLOORS = {
+    "PIL":          ("Pillow",             "11.3.0"),
+    "pillow_heif":  ("pillow-heif",        "1.3.0"),
+    "PyQt6":        ("PyQt6",              "6.8"),
+    "rawpy":        ("rawpy",              "0.27.0"),    # optional
+    "pillow_jxl":   ("pillow-jxl-plugin",  "1.3.6"),     # optional
+    "qoi":          ("qoi",                "0.7"),       # optional
+}
+REQUIRED_DEPS = ("PIL", "pillow_heif", "PyQt6")
+OPTIONAL_DEPS = ("rawpy", "pillow_jxl", "qoi")
+
+
+def _install_deps(include_optional: bool = False) -> int:
+    """Install required (and optionally optional) deps via pip. Returns exit code."""
+    targets = REQUIRED_DEPS + (OPTIONAL_DEPS if include_optional else ())
+    failed = []
+    for module in targets:
+        pkg, floor = DEP_FLOORS[module]
+        spec = f"{pkg}>={floor}"
+        print(f"[install-deps] {spec} …", flush=True)
+        ok = False
+        for cmd_extra in ([], ["--user"], ["--break-system-packages"]):
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", "--upgrade", spec] + cmd_extra
+                )
+                ok = True
+                break
+            except subprocess.CalledProcessError:
+                continue
+        if not ok:
+            failed.append(spec)
+            print(f"[install-deps] FAILED: {spec}", file=sys.stderr)
+    if failed:
+        print(f"[install-deps] {len(failed)} package(s) failed to install.", file=sys.stderr)
+        return 3
+    print("[install-deps] All targets installed.")
+    return 0
+
+
+def _check_required_deps_or_exit():
+    """Verify required deps are importable; print actionable install hint if not."""
+    missing = []
+    for module in REQUIRED_DEPS:
         try:
             importlib.import_module(module)
         except ImportError:
-            for cmd_extra in [[], ["--user"], ["--break-system-packages"]]:
-                try:
-                    subprocess.check_call(
-                        [sys.executable, "-m", "pip", "install", package, "-q"] + cmd_extra,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    )
-                    break
-                except subprocess.CalledProcessError:
-                    continue
+            missing.append(DEP_FLOORS[module][0])
+    if missing:
+        print(
+            f"[heicshift] Missing required dependencies: {', '.join(missing)}\n"
+            f"  Install all required + optional deps with:\n"
+            f"      {sys.executable} -m heicshift --install-deps\n"
+            f"  Or manually:\n"
+            f"      pip install -r requirements.txt",
+            file=sys.stderr,
+        )
+        sys.exit(3)
 
-    # Optional deps — best-effort install, graceful fallback
-    optional = {
-        "rawpy": "rawpy",
-        "pillow_jxl": "pillow-jxl-plugin",
-        "qoi": "qoi",
-    }
-    for module, package in optional.items():
+
+def _warn_below_floor():
+    """Warn (don't exit) when an installed dep is older than the documented floor."""
+    try:
+        from packaging.version import Version
+    except ImportError:
+        return  # packaging is bundled with pip; if missing, skip the check
+    for module, (pkg, floor) in DEP_FLOORS.items():
         try:
-            importlib.import_module(module)
+            mod = importlib.import_module(module)
         except ImportError:
-            for cmd_extra in [[], ["--user"], ["--break-system-packages"]]:
-                try:
-                    subprocess.check_call(
-                        [sys.executable, "-m", "pip", "install", package, "-q"] + cmd_extra,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    )
-                    break
-                except subprocess.CalledProcessError:
-                    continue
+            continue
+        installed = getattr(mod, "__version__", None)
+        if not installed:
+            continue
+        try:
+            if Version(installed) < Version(floor):
+                print(
+                    f"[heicshift] WARNING: {pkg} {installed} is below the documented "
+                    f"floor of {floor}. Older versions have known CVEs — see "
+                    f"ROADMAP.md Appendix A6. Run: heicshift --install-deps",
+                    file=sys.stderr,
+                )
+        except Exception:
+            pass
 
-_bootstrap()
+
+# Allow `--install-deps` to run before any heavy imports.
+if "--install-deps" in sys.argv:
+    sys.exit(_install_deps(include_optional=True))
+
+_check_required_deps_or_exit()
 
 import io
 import time
@@ -2215,6 +2266,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description=f"HEICShift v{APP_VERSION} - High-performance image batch converter",
     )
     p.add_argument("--version", action="version", version=f"HEICShift v{APP_VERSION}")
+    p.add_argument("--install-deps", action="store_true",
+                   help="Install/upgrade required + optional Python dependencies, then exit")
     p.add_argument("-i", "--input", type=str, help="Source directory to scan")
     p.add_argument("-o", "--output", type=str, help="Output directory (default: <input>/converted)")
     p.add_argument("-f", "--format", type=str, default="auto",
@@ -2437,6 +2490,13 @@ def _run_cli(args):
 def main():
     parser = _build_parser()
     args = parser.parse_args()
+
+    # --install-deps short-circuit is also handled before imports at module top;
+    # argparse path catches the case where the user types the flag after others.
+    if getattr(args, "install_deps", False):
+        sys.exit(_install_deps(include_optional=True))
+
+    _warn_below_floor()
 
     # CLI mode if --input is provided
     if args.input:
