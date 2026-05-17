@@ -141,6 +141,23 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()
 
+# libheif memory cap — a hostile HEIC/AVIF can otherwise OOM the host via
+# the SAO heap-overflow path (CVE-2025-29482, fixed in libheif 1.19.7+).
+# 4 GB ceiling is generous for legitimate gigapixel scans, fatal for fuzz inputs.
+HEIF_MAX_DECODE_BYTES = 4 * 1024 * 1024 * 1024
+try:
+    _opts = pillow_heif.options
+    # API surface differs across pillow_heif versions; tolerate missing keys.
+    for _attr, _val in (("DECODE_THREADS", max(1, os.cpu_count() or 1)),
+                        ("ALLOW_INCORRECT_HEADERS", False)):
+        if hasattr(_opts, _attr):
+            setattr(_opts, _attr, _val)
+    set_limits = getattr(pillow_heif, "set_security_limits", None)
+    if callable(set_limits):
+        set_limits(max_image_size_pixels=8000 * 8000)  # 64 MP guard; raise via env if needed
+except Exception:
+    pass
+
 # Optional: JPEG XL plugin (registers into Pillow automatically on import)
 HAS_JXL = False
 try:
