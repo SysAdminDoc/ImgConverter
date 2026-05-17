@@ -801,6 +801,76 @@ def _apply_output_template(
     return re.sub(r"\{([a-z_]+)(?::([^}]*))?\}", repl, template)
 
 
+def _psnr(a: "Image.Image", b: "Image.Image") -> float:
+    """Compute PSNR between two images. Returns +inf when identical."""
+    if a.size != b.size:
+        return 0.0
+    ma = np.asarray(a.convert("RGB"), dtype=np.float32)
+    mb = np.asarray(b.convert("RGB"), dtype=np.float32)
+    mse = float(np.mean((ma - mb) ** 2))
+    if mse == 0:
+        return float("inf")
+    return 20.0 * float(np.log10(255.0)) - 10.0 * float(np.log10(mse))
+
+
+def _binary_search_quality(
+    img: "Image.Image",
+    out_fmt: str,
+    target: float,
+    mode: str,
+    base_kwargs: dict,
+    qmin: int = 50,
+    qmax: int = 95,
+    max_iters: int = 8,
+) -> tuple[int, int, float]:
+    """Binary-search the quality knob to hit a target.
+
+    mode == 'target-kb' -> target = output size in kilobytes
+    mode == 'target-psnr' -> target = minimum PSNR (dB) vs source
+
+    Returns (best_quality, best_size, best_metric).
+    """
+    import io as _io
+    best_q = qmax
+    best_size = -1
+    best_metric = 0.0
+    lo, hi = qmin, qmax
+    # Strip unstable optimize/subsampling combos that can throw "broken data
+    # stream" on high-entropy probe images; they re-apply in the final save.
+    search_kwargs = {k: v for k, v in base_kwargs.items()
+                     if k not in ("quality", "optimize")}
+    for _ in range(max_iters):
+        q = (lo + hi) // 2
+        if q < qmin or q > qmax:
+            break
+        buf = _io.BytesIO()
+        kwargs = dict(search_kwargs); kwargs["quality"] = q
+        try:
+            img.save(buf, out_fmt, **kwargs)
+        except Exception:
+            # Save failed (e.g. unsupported kwarg combo); fall back to qmax.
+            break
+        size_kb = buf.tell() / 1024.0
+        if mode == "target-kb":
+            best_q, best_size, best_metric = q, int(buf.tell()), size_kb
+            if size_kb <= target:
+                lo = q + 1   # try a higher quality
+            else:
+                hi = q - 1   # too big, lower
+        else:  # target-psnr
+            buf.seek(0)
+            with Image.open(buf) as decoded:
+                metric = _psnr(img, decoded)
+            best_q, best_size, best_metric = q, int(buf.tell()), metric
+            if metric < target:
+                lo = q + 1
+            else:
+                hi = q - 1
+        if lo > hi:
+            break
+    return best_q, best_size, best_metric
+
+
 def has_transparency(img: Image.Image) -> bool:
     """Check if image has actual transparency data."""
     if img.mode in ("RGBA", "LA", "PA"):
@@ -874,6 +944,7 @@ def convert_file(
     icc_override: str | None = None,
     emit_xmp_sidecar: bool = False,
     recompress_lossless: bool = False,
+    quality_mode: tuple[str, float] | None = None,  # ("target-kb", N) or ("target-psnr", DB)
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
@@ -1169,6 +1240,19 @@ def convert_file(
         # Optional DPI tag — JPEG/TIFF/PNG support dpi; ignore for others.
         if dpi and out_fmt in ("JPEG", "PNG", "TIFF"):
             save_kwargs["dpi"] = dpi
+
+        # --quality-mode binary search: tune the quality kwarg to hit a size
+        # or PSNR target. Only meaningful for lossy formats with a quality knob.
+        if quality_mode and out_fmt in ("JPEG", "WEBP", "AVIF", "JXL"):
+            mode_name, target_val = quality_mode
+            best_q, best_sz, best_metric = _binary_search_quality(
+                img, out_fmt, target_val, mode_name, save_kwargs,
+            )
+            save_kwargs["quality"] = best_q
+            result.warnings.append(
+                f"quality-mode {mode_name}: q={best_q}, "
+                f"size={best_sz}B, metric={best_metric:.2f}"
+            )
 
         # Atomic write: use temp file for in-place mode
         if in_place:
@@ -3042,6 +3126,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--recompress", action="store_true",
                    help="For JPEG->JPEG: run jpegoptim / jpegtran for pixel-lossless size reduction "
                         "instead of decode-re-encode. Requires jpegoptim or jpegtran on PATH.")
+    p.add_argument("--target-kb", type=float, default=None, metavar="N",
+                   help="Binary-search quality to hit a target output size (kilobytes). "
+                        "Up to 8 iterations; result.warnings logs the picked quality.")
+    p.add_argument("--target-psnr", type=float, default=None, metavar="DB",
+                   help="Binary-search quality to hit a minimum PSNR (dB) vs source. "
+                        "40+ dB is excellent; 30 dB is visibly degraded.")
     return p
 
 
@@ -3099,6 +3189,15 @@ def _apply_preset_to_args(args, preset: dict):
             args.tiff_compression = ("none", "lzw", "deflate")[v] if 0 <= v < 3 else "none"
         elif k in _PRESET_ARG_KEYS and hasattr(args, k):
             setattr(args, k, v)
+
+
+def _build_quality_mode(args) -> tuple[str, float] | None:
+    """Translate --target-kb / --target-psnr into the (mode, target) tuple."""
+    if getattr(args, "target_kb", None) is not None:
+        return ("target-kb", float(args.target_kb))
+    if getattr(args, "target_psnr", None) is not None:
+        return ("target-psnr", float(args.target_psnr))
+    return None
 
 
 def _run_cli(args):
@@ -3258,7 +3357,8 @@ def _run_cli(args):
                 (args.dpi, args.dpi) if getattr(args, "dpi", None) else None,  # dpi
                 getattr(args, "icc", None),                  # icc_override
                 getattr(args, "xmp_sidecar", False),         # emit_xmp_sidecar
-                getattr(args, "recompress", False),           # recompress_lossless
+                getattr(args, "recompress", False),          # recompress_lossless
+                _build_quality_mode(args),                   # quality_mode
             )
             futures[fut] = f
 
