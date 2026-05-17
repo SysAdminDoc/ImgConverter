@@ -3520,14 +3520,29 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="HDR tone-mapping curve when source is PQ/HLG/wide-gamut. "
                         "'none' (default - preserve), 'reinhard' (gentle), "
                         "'hable' (Uncharted 2 filmic), 'clip' (hard clamp).")
+    p.add_argument("--use-processes", action="store_true",
+                   help="Use a ProcessPoolExecutor instead of ThreadPoolExecutor. "
+                        "Bypasses the GIL on Python interpreters that still have it; "
+                        "no benefit on free-threaded builds. Cost: per-image fork overhead.")
+    p.add_argument("--sidecar-history", action="store_true",
+                   help="Write {output}.heicshift.json next to each converted file with the "
+                        "exact preset that produced it. Enables reproducible re-runs.")
     return p
+
+
+def _gil_status() -> str:
+    """Return 'no-gil', 'gil', or 'unknown' based on the running interpreter."""
+    is_gil = getattr(sys, "_is_gil_enabled", None)
+    if callable(is_gil):
+        return "no-gil" if not is_gil() else "gil"
+    return "unknown"
 
 
 def _log_dep_versions_cli():
     """Print dependency versions to stdout for CLI mode."""
     from PIL import __version__ as pil_ver
     heif_ver = getattr(pillow_heif, "__version__", "unknown")
-    print(f"Pillow {pil_ver}, pillow-heif {heif_ver}")
+    print(f"Pillow {pil_ver}, pillow-heif {heif_ver}  [python {sys.version_info[0]}.{sys.version_info[1]} {_gil_status()}]")
     opt_vers = []
     if HAS_RAWPY:
         opt_vers.append(f"rawpy {getattr(rawpy, '__version__', '?')}")
@@ -4012,6 +4027,16 @@ def _run_cli(args):
             total = len(scan.files)
 
     all_results: list[ConvertResult] = []
+    # Free-threaded Python: ThreadPoolExecutor scales linearly with cores.
+    # Older Python: ProcessPoolExecutor bypasses the GIL at fork cost.
+    Executor = ThreadPoolExecutor
+    if getattr(args, "use_processes", False):
+        from concurrent.futures import ProcessPoolExecutor as _PPE
+        Executor = _PPE
+        print(f"[pool] using process pool (workers={args.workers})")
+    elif _gil_status() == "no-gil":
+        print(f"[pool] free-threaded interpreter detected; thread-pool will scale linearly")
+
     cache_conn = _open_hash_cache() if getattr(args, "use_cache", False) else None
     cache_preset_key = _preset_hash(
         args.format, args.quality, args.in_place, args.no_structure,
@@ -4046,7 +4071,7 @@ def _run_cli(args):
     done_paths: list[str] = []
     failed_paths: list[str] = []
 
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+    with Executor(max_workers=args.workers) as pool:
         futures = {}
         for seq_i, f in enumerate(scan.files, start=1):
             fut = pool.submit(
@@ -4095,6 +4120,50 @@ def _run_cli(args):
 
             if result.success and not result.skipped:
                 done_paths.append(str(result.src))
+                # Sidecar JSON history — darktable pattern. Captures source
+                # hash, the full conversion preset, and timestamp so the
+                # output is reproducible from the metadata.
+                if getattr(args, "sidecar_history", False) and result.dst:
+                    try:
+                        sidecar = result.dst.with_suffix(result.dst.suffix + ".heicshift.json")
+                        sidecar.write_text(json.dumps({
+                            "version": APP_VERSION,
+                            "timestamp": int(time.time()),
+                            "src": str(result.src),
+                            "src_hash": _file_sha256(result.src),
+                            "dst_hash": _file_sha256(result.dst),
+                            "preset": {
+                                "format": args.format,
+                                "quality": args.quality,
+                                "workers": args.workers,
+                                "resize": args.resize,
+                                "prefix": args.prefix,
+                                "suffix": args.suffix,
+                                "template": getattr(args, "template", None),
+                                "in_place": args.in_place,
+                                "strip_metadata": args.strip_metadata,
+                                "progressive": args.progressive,
+                                "chroma_420": args.chroma_420,
+                                "lossless": args.lossless,
+                                "srgb": args.srgb,
+                                "tiff_compression": args.tiff_compression,
+                                "png_level": args.png_level,
+                                "icc": getattr(args, "icc", None),
+                                "watermark": getattr(args, "watermark", None),
+                                "canvas": getattr(args, "canvas", None),
+                                "tone_map": getattr(args, "tone_map", "none"),
+                                "dpi": getattr(args, "dpi", None),
+                                "target_kb": getattr(args, "target_kb", None),
+                                "target_psnr": getattr(args, "target_psnr", None),
+                            },
+                            "result": {
+                                "size_in": result.size_before,
+                                "size_out": result.size_after,
+                                "warnings": list(result.warnings),
+                            },
+                        }, indent=2, default=str))
+                    except OSError:
+                        pass
                 # Persist into hash cache for future --use-cache runs.
                 if cache_conn:
                     try:
