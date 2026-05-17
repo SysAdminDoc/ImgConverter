@@ -209,6 +209,47 @@ except ImportError:
 EXIFTOOL_PATH = shutil.which("exiftool")
 HAS_EXIFTOOL = EXIFTOOL_PATH is not None
 
+# Optional: jpegoptim / jpegtran for lossless JPEG recompression — bit-preserving
+# size reduction without re-encoding pixels. Either is sufficient.
+JPEGOPTIM_PATH = shutil.which("jpegoptim")
+JPEGTRAN_PATH = shutil.which("jpegtran")
+HAS_JPEG_RECOMPRESS = JPEGOPTIM_PATH is not None or JPEGTRAN_PATH is not None
+
+
+def _recompress_jpeg_lossless(src: Path, dst: Path, strip_metadata: bool) -> tuple[bool, str]:
+    """Copy src -> dst then run jpegoptim/jpegtran on dst. Pixel-preserving."""
+    try:
+        shutil.copy2(src, dst)
+    except OSError as e:
+        return False, f"copy failed: {e}"
+    if JPEGOPTIM_PATH:
+        cmd = [JPEGOPTIM_PATH, "--overwrite", "--quiet"]
+        if strip_metadata:
+            cmd.append("--strip-all")
+        cmd.append(str(dst))
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if proc.returncode != 0:
+                return False, (proc.stderr or "jpegoptim failed").strip()
+            return True, "jpegoptim"
+        except subprocess.TimeoutExpired:
+            return False, "jpegoptim timed out"
+    if JPEGTRAN_PATH:
+        # jpegtran -copy all -optimize -progressive -outfile <tmp> <src>
+        tmp = dst.with_suffix(dst.suffix + ".jpegtran.tmp")
+        cmd = [JPEGTRAN_PATH, "-copy", "none" if strip_metadata else "all",
+               "-optimize", "-outfile", str(tmp), str(dst)]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if proc.returncode != 0:
+                tmp.unlink(missing_ok=True)
+                return False, (proc.stderr or "jpegtran failed").strip()
+            os.replace(str(tmp), str(dst))
+            return True, "jpegtran"
+        except subprocess.TimeoutExpired:
+            return False, "jpegtran timed out"
+    return False, "no jpegoptim or jpegtran on PATH"
+
 
 def _run_exiftool_copy(src: Path, dst: Path) -> tuple[bool, str]:
     """Copy *all* metadata from src to dst using ExifTool. Returns (ok, message)."""
@@ -832,6 +873,7 @@ def convert_file(
     dpi: tuple[int, int] | None = None,
     icc_override: str | None = None,
     emit_xmp_sidecar: bool = False,
+    recompress_lossless: bool = False,
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
@@ -964,11 +1006,48 @@ def convert_file(
             and not convert_to_srgb
             and preserve_metadata
         )
-        if same_fmt and no_processing:
+        if same_fmt and no_processing and not recompress_lossless:
             result.skipped = True
             result.warnings.append(f"Skipped: already {out_fmt} and no processing requested")
             result.elapsed = time.perf_counter() - t0
             return result
+
+        # Lossless recompress fast-path: JPEG -> JPEG via jpegoptim / jpegtran,
+        # pixel-bit-preserving. Bypasses the Pillow decode/encode chain entirely.
+        if (recompress_lossless and out_fmt == "JPEG" and src_ext in JPEG_EXTS
+                and HAS_JPEG_RECOMPRESS):
+            ext = ".jpg"
+            if in_place:
+                dest_dir = src.parent
+            elif preserve_structure and base_dir:
+                rel = src.parent.relative_to(base_dir)
+                dest_dir = output_dir / rel
+            else:
+                dest_dir = output_dir
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            stem_short = prefix + src.stem + suffix
+            out_path = dest_dir / (stem_short + ext)
+            if skip_existing and out_path.exists():
+                result.skipped = True
+                result.dst = out_path
+                result.size_after = out_path.stat().st_size
+                result.elapsed = time.perf_counter() - t0
+                return result
+            ok, tool = _recompress_jpeg_lossless(src, out_path, not preserve_metadata)
+            if ok:
+                result.dst = out_path
+                result.size_after = out_path.stat().st_size
+                result.success = True
+                result.warnings.append(f"recompress: pixel-lossless via {tool}")
+                if in_place and result.success and out_path != src:
+                    src.unlink()
+                    result.src_deleted = True
+                result.elapsed = time.perf_counter() - t0
+                return result
+            else:
+                result.warnings.append(
+                    f"recompress: {tool}; falling back to standard re-encode"
+                )
 
         ext_map = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "AVIF": ".avif", "TIFF": ".tiff", "JXL": ".jxl"}
         ext = ext_map.get(out_fmt, ".jpg")
@@ -2960,6 +3039,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         "Mutually exclusive with --srgb (--srgb wins).")
     p.add_argument("--xmp-sidecar", action="store_true",
                    help="Emit a .xmp sidecar alongside output (Adobe Bridge / darktable convention)")
+    p.add_argument("--recompress", action="store_true",
+                   help="For JPEG->JPEG: run jpegoptim / jpegtran for pixel-lossless size reduction "
+                        "instead of decode-re-encode. Requires jpegoptim or jpegtran on PATH.")
     return p
 
 
@@ -3176,6 +3258,7 @@ def _run_cli(args):
                 (args.dpi, args.dpi) if getattr(args, "dpi", None) else None,  # dpi
                 getattr(args, "icc", None),                  # icc_override
                 getattr(args, "xmp_sidecar", False),         # emit_xmp_sidecar
+                getattr(args, "recompress", False),           # recompress_lossless
             )
             futures[fut] = f
 
