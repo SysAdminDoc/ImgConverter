@@ -61,7 +61,7 @@ Highest-leverage, lowest-risk. Closes known CVE exposure, ships the metadata-fid
 
 - [x] **Smoke-test CI** — even one round-trip fixture per output format with hash + size diff guard catches the 2024 / 2025 Pillow regressions in the dep table. Add to `.github/workflows/build.yml`. Effort 2, Impact 4. *Project rule normally says "no tests unless asked" — flagging the override: a converter that markets correctness needs a regression net.*
 - [x] **`pyproject.toml`** — make `pip install -e .` work; declare entry-point `heicshift = heicshift:main`. Lets contributors hack on CLI without launching GUI. Pattern: [NeverMendel/heif-convert](https://github.com/NeverMendel/heif-convert). Effort 1, Impact 2.
-- **Branch protection on `main` + signed releases** — already de facto from project rules; verify and document in CONTRIBUTING.md. Effort 1, Impact 1.
+- [x] **Branch protection on `main` + signed releases** — already de facto from project rules; verify and document in CONTRIBUTING.md. Effort 1, Impact 1.
 
 ---
 
