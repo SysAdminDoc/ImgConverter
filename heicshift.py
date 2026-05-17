@@ -3375,10 +3375,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--resume", action="store_true",
                    help="Resume a previously interrupted batch from ~/.cache/heicshift/queue.json")
     p.add_argument("--frames", type=str, default="first", choices=["first", "all", "animate"],
-                   help="Multi-frame source handling: 'first' (default — first frame only), "
+                   help="Multi-frame source handling: 'first' (default - first frame only), "
                         "'all' (export every frame as {stem}.NNN.{ext}), "
                         "'animate' (preserve as animated WebP/PNG/GIF; falls back to 'all' if "
                         "target format can't carry animation)")
+    p.add_argument("--watch", action="store_true",
+                   help="Watch --input directory and convert new files as they arrive. "
+                        "Polling-based; --watch-interval controls cadence. Ctrl-C to stop.")
+    p.add_argument("--watch-interval", type=float, default=2.0, metavar="SEC",
+                   help="Watch-mode poll interval in seconds (default 2.0)")
     return p
 
 
@@ -3513,6 +3518,69 @@ def _clear_queue_state():
         QUEUE_STATE_PATH.unlink(missing_ok=True)
     except Exception:
         pass
+
+
+def _watch_directory(args, input_dir: Path, output_dir: Path) -> int:
+    """Polling-based watch mode. Avoids hard dep on watchdog.
+
+    Every poll interval, rescan the directory; convert any file we haven't
+    seen yet. Debounces partial-write races by requiring the file size to
+    be stable for one full poll interval before processing.
+    """
+    interval = max(1.0, float(getattr(args, "watch_interval", 2.0)))
+    print(f"[watch] watching {input_dir} every {interval:.1f}s — Ctrl-C to stop")
+    seen_sizes: dict[Path, int] = {}
+    converted: set[Path] = set()
+    supported = get_supported_extensions()
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        pool = ThreadPoolExecutor(max_workers=args.workers)
+        while True:
+            current = []
+            try:
+                for p in input_dir.rglob("*") if args.recursive else input_dir.iterdir():
+                    if not p.is_file() or p.suffix.lower() not in supported:
+                        continue
+                    if p in converted:
+                        continue
+                    try:
+                        size = p.stat().st_size
+                    except OSError:
+                        continue
+                    if seen_sizes.get(p) == size:
+                        current.append(p)  # stable - ready to convert
+                    else:
+                        seen_sizes[p] = size  # still being written
+            except OSError:
+                pass
+
+            for f in current:
+                seq = len(converted) + 1
+                try:
+                    r = convert_file(
+                        f, output_dir, args.format, args.quality,
+                        not args.strip_metadata, not args.no_structure, input_dir,
+                        args.in_place, args.skip_existing, "none", 1920,
+                        args.prefix, args.suffix, args.lossless, args.progressive,
+                        args.chroma_420, args.srgb, args.tiff_compression, args.png_level,
+                        not args.no_exiftool, getattr(args, "template", None), seq,
+                    )
+                    if r.success:
+                        print(f"[watch] OK  {f.name} -> {r.dst.name}")
+                    elif r.skipped:
+                        print(f"[watch] SKIP {f.name}")
+                    else:
+                        print(f"[watch] FAIL {f.name}: {r.error}")
+                    converted.add(f)
+                    seen_sizes.pop(f, None)
+                except Exception as e:
+                    print(f"[watch] error on {f.name}: {e}")
+
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print(f"\n[watch] stopped. Total processed: {len(converted)}")
+        pool.shutdown(wait=False)
+    return EXIT_OK
 
 
 def _install_shell_integration(uninstall: bool = False) -> int:
@@ -3714,6 +3782,10 @@ def _run_cli(args):
         except ValueError:
             print(f"[ERROR] Invalid resize value: {args.resize}", file=sys.stderr)
             sys.exit(EXIT_INPUT_ERROR)
+
+    # Watch mode short-circuits the scan/convert pipeline.
+    if getattr(args, "watch", False):
+        sys.exit(_watch_directory(args, input_dir, output_dir))
 
     # Scan
     print(f"\nScanning{'  recursively' if args.recursive else ''}...")
