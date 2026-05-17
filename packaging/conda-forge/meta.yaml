@@ -1,0 +1,58 @@
+{% set name = "heicshift" %}
+{% set version = "2.9.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://github.com/SysAdminDoc/HEICShift/archive/refs/tags/v{{ version }}.tar.gz
+  # Update sha256 on each release; can be regenerated with:
+  #   curl -sSL <url> | sha256sum
+  sha256: 0000000000000000000000000000000000000000000000000000000000000000
+
+build:
+  noarch: python
+  number: 0
+  entry_points:
+    - heicshift = heicshift:main
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+
+requirements:
+  host:
+    - python >=3.10
+    - pip
+    - setuptools >=68
+    - wheel
+  run:
+    - python >=3.10
+    - pillow >=11.3.0
+    - pillow-heif >=1.3.0
+    - pyqt6 >=6.8
+    - numpy >=1.26
+
+test:
+  imports:
+    - heicshift
+  commands:
+    - heicshift --version
+    - heicshift --help
+
+about:
+  home: https://github.com/SysAdminDoc/HEICShift
+  license: MIT
+  license_family: MIT
+  license_file: LICENSE
+  summary: Universal image batch converter with metadata, ICC, and HDR fidelity.
+  description: |
+    HEICShift converts 12+ input image formats (HEIC/HEIF, AVIF, WebP,
+    JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, ICO, JPEG, PNG) to
+    6 output formats (JPEG, PNG, WebP, AVIF, TIFF, JXL) while preserving
+    EXIF, ICC color profiles, and XMP metadata. PyQt6 GUI plus a headless
+    CLI with parity flags. MIT-licensed.
+  doc_url: https://github.com/SysAdminDoc/HEICShift/blob/master/README.md
+  dev_url: https://github.com/SysAdminDoc/HEICShift
+
+extra:
+  recipe-maintainers:
+    - SysAdminDoc
