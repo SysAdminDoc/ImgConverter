@@ -51,7 +51,16 @@ Most image converters get the details wrong — they strip metadata, mangle colo
 
 **Output formats:** JPEG, PNG, WebP, AVIF, TIFF, JPEG XL
 
-Optional decoders are installed automatically on first launch. If installation fails (e.g. no compiler for rawpy), those formats are skipped gracefully and the app logs which are unavailable.
+**Optional tools:**
+
+| Tool | Purpose | Install |
+|---|---|---|
+| `pillow-jxl-plugin` | JPEG XL input + output | `pip install pillow-jxl-plugin` |
+| `rawpy` | Camera RAW | `pip install rawpy` |
+| `qoi` | QOI input | `pip install qoi` |
+| `exiftool` | Recovers MakerNotes / GPS sub-IFDs / IPTC / sidecar XMP that Pillow drops silently | [exiftool.org](https://exiftool.org/) |
+
+Run `heicshift --install-deps` to install all required + optional Python packages, or `pip install -r requirements.txt`. If a format-specific decoder is missing, that family is skipped gracefully and the app logs which are unavailable. `exiftool` is detected automatically when present on `PATH`; pass `--no-exiftool` to disable the tag-copy pass.
 
 ## Features
 

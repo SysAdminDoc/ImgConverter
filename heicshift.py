@@ -192,6 +192,36 @@ try:
 except ImportError:
     pass
 
+# Optional: ExifTool for full metadata transport (MakerNotes, GPS sub-IFDs, IPTC,
+# sidecar XMP, etc.) — Pillow's EXIF model drops these silently, which is the #1
+# community complaint about HEIC->JPG converters. See ROADMAP Appendix A3.
+EXIFTOOL_PATH = shutil.which("exiftool")
+HAS_EXIFTOOL = EXIFTOOL_PATH is not None
+
+
+def _run_exiftool_copy(src: Path, dst: Path) -> tuple[bool, str]:
+    """Copy *all* metadata from src to dst using ExifTool. Returns (ok, message)."""
+    if not HAS_EXIFTOOL:
+        return False, "exiftool not installed"
+    try:
+        # -overwrite_original avoids _original sidecars; -P preserves dst mtime;
+        # -tagsfromfile copies every tag including MakerNotes / sub-IFDs / IPTC;
+        # -icc_profile is normally protected, so add it explicitly.
+        proc = subprocess.run(
+            [EXIFTOOL_PATH, "-overwrite_original", "-P",
+             "-tagsfromfile", str(src),
+             "-all:all", "-unsafe", "-icc_profile",
+             str(dst)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout or "exiftool failed").strip()
+        return True, "metadata copied"
+    except subprocess.TimeoutExpired:
+        return False, "exiftool timed out"
+    except Exception as e:
+        return False, str(e)
+
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QUrl,
 )
@@ -712,8 +742,16 @@ def convert_file(
     convert_to_srgb: bool = False,
     tiff_compression: str = "none",
     png_compress_level: int = 6,
+    use_exiftool: bool = True,
 ) -> ConvertResult:
-    """Convert a single image file. Thread-safe."""
+    """Convert a single image file. Thread-safe.
+
+    When ``use_exiftool`` is True and the ``exiftool`` binary is on PATH,
+    runs an ExifTool tag-copy pass after the save so MakerNotes, GPS
+    sub-IFDs, IPTC, and sidecar XMP make it across — Pillow drops these
+    silently. Falls back to Pillow's EXIF / ICC / XMP keys when ExifTool
+    is unavailable.
+    """
     t0 = time.perf_counter()
     result = ConvertResult(src=src, size_before=src.stat().st_size)
     img = None
@@ -920,6 +958,20 @@ def convert_file(
         except Exception as ve:
             raise RuntimeError(f"Output validation failed: {ve}")
 
+        # ExifTool tag-copy pass — recovers MakerNotes / GPS sub-IFDs / IPTC
+        # / sidecar XMP that Pillow drops. Runs against the temp file so an
+        # ExifTool failure can't corrupt the live output. Skipped when the
+        # caller asked to strip metadata or explicitly opted out.
+        if use_exiftool and HAS_EXIFTOOL and preserve_metadata:
+            tagcopy_target = temp_path if in_place else out_path
+            ok, msg = _run_exiftool_copy(src, tagcopy_target)
+            if ok:
+                result.warnings.append("metadata: exiftool tag-copy ok")
+            else:
+                result.warnings.append(
+                    f"metadata: exiftool failed ({msg}); Pillow fallback applied"
+                )
+
         # Atomic rename for in-place mode
         if in_place:
             os.replace(str(temp_path), str(out_path))
@@ -974,7 +1026,7 @@ class ConvertWorker(QThread):
                  prefix="", suffix="", lossless_webp=False,
                  progressive_jpeg=False, chroma_subsampling=False,
                  convert_to_srgb=False, tiff_compression="none",
-                 png_compress_level=6):
+                 png_compress_level=6, use_exiftool=True):
         super().__init__()
         self.files = files
         self.output_dir = Path(output_dir)
@@ -996,6 +1048,7 @@ class ConvertWorker(QThread):
         self.convert_to_srgb = convert_to_srgb
         self.tiff_compression = tiff_compression
         self.png_compress_level = png_compress_level
+        self.use_exiftool = use_exiftool
         self._stop = False
 
     def stop(self):
@@ -1023,6 +1076,7 @@ class ConvertWorker(QThread):
                     self.lossless_webp, self.progressive_jpeg,
                     self.chroma_subsampling, self.convert_to_srgb,
                     self.tiff_compression, self.png_compress_level,
+                    self.use_exiftool,
                 )
                 futures[fut] = f
 
@@ -2415,6 +2469,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Flatten output (no subdirectory mirroring)")
     p.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
                    help="Glob pattern to exclude (repeatable). Example: --exclude '*.thumb.*' --exclude 'cache/**'")
+    p.add_argument("--no-exiftool", action="store_true",
+                   help="Skip ExifTool tag-copy pass even when exiftool is on PATH (uses Pillow EXIF/ICC/XMP only)")
     return p
 
 
@@ -2430,6 +2486,8 @@ def _log_dep_versions_cli():
         opt_vers.append(f"pillow-jxl {getattr(pillow_jxl, '__version__', '?')}")
     if HAS_QOI:
         opt_vers.append(f"qoi {getattr(qoi_lib, '__version__', '?')}")
+    if HAS_EXIFTOOL:
+        opt_vers.append(f"exiftool ({EXIFTOOL_PATH})")
     if opt_vers:
         print(f"Optional: {', '.join(opt_vers)}")
 
@@ -2565,6 +2623,7 @@ def _run_cli(args):
                 args.skip_existing, resize_mode, resize_value,
                 args.prefix, args.suffix, args.lossless, args.progressive,
                 args.chroma_420, args.srgb, args.tiff_compression, args.png_level,
+                not args.no_exiftool,  # use_exiftool
             )
             futures[fut] = f
 
