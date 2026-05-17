@@ -108,13 +108,13 @@ Bigger surface-area features that need design first. All have a clear "why" but 
 
 ### Auto-update
 
-- **Update check against GitHub releases** — opt-in, runs on launch with 24-hour throttle. `requests.get("https://api.github.com/repos/SysAdminDoc/HEICShift/releases/latest")` → compare to `APP_VERSION`. Setting persisted in `QSettings`; off by default. Effort 1, Impact 2.
+- [x] **Update check against GitHub releases** — opt-in, runs on launch with 24-hour throttle. `requests.get("https://api.github.com/repos/SysAdminDoc/HEICShift/releases/latest")` → compare to `APP_VERSION`. Setting persisted in `QSettings`; off by default. Effort 1, Impact 2.
 
 ### Accessibility & diagnostics
 
-- **Accessibility pass** — Qt offers `setAccessibleName` / `setAccessibleDescription` / explicit focus order via `setTabOrder` / `QShortcut` for screen-reader and keyboard-only users. Today's `MainWindow` sets neither (verified — zero `setAccessibleName` / `setStatusTip` calls in source). Add labels on every interactive control; verify focus order matches visual order; confirm Catppuccin Mocha palette passes WCAG AA contrast against the existing badge styles. Effort 2, Impact 2. *Project rule: "No keyboard shortcuts" stands — this is screen-reader / focus order, not new accelerators.*
-- **Persistent diagnostic log** — current log panel is in-memory only; users reporting bugs have to manually export. Add `~/.cache/heicshift/heicshift.log` with rotating handler (5 MB × 3 files), opt-in via `--log-file` / settings. Captures startup dep versions, every conversion warning, every cancellation. Effort 1, Impact 3.
-- **QSettings schema migration** — when settings shape changes (e.g. flat-dict presets → ordered task chains in Next tier), today's `_restore_state()` will quietly drop unknown keys. Add a `settings_version` int; on bump, run a typed migration that maps v1 keys to v2. Effort 2, Impact 2.
+- [x] **Accessibility pass** — Qt offers `setAccessibleName` / `setAccessibleDescription` / explicit focus order via `setTabOrder` / `QShortcut` for screen-reader and keyboard-only users. Today's `MainWindow` sets neither (verified — zero `setAccessibleName` / `setStatusTip` calls in source). Add labels on every interactive control; verify focus order matches visual order; confirm Catppuccin Mocha palette passes WCAG AA contrast against the existing badge styles. Effort 2, Impact 2. *Project rule: "No keyboard shortcuts" stands — this is screen-reader / focus order, not new accelerators.*
+- [x] **Persistent diagnostic log** — current log panel is in-memory only; users reporting bugs have to manually export. Add `~/.cache/heicshift/heicshift.log` with rotating handler (5 MB × 3 files), opt-in via `--log-file` / settings. Captures startup dep versions, every conversion warning, every cancellation. Effort 1, Impact 3.
+- [x] **QSettings schema migration** — when settings shape changes (e.g. flat-dict presets → ordered task chains in Next tier), today's `_restore_state()` will quietly drop unknown keys. Add a `settings_version` int; on bump, run a typed migration that maps v1 keys to v2. Effort 2, Impact 2.
 
 ---
 

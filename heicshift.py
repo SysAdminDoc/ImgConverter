@@ -1370,7 +1370,72 @@ def _create_app_icon() -> QIcon:
 
 # ── Conversion Presets ────────────────────────────────────────────────────────
 
-USER_PRESET_DIR = Path.home() / ".heicshift" / "presets"
+USER_CACHE_DIR = Path.home() / ".cache" / "heicshift"
+USER_CONFIG_DIR = Path.home() / ".heicshift"
+USER_PRESET_DIR = USER_CONFIG_DIR / "presets"
+USER_LOG_PATH = USER_CACHE_DIR / "heicshift.log"
+
+# QSettings shape version — bump when on-disk settings layout changes so the
+# migration in _maybe_migrate_settings() runs once on startup.
+SETTINGS_SCHEMA = 2
+
+
+def _diag_log(message: str, level: str = "INFO"):
+    """Append a timestamped line to ~/.cache/heicshift/heicshift.log.
+
+    Best-effort: failures (disk full, permission denied) are swallowed so
+    diagnostics never break the converter.
+    """
+    try:
+        USER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        # Rotate on size: 5 MB ceiling, keep one backup. Plenty for support cases.
+        try:
+            if USER_LOG_PATH.exists() and USER_LOG_PATH.stat().st_size > 5_000_000:
+                rotated = USER_LOG_PATH.with_suffix(".log.1")
+                if rotated.exists():
+                    rotated.unlink()
+                USER_LOG_PATH.rename(rotated)
+        except OSError:
+            pass
+        from datetime import datetime
+        with USER_LOG_PATH.open("a", encoding="utf-8", errors="replace") as fp:
+            fp.write(f"[{datetime.now().isoformat(timespec='seconds')}] {level} {message}\n")
+    except Exception:
+        pass
+
+
+def _check_for_update(current_version: str, timeout: float = 3.0) -> str | None:
+    """Return the latest GitHub release tag if newer than ``current_version``, else None.
+
+    Best-effort: any network/parse error returns None silently. Throttled
+    by the caller via the .last_update_check QSettings key.
+    """
+    try:
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(
+            "https://api.github.com/repos/SysAdminDoc/HEICShift/releases/latest",
+            headers={"Accept": "application/vnd.github+json",
+                     "User-Agent": f"HEICShift/{current_version}"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        tag = (data.get("tag_name") or "").lstrip("v")
+        if not tag:
+            return None
+        try:
+            from packaging.version import Version
+            if Version(tag) > Version(current_version):
+                return tag
+        except Exception:
+            # Fallback: literal string mismatch counts as "newer".
+            if tag and tag != current_version:
+                return tag
+        return None
+    except Exception:
+        return None
+
+
 
 
 def _seed_user_preset_dir():
@@ -1490,7 +1555,68 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._apply_dark_titlebar()
         self._restore_state()
+        self._apply_accessibility_labels()
         self._log_startup()
+        _diag_log(f"HEICShift v{APP_VERSION} started (GUI mode)")
+        # Optional update check — defer so we don't block startup paint.
+        QTimer.singleShot(2000, self._maybe_check_for_update)
+
+    def _apply_accessibility_labels(self):
+        """Attach screen-reader-friendly accessible names + status tips.
+
+        Qt screen-reader interop on Windows / macOS / Linux relies on
+        QWidget.setAccessibleName / setAccessibleDescription. This pass
+        labels every primary control on MainWindow so JAWS / NVDA /
+        VoiceOver / Orca announce something meaningful instead of the
+        default Qt class name.
+        """
+        labels = [
+            ("src_edit",            "Source directory",         "Directory to scan for input images"),
+            ("dst_edit",            "Output directory",         "Where converted files go (blank = source/converted)"),
+            ("fmt_combo",           "Output format",            "Target image format (auto/jpeg/png/webp/avif/tiff/jxl)"),
+            ("quality_slider",      "Quality",                  "Encoder quality 50-100 for JPEG/WebP/AVIF/JXL"),
+            ("workers_spin",        "Worker thread count",      "Number of parallel conversion threads"),
+            ("recursive_chk",       "Recursive scan",           "Walk subdirectories under the source directory"),
+            ("inplace_chk",         "Convert in place",         "Save output next to each source and delete the source"),
+            ("skip_existing_chk",   "Skip existing outputs",    "Skip files whose output already exists"),
+            ("meta_chk",            "Preserve metadata",        "Keep EXIF, ICC, and XMP through conversion"),
+            ("progressive_jpeg_chk","Progressive JPEG",         "Encode JPEGs as progressive for web delivery"),
+            ("lossless_webp_chk",   "Lossless WebP",            "Save WebP in lossless mode"),
+            ("resize_chk",          "Enable resize",            "Resize images during conversion"),
+            ("resize_combo",        "Resize mode",              "Max dimension in pixels, or percent scale"),
+            ("resize_spin",         "Resize value",             "Numeric value for the chosen resize mode"),
+        ]
+        for attr, name, desc in labels:
+            w = getattr(self, attr, None)
+            if w is None:
+                continue
+            try:
+                w.setAccessibleName(name)
+                w.setAccessibleDescription(desc)
+                if hasattr(w, "setStatusTip"):
+                    w.setStatusTip(desc)
+            except Exception:
+                pass
+
+    def _maybe_check_for_update(self):
+        """Throttled GitHub release check — opt-in, off by default. 24-hour cooldown."""
+        try:
+            enabled_raw = self.settings.value("update_check_enabled", False)
+            enabled = enabled_raw == "true" or enabled_raw is True
+            if not enabled:
+                return
+            import time as _time
+            last = float(self.settings.value("last_update_check", 0) or 0)
+            if _time.time() - last < 86400:
+                return
+            self.settings.setValue("last_update_check", _time.time())
+            latest = _check_for_update(APP_VERSION)
+            if latest:
+                self._log(f"[UPDATE] HEICShift v{latest} is available "
+                          f"(https://github.com/SysAdminDoc/HEICShift/releases)")
+                _diag_log(f"Update available: v{latest}")
+        except Exception:
+            pass
 
     def _log_startup(self):
         """Log supported formats, dependency versions, and optional dep status on launch."""
@@ -2573,7 +2699,33 @@ class MainWindow(QMainWindow):
         filter_state = {name: chk.isChecked() for name, chk in self._format_filters.items()}
         self.settings.setValue("format_filters", json.dumps(filter_state))
 
+    def _maybe_migrate_settings(self):
+        """Bump on-disk QSettings shape to current SETTINGS_SCHEMA."""
+        try:
+            stored = int(self.settings.value("settings_version", 0))
+        except (TypeError, ValueError):
+            stored = 0
+        if stored == SETTINGS_SCHEMA:
+            return
+
+        # Migration v0/v1 -> v2: format index 6 used to be disabled in some
+        # builds when pillow-jxl wasn't present; coerce out-of-range stored
+        # values to 0 (auto) so _restore_state doesn't blow up.
+        if stored < 2:
+            try:
+                fmt_v = self.settings.value("fmt")
+                if fmt_v is not None:
+                    idx = int(fmt_v)
+                    if not (0 <= idx <= 6):
+                        self.settings.setValue("fmt", 0)
+            except (TypeError, ValueError):
+                self.settings.setValue("fmt", 0)
+
+        self.settings.setValue("settings_version", SETTINGS_SCHEMA)
+        _diag_log(f"QSettings migrated from v{stored} to v{SETTINGS_SCHEMA}")
+
     def _restore_state(self):
+        self._maybe_migrate_settings()
         if v := self.settings.value("src"):
             self.src_edit.setText(v)
         if v := self.settings.value("dst"):
@@ -2778,6 +2930,7 @@ def _apply_preset_to_args(args, preset: dict):
 def _run_cli(args):
     """Run headless CLI conversion."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    _diag_log(f"CLI invocation: format={args.format} input={args.input}")
 
     # Apply preset overlay (called before other arg-driven branches).
     if getattr(args, "preset", None):
