@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-HEICShift v2.8.0 - High-performance universal image batch converter
+HEICShift v2.9.0 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
-WebP, AVIF, or TIFF. Auto-detects optimal format: PNG for images with
-transparency, JPEG for photos. Preserves EXIF metadata, ICC color
-profiles, and XMP data. Supports CLI mode for headless/scripted operation.
+WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
+images with transparency, JPEG for photos. Preserves EXIF, ICC, and
+XMP. CLI + GUI parity. See ROADMAP.md for in-flight work.
 """
 
 import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil
@@ -30,7 +30,7 @@ def _branding_icon_path() -> Path:
 # codex-branding:end
 
 
-APP_VERSION = "2.8.0"
+APP_VERSION = "2.9.0"
 
 def _bootstrap():
     """Auto-install dependencies before imports."""

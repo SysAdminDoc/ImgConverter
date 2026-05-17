@@ -1,10 +1,12 @@
 # HEICShift Roadmap
 
-**Current version:** v2.8.0 · **Roadmap revision:** 2026-05-17 · **Supersedes:** 2026-04-23 draft
+**Current version:** v2.9.0 (in-flight) · **Roadmap revision:** 2026-05-17 · **Supersedes:** 2026-04-23 draft
 
 Universal image batch converter. 12+ input families → 6 output formats (JPEG / PNG / WebP / AVIF / TIFF / JXL) with metadata, color-profile, and orientation fidelity. PyQt6 GUI + headless CLI parity, single-file Python 3.10+, MIT, PyInstaller binaries for Windows / macOS / Linux.
 
-This roadmap is the working plan. Every line item traces to a source in the Appendix. Tiers are stable; placement reasoning is one sentence per item.
+This roadmap is the working plan. Every line item traces to a source in the Appendix. Tiers are stable; placement reasoning is one sentence per item. **`[x]`** = shipped, **`[ ]`** = open.
+
+> **In-flight (v2.9.0):** Now tier execution. Items tick off as commits land; release cuts when the tier is fully `[x]`.
 
 ---
 
@@ -28,7 +30,7 @@ Highest-leverage, lowest-risk. Closes known CVE exposure, ships the metadata-fid
 
 ### Security & dependency floor
 
-- **`requirements.txt` + `pyproject.toml` with pinned floors** — currently `_bootstrap()` runtime-pip-installs whatever is latest; venvs that froze on old wheels stay exposed to libheif / libjxl / Pillow CVEs forever. Pin `Pillow>=11.3.0, pillow-heif>=1.3.0, pillow-jxl-plugin>=1.3.6, rawpy>=0.27.0, PyQt6>=6.8`. Add a startup version check that warns when below floor. Effort 1, Impact 5. *Closes: [CVE-2025-48379](https://nvd.nist.gov/vuln/detail/CVE-2025-48379), [CVE-2024-28219](https://www.sentinelone.com/vulnerability-database/cve-2024-28219/), [CVE-2025-29482](https://dailycve.com/libheif-buffer-overflow-cve-2025-29482-critical/), [CVE-2024-41311](https://www.sentinelone.com/vulnerability-database/cve-2024-41311/), [CVE-2024-11403 / 11498](https://github.com/libjxl/libjxl/releases), [CVE-2026-28231](https://github.com/bigcat88/pillow_heif/blob/master/CHANGELOG.md).*
+- [x] **`requirements.txt` + `pyproject.toml` with pinned floors** — currently `_bootstrap()` runtime-pip-installs whatever is latest; venvs that froze on old wheels stay exposed to libheif / libjxl / Pillow CVEs forever. Pin `Pillow>=11.3.0, pillow-heif>=1.3.0, pillow-jxl-plugin>=1.3.6, rawpy>=0.27.0, PyQt6>=6.8`. Add a startup version check that warns when below floor. Effort 1, Impact 5. *Closes: [CVE-2025-48379](https://nvd.nist.gov/vuln/detail/CVE-2025-48379), [CVE-2024-28219](https://www.sentinelone.com/vulnerability-database/cve-2024-28219/), [CVE-2025-29482](https://dailycve.com/libheif-buffer-overflow-cve-2025-29482-critical/), [CVE-2024-41311](https://www.sentinelone.com/vulnerability-database/cve-2024-41311/), [CVE-2024-11403 / 11498](https://github.com/libjxl/libjxl/releases), [CVE-2026-28231](https://github.com/bigcat88/pillow_heif/blob/master/CHANGELOG.md).*
 - **Replace runtime `_bootstrap()` pip-install with explicit install instructions** — auto-install-at-runtime violates the user's standard project pattern and surprises users in restricted environments. Keep an `--install-deps` opt-in subcommand instead. Effort 1, Impact 3.
 - **libheif memory cap** — wire `pillow_heif`'s `set_security_limits()` / max-decode-memory knob so a hostile HEIC can't OOM the host. New in libheif 1.20 ([1.20 release notes](https://github.com/strukturag/libheif/releases)). Effort 1, Impact 4.
 - **Symlink loop guard in `scan_directory`** — `p.is_file()` happily follows symlinks; a recursive scan over a directory containing a symlink to its parent loops until the path-length limit. Add a `visited_inodes` set; skip already-seen inodes. Effort 1, Impact 3.
@@ -58,7 +60,7 @@ Highest-leverage, lowest-risk. Closes known CVE exposure, ships the metadata-fid
 ### Distribution & repo hygiene
 
 - **Smoke-test CI** — even one round-trip fixture per output format with hash + size diff guard catches the 2024 / 2025 Pillow regressions in the dep table. Add to `.github/workflows/build.yml`. Effort 2, Impact 4. *Project rule normally says "no tests unless asked" — flagging the override: a converter that markets correctness needs a regression net.*
-- **`pyproject.toml`** — make `pip install -e .` work; declare entry-point `heicshift = heicshift:main`. Lets contributors hack on CLI without launching GUI. Pattern: [NeverMendel/heif-convert](https://github.com/NeverMendel/heif-convert). Effort 1, Impact 2.
+- [x] **`pyproject.toml`** — make `pip install -e .` work; declare entry-point `heicshift = heicshift:main`. Lets contributors hack on CLI without launching GUI. Pattern: [NeverMendel/heif-convert](https://github.com/NeverMendel/heif-convert). Effort 1, Impact 2.
 - **Branch protection on `main` + signed releases** — already de facto from project rules; verify and document in CONTRIBUTING.md. Effort 1, Impact 1.
 
 ---
