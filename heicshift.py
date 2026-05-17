@@ -151,6 +151,17 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()
 
+# AVIF — Pillow 11.3+ ships native libaom/dav1d AVIF support. Prefer it
+# over pillow_heif's AVIF path (which itself was deprecated in
+# pillow_heif 1.0). Smaller binary footprint, no x265 GPL surface, and
+# pillow_heif >=1.3 no longer offers an AVIF encoder at all.
+HAS_AVIF = False
+try:
+    from PIL import AvifImagePlugin  # noqa: F401  registers .avif handler
+    HAS_AVIF = "AVIF" in Image.SAVE
+except ImportError:
+    HAS_AVIF = False
+
 # libheif memory cap — a hostile HEIC/AVIF can otherwise OOM the host via
 # the SAO heap-overflow path (CVE-2025-29482, fixed in libheif 1.19.7+).
 # 4 GB ceiling is generous for legitimate gigapixel scans, fatal for fuzz inputs.
@@ -817,6 +828,11 @@ def convert_file(
         elif fmt == "tiff":
             out_fmt = "TIFF"
         elif fmt == "avif":
+            if not HAS_AVIF:
+                raise RuntimeError(
+                    "AVIF output requires Pillow >=11.3 with native AVIF support "
+                    "(pillow-heif >=1.0 deprecated its AVIF encoder)."
+                )
             out_fmt = "AVIF"
         elif fmt == "jxl":
             if not HAS_JXL:
@@ -2533,6 +2549,12 @@ def _run_cli(args):
     if args.format == "jxl" and not HAS_JXL:
         print("[ERROR] JPEG XL output requires pillow-jxl-plugin (pip install pillow-jxl-plugin)",
               file=sys.stderr)
+        sys.exit(EXIT_DEP_MISSING)
+
+    # Validate AVIF dependency (Pillow 11.3+ native, was pillow-heif before v1.0)
+    if args.format == "avif" and not HAS_AVIF:
+        print("[ERROR] AVIF output requires Pillow >=11.3 with native AVIF support. "
+              "Run: heicshift --install-deps", file=sys.stderr)
         sys.exit(EXIT_DEP_MISSING)
 
     # Validate PNG compression level
