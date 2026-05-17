@@ -86,8 +86,8 @@ Bigger surface-area features that need design first. All have a clear "why" but 
 ### Color
 
 - **BT.2020 / PQ / HLG HDR awareness** — already in 2026-04 draft; clarified by Android 15 dual-write of Ultra HDR + ISO 21496-1 ([PhoneArena](https://www.phonearena.com/news/hdr-photos-across-android-and-ios_id164255)). Detect HDR color space, offer tone-map to sRGB with curve choice (BT.2390, Hable, Reinhard). Effort 5, Impact 3. *Power-user feature; most users want "just preserve it."*
-- **Explicit ICC profile override** — already in 2026-04 draft. Embed chosen profile (sRGB v4, Display P3, Rec.2020). Effort 2, Impact 2.
-- **XMP sidecar emit mode** — already in 2026-04 draft. Emit `.xmp` next to stripped output. Effort 2, Impact 2.
+- [x] **Explicit ICC profile override** — already in 2026-04 draft. Embed chosen profile (sRGB v4, Display P3, Rec.2020). Effort 2, Impact 2.
+- [x] **XMP sidecar emit mode** — already in 2026-04 draft. Emit `.xmp` next to stripped output. Effort 2, Impact 2.
 
 ### UX
 

@@ -830,6 +830,8 @@ def convert_file(
     seq: int = 1,
     only_if_smaller_pct: float | None = None,
     dpi: tuple[int, int] | None = None,
+    icc_override: str | None = None,
+    emit_xmp_sidecar: bool = False,
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
@@ -859,6 +861,35 @@ def convert_file(
             # Refresh EXIF from the transposed image (orientation tag removed)
             if "exif" in img.info:
                 meta["exif"] = img.info["exif"]
+
+        # ICC profile override — embed a chosen profile (sRGB / Display P3 / Rec.2020)
+        # regardless of source. Applied before --srgb so --srgb still wins if both
+        # are requested (user explicitly asked for sRGB endpoint).
+        if icc_override and not convert_to_srgb:
+            try:
+                profile_name = icc_override.lower()
+                # Pillow's ImageCms.createProfile accepts: sRGB, LAB, XYZ
+                if profile_name in ("srgb", "srgb-v4"):
+                    dst_profile = ImageCms.createProfile("sRGB")
+                else:
+                    # For Display P3 / Rec.2020 / arbitrary path, the user
+                    # supplies a path to an .icc file.
+                    p = Path(icc_override)
+                    if p.is_file():
+                        dst_profile = ImageCms.ImageCmsProfile(str(p))
+                    else:
+                        raise ValueError(f"unknown profile preset or missing .icc file: {icc_override}")
+                src_data = meta.get("icc_profile")
+                if src_data:
+                    src_profile = ImageCms.ImageCmsProfile(io.BytesIO(src_data))
+                    img = ImageCms.profileToProfile(
+                        img, src_profile, dst_profile, outputMode="RGB",
+                    )
+                # Replace the metadata ICC tag with the override.
+                meta["icc_profile"] = ImageCms.ImageCmsProfile(dst_profile).tobytes()
+                result.warnings.append(f"icc-override: embedded {icc_override}")
+            except Exception as e:
+                result.warnings.append(f"icc-override failed: {e}")
 
         # sRGB color space conversion
         if convert_to_srgb and "icc_profile" in meta:
@@ -1126,6 +1157,20 @@ def convert_file(
                 # Don't run the rest of the post-save hooks if we discarded.
                 result.elapsed = time.perf_counter() - t0
                 return result
+
+        # XMP sidecar emit — for archival workflows that strip metadata from
+        # the binary but want it preserved separately (Adobe Bridge / darktable
+        # convention). Sidecar is named <output>.xmp.
+        if emit_xmp_sidecar and meta.get("xmp"):
+            xmp_path = out_path.with_suffix(out_path.suffix + ".xmp")
+            try:
+                xmp_payload = meta["xmp"]
+                if isinstance(xmp_payload, str):
+                    xmp_payload = xmp_payload.encode("utf-8")
+                xmp_path.write_bytes(xmp_payload)
+                result.warnings.append(f"xmp-sidecar: wrote {xmp_path.name}")
+            except OSError as e:
+                result.warnings.append(f"xmp-sidecar failed: {e}")
 
         # ── Sidecar companions ────────────────────────────────────────────
         # Live Photo .MOV — iPhone HEIC stills are paired with a sibling
@@ -2910,6 +2955,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         "than source (e.g. --only-if-smaller 20 means keep only when output \u2264 80%% of input)")
     p.add_argument("--dpi", type=int, default=None, metavar="DPI",
                    help="Set output DPI tag for JPEG / PNG / TIFF (e.g. --dpi 300 for print)")
+    p.add_argument("--icc", type=str, default=None, metavar="PROFILE",
+                   help="Embed ICC profile in output. Built-in: 'sRGB'. Or path to .icc/.icm file. "
+                        "Mutually exclusive with --srgb (--srgb wins).")
+    p.add_argument("--xmp-sidecar", action="store_true",
+                   help="Emit a .xmp sidecar alongside output (Adobe Bridge / darktable convention)")
     return p
 
 
@@ -3124,6 +3174,8 @@ def _run_cli(args):
                 seq_i,                          # seq
                 getattr(args, "only_if_smaller", None),  # only_if_smaller_pct
                 (args.dpi, args.dpi) if getattr(args, "dpi", None) else None,  # dpi
+                getattr(args, "icc", None),                  # icc_override
+                getattr(args, "xmp_sidecar", False),         # emit_xmp_sidecar
             )
             futures[fut] = f
 
