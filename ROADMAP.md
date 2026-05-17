@@ -101,9 +101,9 @@ Bigger surface-area features that need design first. All have a clear "why" but 
 
 ### Output
 
-- **Watermark module (text + PNG overlay)** — paywalled feature in BatchPhoto, FastStone, Pixillion Plus ([BatchPhoto comparison](https://www.batchphoto.com/comparison.html), [FastStone review](https://www.avaide.com/photo-editing/faststone-photo-resizer-review/), [NCH Pixillion licensing](https://help.nchsoftware.com/help/en/pixillion/win/141.html)). Pillow `ImageDraw.text` + paste; opacity slider; 9-position grid. Effort 3, Impact 3.
+- [x] **Watermark module (text + PNG overlay)** — paywalled feature in BatchPhoto, FastStone, Pixillion Plus ([BatchPhoto comparison](https://www.batchphoto.com/comparison.html), [FastStone review](https://www.avaide.com/photo-editing/faststone-photo-resizer-review/), [NCH Pixillion licensing](https://help.nchsoftware.com/help/en/pixillion/win/141.html)). Pillow `ImageDraw.text` + paste; opacity slider; 9-position grid. Effort 3, Impact 3.
 - [x] **DPI override** — write `dpi` save kwarg (JPEG / TIFF / PNG support it). Pattern from FastStone, ImBatch. Effort 1, Impact 2.
-- **Canvas resize with background fill** — different from image resize: pads to canvas size, configurable bg color (transparent if format allows). Pattern from FastStone, Squoosh. Effort 2, Impact 2.
+- [x] **Canvas resize with background fill** — different from image resize: pads to canvas size, configurable bg color (transparent if format allows). Pattern from FastStone, Squoosh. Effort 2, Impact 2.
 - **Output validator cross-check** (already in 2026-04 draft as `ffprobe`/`dcraw`/Pillow cross-pass) — for archival mode, run a second decoder over the output and compare dimensions / channels / hash. Effort 3, Impact 3.
 
 ### Auto-update

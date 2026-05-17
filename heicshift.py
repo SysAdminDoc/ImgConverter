@@ -801,6 +801,98 @@ def _apply_output_template(
     return re.sub(r"\{([a-z_]+)(?::([^}]*))?\}", repl, template)
 
 
+_WATERMARK_POSITIONS = {
+    "top-left":      lambda iw, ih, ww, wh, m: (m, m),
+    "top":           lambda iw, ih, ww, wh, m: ((iw - ww) // 2, m),
+    "top-right":     lambda iw, ih, ww, wh, m: (iw - ww - m, m),
+    "left":          lambda iw, ih, ww, wh, m: (m, (ih - wh) // 2),
+    "center":        lambda iw, ih, ww, wh, m: ((iw - ww) // 2, (ih - wh) // 2),
+    "right":         lambda iw, ih, ww, wh, m: (iw - ww - m, (ih - wh) // 2),
+    "bottom-left":   lambda iw, ih, ww, wh, m: (m, ih - wh - m),
+    "bottom":        lambda iw, ih, ww, wh, m: ((iw - ww) // 2, ih - wh - m),
+    "bottom-right":  lambda iw, ih, ww, wh, m: (iw - ww - m, ih - wh - m),
+}
+
+
+def _apply_watermark(img: "Image.Image", spec: str) -> "Image.Image":
+    """spec format: 'TEXT|position|opacity' or 'image.png|position|opacity'.
+
+    position one of: top-left top top-right left center right
+                     bottom-left bottom bottom-right (default: bottom-right)
+    opacity: float 0.0-1.0 (default 0.6)
+    margin: hard-coded 16 px for now; configurable in a later pass.
+    """
+    parts = spec.split("|")
+    payload = parts[0]
+    position = parts[1] if len(parts) > 1 and parts[1] else "bottom-right"
+    try:
+        opacity = float(parts[2]) if len(parts) > 2 and parts[2] else 0.6
+    except ValueError:
+        opacity = 0.6
+    opacity = max(0.0, min(1.0, opacity))
+    margin = 16
+    pos_fn = _WATERMARK_POSITIONS.get(position, _WATERMARK_POSITIONS["bottom-right"])
+
+    base = img.convert("RGBA") if img.mode != "RGBA" else img.copy()
+    iw, ih = base.size
+
+    # Treat payload as a filesystem path when it exists; otherwise text.
+    payload_path = Path(payload) if payload else None
+    if payload_path and payload_path.is_file():
+        from PIL import Image as _Image
+        mark = _Image.open(payload_path).convert("RGBA")
+    else:
+        from PIL import ImageDraw, ImageFont
+        font_size = max(20, min(iw, ih) // 24)
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
+        except OSError:
+            font = ImageFont.load_default()
+        # Measure text once on a throwaway draw.
+        probe_layer = _Image_module_alias().new("RGBA", (iw, ih), (0, 0, 0, 0))
+        d = ImageDraw.Draw(probe_layer)
+        try:
+            bbox = d.textbbox((0, 0), payload, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except Exception:
+            tw, th = d.textlength(payload, font=font), font_size
+        mark = _Image_module_alias().new("RGBA", (int(tw) + 8, int(th) + 8), (0, 0, 0, 0))
+        d2 = ImageDraw.Draw(mark)
+        d2.text((4, 4), payload, font=font, fill=(255, 255, 255, 255))
+
+    if opacity < 1.0:
+        alpha = mark.split()[-1].point(lambda a: int(a * opacity))
+        mark.putalpha(alpha)
+
+    ww, wh = mark.size
+    pos = pos_fn(iw, ih, ww, wh, margin)
+    base.alpha_composite(mark, dest=pos)
+    return base
+
+
+def _Image_module_alias():
+    # Local import alias to avoid shadowing the top-level Image name in this helper.
+    from PIL import Image as _I
+    return _I
+
+
+def _apply_canvas(img: "Image.Image", canvas_size: tuple[int, int],
+                   bg_color: tuple[int, int, int, int] | str = (0, 0, 0, 0)) -> "Image.Image":
+    """Center the image on a new canvas of ``canvas_size`` filled with ``bg_color``."""
+    cw, ch = canvas_size
+    base = Image.new("RGBA" if img.mode in ("RGBA", "LA", "PA") else "RGB",
+                     (cw, ch), bg_color)
+    iw, ih = img.size
+    # Scale-to-fit
+    scale = min(cw / iw, ch / ih)
+    new_w = max(1, int(iw * scale))
+    new_h = max(1, int(ih * scale))
+    if (new_w, new_h) != (iw, ih):
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    base.paste(img, ((cw - new_w) // 2, (ch - new_h) // 2))
+    return base
+
+
 def _psnr(a: "Image.Image", b: "Image.Image") -> float:
     """Compute PSNR between two images. Returns +inf when identical."""
     if a.size != b.size:
@@ -945,6 +1037,9 @@ def convert_file(
     emit_xmp_sidecar: bool = False,
     recompress_lossless: bool = False,
     quality_mode: tuple[str, float] | None = None,  # ("target-kb", N) or ("target-psnr", DB)
+    watermark: str | None = None,
+    canvas: tuple[int, int] | None = None,
+    canvas_bg: str = "transparent",
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
@@ -1035,6 +1130,33 @@ def convert_file(
             new_w = max(1, int(w * factor))
             new_h = max(1, int(h * factor))
             img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        # Canvas resize — pad to a fixed canvas with a background fill.
+        if canvas:
+            bg_spec = canvas_bg or "transparent"
+            if bg_spec == "transparent":
+                bg = (0, 0, 0, 0)
+            elif bg_spec.startswith("#"):
+                # #RRGGBB or #RRGGBBAA hex
+                h = bg_spec.lstrip("#")
+                if len(h) == 6:
+                    bg = tuple(int(h[i:i+2], 16) for i in (0, 2, 4)) + (255,)
+                elif len(h) == 8:
+                    bg = tuple(int(h[i:i+2], 16) for i in (0, 2, 4, 6))
+                else:
+                    bg = (0, 0, 0, 0)
+            else:
+                bg = bg_spec  # named color string — Pillow handles many
+            img = _apply_canvas(img, canvas, bg)
+            result.warnings.append(f"canvas: padded to {canvas[0]}x{canvas[1]} on {bg_spec}")
+
+        # Watermark — text or PNG overlay; applied after resize/canvas.
+        if watermark:
+            try:
+                img = _apply_watermark(img, watermark)
+                result.warnings.append(f"watermark: applied ({watermark.split('|')[0][:40]})")
+            except Exception as e:
+                result.warnings.append(f"watermark failed: {e}")
 
         # Determine output format
         if fmt == "auto":
@@ -3132,6 +3254,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--target-psnr", type=float, default=None, metavar="DB",
                    help="Binary-search quality to hit a minimum PSNR (dB) vs source. "
                         "40+ dB is excellent; 30 dB is visibly degraded.")
+    p.add_argument("--watermark", type=str, default=None, metavar="SPEC",
+                   help="Watermark text or path to PNG. Spec: 'TEXT|position|opacity' "
+                        "(positions: top-left top top-right left center right "
+                        "bottom-left bottom bottom-right; opacity 0.0-1.0). "
+                        "Example: --watermark '\u00a9 2026|bottom-right|0.7' or "
+                        "--watermark 'logo.png|top-left|0.4'")
+    p.add_argument("--canvas", type=str, default=None, metavar="WxH",
+                   help="Pad output to a canvas of WxH pixels with background fill, "
+                        "preserving aspect ratio. Example: --canvas 1920x1080")
+    p.add_argument("--canvas-bg", type=str, default="transparent", metavar="COLOR",
+                   help="Canvas background: 'transparent' (default), '#RRGGBB', "
+                        "'#RRGGBBAA', or named color")
     return p
 
 
@@ -3189,6 +3323,17 @@ def _apply_preset_to_args(args, preset: dict):
             args.tiff_compression = ("none", "lzw", "deflate")[v] if 0 <= v < 3 else "none"
         elif k in _PRESET_ARG_KEYS and hasattr(args, k):
             setattr(args, k, v)
+
+
+def _parse_canvas(spec: str | None) -> tuple[int, int] | None:
+    """Parse 'WxH' into (W, H) ints; None on bad input."""
+    if not spec:
+        return None
+    try:
+        w, h = spec.lower().split("x")
+        return (int(w), int(h))
+    except (ValueError, AttributeError):
+        return None
 
 
 def _build_quality_mode(args) -> tuple[str, float] | None:
@@ -3359,6 +3504,9 @@ def _run_cli(args):
                 getattr(args, "xmp_sidecar", False),         # emit_xmp_sidecar
                 getattr(args, "recompress", False),          # recompress_lossless
                 _build_quality_mode(args),                   # quality_mode
+                getattr(args, "watermark", None),             # watermark
+                _parse_canvas(getattr(args, "canvas", None)), # canvas
+                getattr(args, "canvas_bg", "transparent"),    # canvas_bg
             )
             futures[fut] = f
 
