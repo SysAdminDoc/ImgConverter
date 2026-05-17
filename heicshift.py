@@ -3237,7 +3237,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="List available presets (built-ins + ~/.heicshift/presets/*.json) and exit")
     p.add_argument("--only-if-smaller", type=float, default=None, metavar="PCT",
                    help="Discard output and keep original when output is not at least PCT%% smaller "
-                        "than source (e.g. --only-if-smaller 20 means keep only when output \u2264 80%% of input)")
+                        "than source (e.g. --only-if-smaller 20 means keep only when output <= 80%% of input)")
     p.add_argument("--dpi", type=int, default=None, metavar="DPI",
                    help="Set output DPI tag for JPEG / PNG / TIFF (e.g. --dpi 300 for print)")
     p.add_argument("--icc", type=str, default=None, metavar="PROFILE",
@@ -3266,6 +3266,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--canvas-bg", type=str, default="transparent", metavar="COLOR",
                    help="Canvas background: 'transparent' (default), '#RRGGBB', "
                         "'#RRGGBBAA', or named color")
+    p.add_argument("--register-shell", action="store_true",
+                   help="Install OS shell integration: Windows Explorer right-click menu "
+                        "or Linux .desktop file. macOS prints Automator recipe. Then exit.")
+    p.add_argument("--unregister-shell", action="store_true",
+                   help="Remove the shell integration installed by --register-shell")
     return p
 
 
@@ -3323,6 +3328,99 @@ def _apply_preset_to_args(args, preset: dict):
             args.tiff_compression = ("none", "lzw", "deflate")[v] if 0 <= v < 3 else "none"
         elif k in _PRESET_ARG_KEYS and hasattr(args, k):
             setattr(args, k, v)
+
+
+def _install_shell_integration(uninstall: bool = False) -> int:
+    """Install / uninstall OS-level shell integration.
+
+    Windows : adds 'Convert with HEICShift' to the Explorer right-click menu
+              for image files via HKCU\\Software\\Classes\\* registry keys.
+    macOS   : prints the Automator Quick Action recipe (manual; safer than
+              auto-installing into ~/Library/Services).
+    Linux   : writes ~/.local/share/applications/heicshift.desktop +
+              ~/.local/share/file-manager/actions/heicshift.desktop.
+    """
+    system = platform.system()
+    exe = sys.executable
+    script = str(Path(__file__).resolve())
+    cmd_args = f'"{exe}" "{script}" --input "%1"'
+
+    if system == "Windows":
+        try:
+            import winreg
+        except ImportError:
+            print("[shell-integration] winreg unavailable.", file=sys.stderr)
+            return EXIT_DEP_MISSING
+        root = winreg.HKEY_CURRENT_USER
+        base = r"Software\Classes\*\shell\HEICShift"
+        cmd_key = base + r"\command"
+        if uninstall:
+            try:
+                winreg.DeleteKey(root, cmd_key)
+            except FileNotFoundError:
+                pass
+            try:
+                winreg.DeleteKey(root, base)
+                print("[shell-integration] removed.")
+            except FileNotFoundError:
+                pass
+            return EXIT_OK
+        try:
+            with winreg.CreateKeyEx(root, base, 0, winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Convert with HEICShift")
+                winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ, exe)
+            with winreg.CreateKeyEx(root, cmd_key, 0, winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, cmd_args)
+            print(f"[shell-integration] installed: HKCU\\{base}")
+            return EXIT_OK
+        except OSError as e:
+            print(f"[shell-integration] failed: {e}", file=sys.stderr)
+            return EXIT_INPUT_ERROR
+
+    if system == "Linux":
+        share = Path.home() / ".local" / "share"
+        apps_dir = share / "applications"
+        actions_dir = share / "file-manager" / "actions"
+        if uninstall:
+            for p in (apps_dir / "heicshift.desktop",
+                       actions_dir / "heicshift.desktop"):
+                try:
+                    p.unlink()
+                except FileNotFoundError:
+                    pass
+            print("[shell-integration] removed.")
+            return EXIT_OK
+        apps_dir.mkdir(parents=True, exist_ok=True)
+        actions_dir.mkdir(parents=True, exist_ok=True)
+        desktop_content = (
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Convert with HEICShift\n"
+            f"Exec={exe} {script} --input %f\n"
+            "MimeType=image/heic;image/heif;image/avif;image/jpeg;image/png;image/webp;image/tiff;\n"
+            "Terminal=false\n"
+            "Categories=Graphics;\n"
+        )
+        (apps_dir / "heicshift.desktop").write_text(desktop_content)
+        (actions_dir / "heicshift.desktop").write_text(desktop_content)
+        print(f"[shell-integration] installed at {apps_dir / 'heicshift.desktop'}")
+        return EXIT_OK
+
+    if system == "Darwin":
+        print(
+            "[shell-integration] macOS install:\n"
+            "  1. Open Automator -> New -> Quick Action\n"
+            "  2. Workflow receives: image files in Finder\n"
+            "  3. Add 'Run Shell Script' action:\n"
+            f"      {exe} {script} --input \"$@\"\n"
+            "  4. Save as 'Convert with HEICShift'\n"
+            "  Auto-install into ~/Library/Services is intentionally skipped\n"
+            "  because Automator workflows are signed bundles."
+        )
+        return EXIT_OK
+
+    print(f"[shell-integration] no built-in installer for {system}.", file=sys.stderr)
+    return EXIT_INPUT_ERROR
 
 
 def _parse_canvas(spec: str | None) -> tuple[int, int] | None:
@@ -3603,6 +3701,11 @@ def main():
             for k, v in sorted(payload.items()):
                 print(f"      {k}: {v}")
         sys.exit(EXIT_OK)
+
+    if getattr(args, "register_shell", False):
+        sys.exit(_install_shell_integration(uninstall=False))
+    if getattr(args, "unregister_shell", False):
+        sys.exit(_install_shell_integration(uninstall=True))
 
     _seed_user_preset_dir()
     _warn_below_floor()

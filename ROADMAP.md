@@ -96,7 +96,7 @@ Bigger surface-area features that need design first. All have a clear "why" but 
 - **"Already optimized" content-hash cache** — Pattern from ImageOptim ([howto](https://imageoptim.com/howto.html)). Key = `sha256(src_bytes) + sha256(preset_json)`; value = `(dst_bytes_sha256, dst_size)`. Skips re-work on repeat runs. Stored at `~/.cache/heicshift/seen.sqlite`. Effort 3, Impact 3.
 - **Per-file override** — already in 2026-04 draft (right-click row → change format/quality just for that entry). Effort 3, Impact 3.
 - **Drag converted files out of log to Explorer / Finder** — already in 2026-04 draft. Qt has `QMimeData` with file URIs. Effort 2, Impact 2.
-- **Right-click "Convert with HEICShift"** shell integration — Windows Explorer (registry `HKCU\Software\Classes\*\shell\HEICShift`), macOS Quick Action (`.workflow`), Linux `.desktop` MIME action. Found in IrfanView, ImBatch, reaConverter ([reaConverter features](https://www.reaconverter.com/features/)). Effort 3, Impact 4.
+- [x] **Right-click "Convert with HEICShift"** shell integration — Windows Explorer (registry `HKCU\Software\Classes\*\shell\HEICShift`), macOS Quick Action (`.workflow`), Linux `.desktop` MIME action. Found in IrfanView, ImBatch, reaConverter ([reaConverter features](https://www.reaconverter.com/features/)). Effort 3, Impact 4.
 - **Resume-able / pause-able queue** with state persisted to `~/.cache/heicshift/queue.json` — 10k-file batches survive power cycles. Pattern from RawTherapee ([Queue docs](https://rawpedia.rawtherapee.com/Queue)). Effort 3, Impact 3.
 
 ### Output
