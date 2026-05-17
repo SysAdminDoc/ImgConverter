@@ -71,8 +71,8 @@ Bigger surface-area features that need design first. All have a clear "why" but 
 
 ### Multi-frame & animation
 
-- **Image-sequence / animation handling** — Live Photo dual-image HEIC, animated WebP / AVIF / HEIF, APNG, GIF, multi-page TIFF. `libheif 1.21` shipped full HEIF sequence read/write across codecs ([1.21 release](https://github.com/strukturag/libheif/releases)). UX: when source has > 1 frame, prompt for "first frame only" / "extract all to {seq:###}.{ext}" / "preserve as animated {fmt}". Use `ImageSequence.Iterator(img)` for non-HEIC paths. Today the engine silently drops extra frames. Effort 5, Impact 4.
-- **AVIF image sequence (`.avifs`) decode** — AOMedia spec v1.0.0 ([AOMedia AVIF spec](https://aomediacodec.github.io/av1-avif/v1.0.0.html), [Mozilla bug 1788119](https://bugzilla.mozilla.org/show_bug.cgi?id=1788119)). Free-rides on the HEIF sequence work above. Effort 2, Impact 2.
+- [x] **Image-sequence / animation handling** — Live Photo dual-image HEIC, animated WebP / AVIF / HEIF, APNG, GIF, multi-page TIFF. `libheif 1.21` shipped full HEIF sequence read/write across codecs ([1.21 release](https://github.com/strukturag/libheif/releases)). UX: when source has > 1 frame, prompt for "first frame only" / "extract all to {seq:###}.{ext}" / "preserve as animated {fmt}". Use `ImageSequence.Iterator(img)` for non-HEIC paths. Today the engine silently drops extra frames. Effort 5, Impact 4.
+- [x] **AVIF image sequence (`.avifs`) decode** *(free-rides on multi-frame: `count_frames` reports n_frames > 1 for `.avifs`; Pillow's AVIF plugin enumerates frames; `--frames all` extracts each.)* — AOMedia spec v1.0.0 ([AOMedia AVIF spec](https://aomediacodec.github.io/av1-avif/v1.0.0.html), [Mozilla bug 1788119](https://bugzilla.mozilla.org/show_bug.cgi?id=1788119)). Free-rides on the HEIF sequence work above. Effort 2, Impact 2.
 
 ### Pipeline
 

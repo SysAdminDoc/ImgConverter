@@ -972,6 +972,23 @@ def has_transparency(img: Image.Image) -> bool:
     return False
 
 
+def count_frames(src: Path) -> int:
+    """Return number of frames / sub-images in a source file.
+
+    Multi-frame containers: animated WebP, animated AVIF / .avifs, animated GIF,
+    APNG, multi-page TIFF, HEIC image sequences. RAW / QOI / JPEG / single-frame
+    PNG return 1.
+    """
+    suffix = src.suffix.lower()
+    if suffix in RAW_EXTS or suffix in QOI_EXTS:
+        return 1
+    try:
+        with Image.open(str(src)) as img:
+            return getattr(img, "n_frames", 1)
+    except Exception:
+        return 1
+
+
 def _open_image(src: Path) -> tuple[Image.Image, dict]:
     """Open an image file, routing to the correct decoder.
 
@@ -1006,6 +1023,84 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
         meta["xmp"] = xmp
 
     return img, meta
+
+
+def _convert_animated_or_sequence(
+    src: Path,
+    output_dir: Path,
+    fmt: str,
+    extract_frames: bool,
+    base_dir: Path | None = None,
+    preserve_structure: bool = False,
+) -> ConvertResult:
+    """Multi-frame / sequence handling.
+
+    extract_frames=True : export every frame as {stem}.{seq:###}.{ext}
+    extract_frames=False: try to preserve the animation in a multi-frame
+                          output format (GIF/WebP/APNG/animated AVIF).
+                          Falls back to first-frame-only when target can't
+                          carry animation.
+    """
+    t0 = time.perf_counter()
+    result = ConvertResult(src=src, size_before=src.stat().st_size)
+    try:
+        if preserve_structure and base_dir:
+            try:
+                rel = src.parent.relative_to(base_dir)
+                dest_dir = output_dir / rel
+            except ValueError:
+                dest_dir = output_dir
+        else:
+            dest_dir = output_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        from PIL import ImageSequence
+        ext_map = {"jpeg": ".jpg", "png": ".png", "webp": ".webp",
+                   "avif": ".avif", "tiff": ".tiff", "jxl": ".jxl"}
+        fmt_pil = {"jpeg": "JPEG", "png": "PNG", "webp": "WEBP",
+                   "avif": "AVIF", "tiff": "TIFF", "jxl": "JXL"}.get(fmt, "JPEG")
+        ext = ext_map.get(fmt, ".jpg")
+
+        with Image.open(str(src)) as img:
+            frames = list(ImageSequence.Iterator(img))
+            n = len(frames)
+            if extract_frames or fmt_pil not in ("WEBP", "GIF", "PNG"):
+                # Per-frame export
+                pad_width = max(3, len(str(n)))
+                written = []
+                for i, frame in enumerate(frames, start=1):
+                    seq = str(i).zfill(pad_width)
+                    dst = dest_dir / f"{src.stem}.{seq}{ext}"
+                    frame_save = frame.convert("RGB") if fmt_pil == "JPEG" else frame
+                    save_kwargs = {}
+                    if fmt_pil in ("JPEG", "WEBP", "AVIF", "JXL"):
+                        save_kwargs["quality"] = 92
+                    frame_save.save(str(dst), fmt_pil, **save_kwargs)
+                    written.append(dst)
+                result.dst = written[0] if written else None
+                result.size_after = sum(p.stat().st_size for p in written) if written else 0
+                result.success = bool(written)
+                result.warnings.append(
+                    f"multi-frame: exported {len(written)} frames as {pad_width}-digit sequence"
+                )
+            else:
+                # Preserve as animated output (WebP/PNG/GIF only here).
+                dst = dest_dir / f"{src.stem}{ext}"
+                save_kwargs = {"save_all": True,
+                                "append_images": frames[1:] if len(frames) > 1 else [],
+                                "duration": img.info.get("duration", 100),
+                                "loop": img.info.get("loop", 0)}
+                if fmt_pil == "WEBP":
+                    save_kwargs["quality"] = 90
+                frames[0].save(str(dst), fmt_pil, **save_kwargs)
+                result.dst = dst
+                result.size_after = dst.stat().st_size
+                result.success = True
+                result.warnings.append(f"multi-frame: animated {fmt_pil} with {n} frames")
+    except Exception as e:
+        result.error = f"multi-frame: {e}"
+    result.elapsed = time.perf_counter() - t0
+    return result
 
 
 def convert_file(
@@ -3279,6 +3374,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Delete ~/.cache/heicshift/seen.sqlite and exit")
     p.add_argument("--resume", action="store_true",
                    help="Resume a previously interrupted batch from ~/.cache/heicshift/queue.json")
+    p.add_argument("--frames", type=str, default="first", choices=["first", "all", "animate"],
+                   help="Multi-frame source handling: 'first' (default — first frame only), "
+                        "'all' (export every frame as {stem}.NNN.{ext}), "
+                        "'animate' (preserve as animated WebP/PNG/GIF; falls back to 'all' if "
+                        "target format can't carry animation)")
     return p
 
 
@@ -3680,6 +3780,28 @@ def _run_cli(args):
     print(f"\nConverting {total} files with {args.workers} workers...\n")
 
     t0 = time.perf_counter()
+
+    # Multi-frame handling — extract or animate when source has >1 frame.
+    if getattr(args, "frames", "first") in ("all", "animate"):
+        animated_files = [f for f in scan.files if count_frames(f) > 1]
+        if animated_files:
+            print(f"[multi-frame] {len(animated_files)} sources have >1 frame; "
+                  f"--frames={args.frames} active")
+            for f in animated_files:
+                r = _convert_animated_or_sequence(
+                    f, output_dir, args.format,
+                    extract_frames=(args.frames == "all"),
+                    base_dir=input_dir,
+                    preserve_structure=not args.no_structure,
+                )
+                if r.success:
+                    ok_count += 1
+                    print(f"[OK*] {f.name}: {r.warnings[-1]}")
+                else:
+                    fail_count += 1
+                    print(f"[FAIL*] {f.name}: {r.error}")
+            scan.files = [f for f in scan.files if f not in animated_files]
+            total = len(scan.files)
 
     all_results: list[ConvertResult] = []
     cache_conn = _open_hash_cache() if getattr(args, "use_cache", False) else None
