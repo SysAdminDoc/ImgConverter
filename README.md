@@ -1,13 +1,3 @@
-<!-- codex-branding:start -->
-<p align="center"><img src="icon.png" width="128" alt="HEICShift"></p>
-
-<p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-3.0.0-58A6FF?style=for-the-badge">
-  <img alt="License" src="https://img.shields.io/badge/license-MIT-4ade80?style=for-the-badge">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Python%20GUI-58A6FF?style=for-the-badge">
-</p>
-<!-- codex-branding:end -->
-
 # HEICShift
 
 Universal image batch converter with a modern GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
