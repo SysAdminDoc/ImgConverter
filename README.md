@@ -196,6 +196,20 @@ python imgconverter.py --version
 | `--tiff-compression` | TIFF compression: `none`, `lzw`, `deflate` (default: none) |
 | `--png-level` | PNG compression level 1–9 (default: 6) |
 | `--no-structure` | Flatten output (no subdirectory mirroring) |
+| `--avif-speed N` | AVIF encoding speed 0-10 (default: 6). Lower = smaller, slower |
+| `--avif-codec CODEC` | AVIF encoder: `auto`, `aom`, `rav1e`, `svt` (default: auto) |
+| `--png-lossy` | Run pngquant on PNG output for lossy size reduction |
+| `--max-file-size SIZE` | Skip files larger than SIZE (e.g. `500MB`, `2GB`) |
+| `--watermark SPEC` | Text or PNG watermark. Spec: `TEXT\|position\|opacity` |
+| `--canvas WxH` | Pad output to canvas size with `--canvas-bg` fill |
+| `--dpi N` | Set output DPI tag for JPEG/PNG/TIFF |
+| `--icc PROFILE` | Embed ICC profile (`sRGB` or path to `.icc` file) |
+| `--tone-map CURVE` | HDR tone mapping: `none`, `reinhard`, `hable`, `clip` |
+| `--xmp-sidecar` | Emit `.xmp` sidecar alongside output |
+| `--recompress` | Lossless JPEG→JPEG via jpegoptim/jpegtran |
+| `--target-kb N` | Binary-search quality to hit target output size (KB) |
+| `--only-if-smaller PCT` | Discard output if not PCT% smaller than input |
+| `--frames MODE` | Multi-frame: `first`, `all`, `animate` (default: first) |
 | `--version` | Print version and exit |
 
 **Exit codes:**
