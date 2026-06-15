@@ -748,6 +748,24 @@ class ScanResult:
     elapsed: float = 0.0
 
 
+def _parse_size_spec(spec: str) -> int | None:
+    """Parse a human-readable size like '500MB' or '2GB' to bytes."""
+    if not spec:
+        return None
+    spec = spec.strip().upper()
+    multipliers = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+    for suffix, mult in sorted(multipliers.items(), key=lambda x: -len(x[0])):
+        if spec.endswith(suffix):
+            try:
+                return int(float(spec[:-len(suffix)].strip()) * mult)
+            except ValueError:
+                return None
+    try:
+        return int(spec)
+    except ValueError:
+        return None
+
+
 # ── Conversion Engine ─────────────────────────────────────────────────────────
 
 def scan_directory(
@@ -756,6 +774,7 @@ def scan_directory(
     extensions: set[str] | None = None,
     on_progress=None,
     exclude_patterns: list[str] | None = None,
+    max_file_size: int | None = None,
 ) -> ScanResult:
     """Find all supported image files in directory.
 
@@ -812,6 +831,8 @@ def scan_directory(
             try:
                 st = p.stat()
             except OSError:
+                continue
+            if max_file_size and st.st_size > max_file_size:
                 continue
             result.files.append(p)
             result.total_size += st.st_size
@@ -3635,6 +3656,15 @@ class MainWindow(QMainWindow):
         self._log(f"{'='*60}")
         self.status_bar.showMessage(summary)
 
+        # Screen reader announcement (Qt 6.8+)
+        try:
+            from PyQt6.QtGui import QAccessibleAnnouncementEvent
+            from PyQt6.QtWidgets import QAccessible
+            evt = QAccessibleAnnouncementEvent(self, summary)
+            QAccessible.updateAccessibility(evt)
+        except (ImportError, AttributeError):
+            pass
+
         # System tray notification
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
@@ -3951,6 +3981,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    choices=["auto", "aom", "rav1e", "svt"],
                    help="AVIF encoder codec. 'auto' (default) lets Pillow choose, "
                         "'svt' is fastest, 'aom' is smallest, 'rav1e' is in between.")
+    p.add_argument("--max-file-size", type=str, default=None, metavar="SIZE",
+                   help="Skip files larger than SIZE. Accepts: '500MB', '2GB', '100KB'. "
+                        "Prevents OOM on multi-gigapixel images.")
     p.add_argument("--register-shell", action="store_true",
                    help="Install OS shell integration: Windows Explorer right-click menu "
                         "or Linux .desktop file. macOS prints Automator recipe. Then exit.")
@@ -4435,10 +4468,14 @@ def _run_cli(args):
 
     # Scan
     print(f"\nScanning{'  recursively' if args.recursive else ''}...")
+    max_bytes = _parse_size_spec(getattr(args, "max_file_size", None) or "")
+    if max_bytes:
+        print(f"[filter] skipping files larger than {_fmt_size(max_bytes)}")
     scan = scan_directory(
         input_dir,
         recursive=args.recursive,
         exclude_patterns=getattr(args, "exclude", None) or [],
+        max_file_size=max_bytes,
     )
     print(f"Found {len(scan.files)} files ({_fmt_size(scan.total_size)}) in {scan.elapsed:.2f}s")
 
