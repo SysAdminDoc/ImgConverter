@@ -396,7 +396,7 @@ from PyQt6.QtWidgets import (
 CAT = {
     "base":      "#1e1e2e", "mantle":   "#181825", "crust":    "#11111b",
     "surface0":  "#313244", "surface1": "#45475a", "surface2": "#585b70",
-    "overlay0":  "#6c7086", "overlay1": "#7f849c",
+    "overlay0":  "#6c7086", "overlay1": "#7f849c", "overlay2": "#9399b2",
     "text":      "#cdd6f4", "subtext0": "#a6adc8", "subtext1": "#bac2de",
     "lavender":  "#b4befe", "blue":     "#89b4fa", "sapphire": "#74c7ec",
     "sky":       "#89dceb", "teal":     "#94e2d5", "green":    "#a6e3a1",
@@ -569,7 +569,7 @@ QCheckBox::indicator:checked {{
     border-color: {CAT['blue']};
 }}
 QLabel#dimLabel {{
-    color: {CAT['overlay1']};
+    color: {CAT['overlay2']};
     font-size: 12px;
 }}
 QLabel#statValue {{
@@ -578,7 +578,7 @@ QLabel#statValue {{
     font-weight: 700;
 }}
 QLabel#statLabel {{
-    color: {CAT['overlay1']};
+    color: {CAT['overlay2']};
     font-size: 11px;
 }}
 QStatusBar {{
@@ -2461,7 +2461,7 @@ class MainWindow(QMainWindow):
         title = QLabel("ImgConverter")
         title.setStyleSheet(f"font-size: 20px; font-weight: 800; color: {CAT['lavender']};")
         ver = QLabel(f"v{APP_VERSION}")
-        ver.setStyleSheet(f"color: {CAT['overlay0']}; font-size: 12px; margin-left: 6px;")
+        ver.setStyleSheet(f"color: {CAT['overlay2']}; font-size: 12px; margin-left: 6px;")
         hdr.addWidget(title)
         hdr.addWidget(ver)
         hdr.addStretch()
@@ -2871,7 +2871,7 @@ class MainWindow(QMainWindow):
         # ── Log + controls ──
         log_header = QHBoxLayout()
         log_label = QLabel("Log")
-        log_label.setStyleSheet(f"color: {CAT['overlay1']}; font-weight: 600; font-size: 12px;")
+        log_label.setStyleSheet(f"color: {CAT['overlay2']}; font-weight: 600; font-size: 12px;")
         log_header.addWidget(log_label)
         log_header.addStretch()
 
@@ -4054,12 +4054,34 @@ def _watch_directory(args, input_dir: Path, output_dir: Path) -> int:
     try:
         from concurrent.futures import ThreadPoolExecutor
         pool = ThreadPoolExecutor(max_workers=args.workers)
+        def _safe_walk(d: Path, visited: set[str]):
+            try:
+                real = str(d.resolve(strict=False))
+            except OSError:
+                return
+            if real in visited:
+                return
+            visited.add(real)
+            try:
+                entries = list(d.iterdir())
+            except (PermissionError, OSError):
+                return
+            for p in entries:
+                try:
+                    if p.is_dir():
+                        if args.recursive:
+                            yield from _safe_walk(p, visited)
+                        continue
+                    if p.is_file() and p.suffix.lower() in supported:
+                        yield p
+                except OSError:
+                    continue
+
         while True:
             current = []
             try:
-                for p in input_dir.rglob("*") if args.recursive else input_dir.iterdir():
-                    if not p.is_file() or p.suffix.lower() not in supported:
-                        continue
+                visited: set[str] = set()
+                for p in _safe_walk(input_dir, visited):
                     if p in converted:
                         continue
                     try:
@@ -4067,9 +4089,9 @@ def _watch_directory(args, input_dir: Path, output_dir: Path) -> int:
                     except OSError:
                         continue
                     if seen_sizes.get(p) == size:
-                        current.append(p)  # stable - ready to convert
+                        current.append(p)
                     else:
-                        seen_sizes[p] = size  # still being written
+                        seen_sizes[p] = size
             except OSError:
                 pass
 
