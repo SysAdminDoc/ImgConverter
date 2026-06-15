@@ -350,6 +350,7 @@ def _recompress_jpeg_lossless(src: Path, dst: Path, strip_metadata: bool) -> tup
             os.replace(str(tmp), str(dst))
             return True, "jpegtran"
         except subprocess.TimeoutExpired:
+            tmp.unlink(missing_ok=True)
             return False, "jpegtran timed out"
     return False, "no jpegoptim or jpegtran on PATH"
 
@@ -473,6 +474,14 @@ QPushButton#stopBtn {{
 }}
 QPushButton#stopBtn:hover {{
     background-color: {CAT['maroon']};
+}}
+QPushButton#stopBtn:pressed {{
+    background-color: {CAT['surface2']};
+}}
+QPushButton#stopBtn:disabled {{
+    background-color: {CAT['surface1']};
+    color: {CAT['overlay0']};
+    border: none;
 }}
 QLineEdit {{
     background-color: {CAT['surface0']};
@@ -832,7 +841,7 @@ def scan_directory(
                 st = p.stat()
             except OSError:
                 continue
-            if max_file_size and st.st_size > max_file_size:
+            if max_file_size is not None and st.st_size > max_file_size:
                 continue
             result.files.append(p)
             result.total_size += st.st_size
@@ -1330,7 +1339,11 @@ def convert_file(
     is unavailable.
     """
     t0 = time.perf_counter()
-    result = ConvertResult(src=src, size_before=src.stat().st_size)
+    try:
+        size_before = src.stat().st_size
+    except OSError:
+        size_before = 0
+    result = ConvertResult(src=src, size_before=size_before)
     img = None
     out_path = None
     temp_path = None
@@ -1552,12 +1565,14 @@ def convert_file(
                 name_template, src, base_dir, img.size[0], img.size[1],
                 fmt, ext, seq,
             )
-            # Template may include subdirectories; resolve relative to dest_dir.
             cand = Path(applied)
             if cand.is_absolute():
-                out_path = cand
-            else:
-                out_path = dest_dir / cand
+                result.warnings.append("template: absolute paths rejected for safety")
+                cand = Path(cand.name)
+            out_path = dest_dir / cand
+            if not out_path.resolve().is_relative_to(dest_dir.resolve()):
+                result.warnings.append("template: path escapes output dir, flattened")
+                out_path = dest_dir / out_path.name
             # If user's template forgot the extension, append it.
             if out_path.suffix.lower() != ext.lower():
                 out_path = out_path.with_suffix(ext)
@@ -2069,7 +2084,12 @@ class ConvertWorker(QThread):
                     self.log.emit("Conversion cancelled by user.")
                     break
 
-                result = fut.result()
+                try:
+                    result = fut.result()
+                except Exception as exc:
+                    f = futures[fut]
+                    result = ConvertResult(src=f, size_before=0)
+                    result.error = str(exc)
                 results.append(result)
                 done += 1
                 self.progress.emit(done, total)
@@ -2398,6 +2418,16 @@ class MainWindow(QMainWindow):
             ("recompress_chk",      "Lossless JPEG recompress", "Pixel-lossless JPEG size reduction via jpegoptim/jpegtran"),
             ("only_if_smaller_chk", "Only if smaller",          "Discard output when not meaningfully smaller than input"),
             ("target_kb_spin",      "Target file size KB",      "Binary-search quality to hit a target output size in KB"),
+            ("avif_codec_combo",    "AVIF codec",               "AVIF encoder: auto, aom, rav1e, or svt"),
+            ("png_lossy_chk",       "Lossy PNG",                "Run pngquant for lossy PNG size reduction"),
+            ("chroma_chk",          "Chroma subsampling",       "Use 4:2:0 chroma for smaller JPEG files"),
+            ("srgb_chk",            "Convert to sRGB",          "Convert embedded ICC profiles to sRGB"),
+            ("strip_meta_chk",      "Strip metadata",           "Remove all EXIF, ICC, and XMP from output"),
+            ("structure_chk",       "Preserve folder structure", "Mirror source directory layout in output"),
+            ("only_if_smaller_spin","Only-if-smaller threshold", "Percentage by which output must be smaller"),
+            ("png_level_spin",      "PNG compression level",    "PNG compression 1 (fast) to 9 (smallest)"),
+            ("tiff_comp_combo",     "TIFF compression",         "TIFF compression: None, LZW, or Deflate"),
+            ("paste_btn",           "Paste image",              "Paste an image from clipboard as input"),
         ]
         for attr, name, desc in labels:
             w = getattr(self, attr, None)
@@ -2459,6 +2489,10 @@ class MainWindow(QMainWindow):
             missing.append("QOI (pip install qoi)")
         if missing:
             self._log(f"Optional formats unavailable: {', '.join(missing)}")
+        if HAS_EXIFTOOL:
+            self._log(f"ExifTool: {EXIFTOOL_PATH}")
+        else:
+            self._log("[WARN] ExifTool not found — metadata limited to EXIF/ICC/XMP (MakerNotes, GPS sub-IFDs, IPTC will be lost)")
         exts = sorted(get_supported_extensions())
         self._log(f"Scanning for: {' '.join(exts)}")
         self._log("")
@@ -2630,10 +2664,9 @@ class MainWindow(QMainWindow):
         self._preset_btn.setText("Presets")
         self._preset_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._preset_btn.setToolTip("Apply a conversion preset")
-        preset_menu = QMenu(self)
-        for name in list_presets():
-            preset_menu.addAction(name, lambda n=name: self._apply_preset(n))
-        self._preset_btn.setMenu(preset_menu)
+        self._preset_menu = QMenu(self)
+        self._preset_menu.aboutToShow.connect(self._populate_preset_menu)
+        self._preset_btn.setMenu(self._preset_menu)
         opt_grid.addWidget(self._preset_btn, 0, 3)
 
         self.quality_desc_label = QLabel("JPEG/WebP Quality:")
@@ -2840,13 +2873,6 @@ class MainWindow(QMainWindow):
         self.canvas_bg_edit.setToolTip("Canvas background: 'transparent', '#RRGGBB', or named color")
         adv_grid.addWidget(self.canvas_bg_edit, 5, 3)
 
-        self.png_lossy_chk = QCheckBox("Lossy PNG (pngquant)")
-        self.png_lossy_chk.setToolTip(
-            "Run pngquant for 50-80% PNG size reduction via lossy quantization. "
-            "Requires pngquant on PATH."
-        )
-        adv_grid.addWidget(self.png_lossy_chk, 5, 2, 1, 2)
-
         self.xmp_sidecar_chk = QCheckBox("Emit XMP sidecar")
         self.xmp_sidecar_chk.setToolTip("Write .xmp sidecar alongside output (Adobe Bridge / darktable convention)")
         adv_grid.addWidget(self.xmp_sidecar_chk, 6, 0, 1, 2)
@@ -2876,6 +2902,13 @@ class MainWindow(QMainWindow):
         self.target_kb_spin.setSpecialValueText("(disabled)")
         self.target_kb_spin.setToolTip("Binary-search quality to hit a target output size in KB (0 = disabled)")
         adv_grid.addWidget(self.target_kb_spin, 7, 3)
+
+        self.png_lossy_chk = QCheckBox("Lossy PNG (pngquant)")
+        self.png_lossy_chk.setToolTip(
+            "Run pngquant for 50-80% PNG size reduction via lossy quantization. "
+            "Requires pngquant on PATH."
+        )
+        adv_grid.addWidget(self.png_lossy_chk, 8, 0, 1, 2)
 
         scroll_layout.addWidget(adv_group)
 
@@ -2953,6 +2986,7 @@ class MainWindow(QMainWindow):
 
         self.export_log_btn = QPushButton("Export Log")
         self.export_log_btn.setStyleSheet("font-size: 11px; padding: 2px 10px;")
+        self.export_log_btn.setToolTip("Save the conversion log as a text file")
         self.export_log_btn.clicked.connect(self._export_log)
         log_header.addWidget(self.export_log_btn)
 
@@ -2964,6 +2998,7 @@ class MainWindow(QMainWindow):
 
         self.clear_log_btn = QPushButton("Clear")
         self.clear_log_btn.setStyleSheet("font-size: 11px; padding: 2px 10px;")
+        self.clear_log_btn.setToolTip("Clear the log output")
         self.clear_log_btn.clicked.connect(self._clear_log)
         log_header.addWidget(self.clear_log_btn)
 
@@ -3137,6 +3172,11 @@ class MainWindow(QMainWindow):
         menu.exec(self.log_view.mapToGlobal(pos))
 
     # ── Presets ──
+    def _populate_preset_menu(self):
+        self._preset_menu.clear()
+        for name in list_presets():
+            self._preset_menu.addAction(name, lambda n=name: self._apply_preset(n))
+
     def _apply_preset(self, name: str):
         preset = list_presets().get(name)
         if not preset:
@@ -3519,6 +3559,11 @@ class MainWindow(QMainWindow):
         self.convert_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.open_output_btn.setEnabled(False)
+        self.src_edit.setEnabled(False)
+        self.src_btn.setEnabled(False)
+        self.dst_edit.setEnabled(False)
+        self.dst_btn.setEnabled(False)
+        self.fmt_combo.setEnabled(False)
         self.status_bar.showMessage("Converting...")
 
         if in_place:
@@ -3629,6 +3674,11 @@ class MainWindow(QMainWindow):
         self.convert_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.open_output_btn.setEnabled(True)
+        self.src_edit.setEnabled(True)
+        self.src_btn.setEnabled(True)
+        self.dst_edit.setEnabled(True)
+        self.dst_btn.setEnabled(True)
+        self.fmt_combo.setEnabled(True)
         self.progress_bar.setFormat("%p%")
 
         ok = sum(1 for r in results if r.success)
@@ -3736,6 +3786,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("only_if_smaller_enabled", self.only_if_smaller_chk.isChecked())
         self.settings.setValue("only_if_smaller_pct", self.only_if_smaller_spin.value())
         self.settings.setValue("target_kb", self.target_kb_spin.value())
+        self.settings.setValue("png_lossy", self.png_lossy_chk.isChecked())
         self.settings.setValue("geometry", self.saveGeometry())
         # Format filter states
         filter_state = {name: chk.isChecked() for name, chk in self._format_filters.items()}
@@ -3766,20 +3817,28 @@ class MainWindow(QMainWindow):
         self.settings.setValue("settings_version", SETTINGS_SCHEMA)
         _diag_log(f"QSettings migrated from v{stored} to v{SETTINGS_SCHEMA}")
 
+    @staticmethod
+    def _safe_int(v, default=0):
+        if v is None:
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
     def _restore_state(self):
         self._maybe_migrate_settings()
         if v := self.settings.value("src"):
             self.src_edit.setText(v)
         if v := self.settings.value("dst"):
             self.dst_edit.setText(v)
-        if (v := self.settings.value("fmt")) is not None:
-            idx = int(v)
-            if 0 <= idx < self.fmt_combo.count():
-                self.fmt_combo.setCurrentIndex(idx)
-        if (v := self.settings.value("quality")) is not None:
-            self.quality_slider.setValue(int(v))
-        if (v := self.settings.value("workers")) is not None:
-            self.workers_spin.setValue(int(v))
+        idx = self._safe_int(self.settings.value("fmt"))
+        if idx is not None and 0 <= idx < self.fmt_combo.count():
+            self.fmt_combo.setCurrentIndex(idx)
+        if (n := self._safe_int(self.settings.value("quality"))) is not None:
+            self.quality_slider.setValue(n)
+        if (n := self._safe_int(self.settings.value("workers"))) is not None:
+            self.workers_spin.setValue(n)
         if (v := self.settings.value("recursive")) is not None:
             self.recursive_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("structure")) is not None:
@@ -3796,18 +3855,19 @@ class MainWindow(QMainWindow):
             self.lossless_webp_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("resize_enabled")) is not None:
             self.resize_chk.setChecked(v == "true" or v is True)
-        if (v := self.settings.value("resize_mode")) is not None:
+        n = self._safe_int(self.settings.value("resize_mode"))
+        if n is not None:
             self.resize_combo.blockSignals(True)
-            self.resize_combo.setCurrentIndex(int(v))
+            self.resize_combo.setCurrentIndex(n)
             self.resize_combo.blockSignals(False)
-            if int(v) == 0:
+            if n == 0:
                 self.resize_spin.setRange(100, 10000)
                 self.resize_spin.setSuffix(" px")
             else:
                 self.resize_spin.setRange(1, 500)
                 self.resize_spin.setSuffix(" %")
-        if (v := self.settings.value("resize_value")) is not None:
-            self.resize_spin.setValue(int(v))
+        if (n := self._safe_int(self.settings.value("resize_value"))) is not None:
+            self.resize_spin.setValue(n)
         if (v := self.settings.value("prefix")) is not None:
             self.prefix_edit.setText(v)
         if (v := self.settings.value("suffix")) is not None:
@@ -3816,26 +3876,26 @@ class MainWindow(QMainWindow):
             self.chroma_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("convert_to_srgb")) is not None:
             self.srgb_chk.setChecked(v == "true" or v is True)
-        if (v := self.settings.value("tiff_compression")) is not None:
-            self.tiff_comp_combo.setCurrentIndex(int(v))
-        if (v := self.settings.value("png_compress_level")) is not None:
-            self.png_level_spin.setValue(int(v))
+        if (n := self._safe_int(self.settings.value("tiff_compression"))) is not None:
+            self.tiff_comp_combo.setCurrentIndex(n)
+        if (n := self._safe_int(self.settings.value("png_compress_level"))) is not None:
+            self.png_level_spin.setValue(n)
         if (v := self.settings.value("strip_metadata")) is not None:
             self.strip_meta_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("auto_open_output")) is not None:
             self.auto_open_chk.setChecked(v == "true" or v is True)
         if v := self.settings.value("template"):
             self.template_edit.setText(v)
-        if (v := self.settings.value("dpi")) is not None:
-            self.dpi_spin.setValue(int(v))
-        if (v := self.settings.value("avif_speed")) is not None:
-            self.avif_speed_spin.setValue(int(v))
-        if (v := self.settings.value("avif_codec")) is not None:
-            self.avif_codec_combo.setCurrentIndex(int(v))
-        if (v := self.settings.value("frames_mode")) is not None:
-            self.frames_combo.setCurrentIndex(int(v))
-        if (v := self.settings.value("tone_map")) is not None:
-            self.tone_map_combo.setCurrentIndex(int(v))
+        if (n := self._safe_int(self.settings.value("dpi"))) is not None:
+            self.dpi_spin.setValue(n)
+        if (n := self._safe_int(self.settings.value("avif_speed"))) is not None:
+            self.avif_speed_spin.setValue(n)
+        if (n := self._safe_int(self.settings.value("avif_codec"))) is not None:
+            self.avif_codec_combo.setCurrentIndex(n)
+        if (n := self._safe_int(self.settings.value("frames_mode"))) is not None:
+            self.frames_combo.setCurrentIndex(n)
+        if (n := self._safe_int(self.settings.value("tone_map"))) is not None:
+            self.tone_map_combo.setCurrentIndex(n)
         if v := self.settings.value("icc_override"):
             self.icc_edit.setText(v)
         if v := self.settings.value("watermark"):
@@ -3850,10 +3910,12 @@ class MainWindow(QMainWindow):
             self.recompress_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("only_if_smaller_enabled")) is not None:
             self.only_if_smaller_chk.setChecked(v == "true" or v is True)
-        if (v := self.settings.value("only_if_smaller_pct")) is not None:
-            self.only_if_smaller_spin.setValue(int(v))
-        if (v := self.settings.value("target_kb")) is not None:
-            self.target_kb_spin.setValue(int(v))
+        if (n := self._safe_int(self.settings.value("only_if_smaller_pct"))) is not None:
+            self.only_if_smaller_spin.setValue(n)
+        if (n := self._safe_int(self.settings.value("target_kb"))) is not None:
+            self.target_kb_spin.setValue(n)
+        if (v := self.settings.value("png_lossy")) is not None:
+            self.png_lossy_chk.setChecked(v == "true" or v is True)
         if v := self.settings.value("geometry"):
             self.restoreGeometry(v)
         # Restore format filter states
@@ -4184,8 +4246,6 @@ def _watch_directory(args, input_dir: Path, output_dir: Path) -> int:
     converted: set[Path] = set()
     supported = get_supported_extensions()
     try:
-        from concurrent.futures import ThreadPoolExecutor
-        pool = ThreadPoolExecutor(max_workers=args.workers)
         def _safe_walk(d: Path, visited: set[str]):
             try:
                 real = str(d.resolve(strict=False))
@@ -4252,7 +4312,6 @@ def _watch_directory(args, input_dir: Path, output_dir: Path) -> int:
             time.sleep(interval)
     except KeyboardInterrupt:
         print(f"\n[watch] stopped. Total processed: {len(converted)}")
-        pool.shutdown(wait=False)
     return EXIT_OK
 
 
@@ -4350,12 +4409,15 @@ def _install_shell_integration(uninstall: bool = False) -> int:
 
 
 def _parse_canvas(spec: str | None) -> tuple[int, int] | None:
-    """Parse 'WxH' into (W, H) ints; None on bad input."""
-    if not spec:
+    """Parse 'WxH' into (W, H) ints; None on bad or non-positive input."""
+    if not spec or not spec.strip():
         return None
     try:
         w, h = spec.lower().split("x")
-        return (int(w), int(h))
+        w, h = int(w), int(h)
+        if w <= 0 or h <= 0:
+            return None
+        return (w, h)
     except (ValueError, AttributeError):
         return None
 
