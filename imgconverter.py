@@ -45,8 +45,8 @@ EXIT_TOTAL_FAILURE   = 6   # every file in batch failed
 # Dependency floors — see requirements.txt / ROADMAP Appendix A6 for CVE rationale.
 # Older versions of these expose users to known libheif / libjxl / Pillow RCEs.
 DEP_FLOORS = {
-    "PIL":          ("Pillow",             "11.3.0"),
-    "pillow_heif":  ("pillow-heif",        "1.3.0"),
+    "PIL":          ("Pillow",             "12.1.1"),
+    "pillow_heif":  ("pillow-heif",        "1.4.0"),
     "PyQt6":        ("PyQt6",              "6.8"),
     "rawpy":        ("rawpy",              "0.27.0"),    # optional
     "pillow_jxl":   ("pillow-jxl-plugin",  "1.3.6"),     # optional
@@ -1294,6 +1294,7 @@ def convert_file(
     canvas: tuple[int, int] | None = None,
     canvas_bg: str = "transparent",
     tone_map: str = "none",
+    avif_speed: int = 6,
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
@@ -1609,7 +1610,7 @@ def convert_file(
                 save_kwargs["compression"] = "tiff_deflate"
         elif out_fmt == "AVIF":
             save_kwargs["quality"] = jpeg_quality
-            save_kwargs["speed"] = 6
+            save_kwargs["speed"] = avif_speed
             # Wide-gamut / 10-bit preservation when source is HEIC at >8 bpp.
             # iPhone HEIC is 10-bit + Display P3; default downcast to 8-bit
             # loses dynamic range that AVIF (and JXL) can carry natively.
@@ -1896,7 +1897,12 @@ class ConvertWorker(QThread):
                  prefix="", suffix="", lossless_webp=False,
                  progressive_jpeg=False, chroma_subsampling=False,
                  convert_to_srgb=False, tiff_compression="none",
-                 png_compress_level=6, use_exiftool=True):
+                 png_compress_level=6, use_exiftool=True,
+                 name_template=None, only_if_smaller_pct=None,
+                 dpi=None, icc_override=None, emit_xmp_sidecar=False,
+                 recompress_lossless=False, quality_mode=None,
+                 watermark=None, canvas=None, canvas_bg="transparent",
+                 tone_map="none", avif_speed=6, frames="first"):
         super().__init__()
         self.files = files
         self.output_dir = Path(output_dir)
@@ -1919,6 +1925,19 @@ class ConvertWorker(QThread):
         self.tiff_compression = tiff_compression
         self.png_compress_level = png_compress_level
         self.use_exiftool = use_exiftool
+        self.name_template = name_template
+        self.only_if_smaller_pct = only_if_smaller_pct
+        self.dpi = dpi
+        self.icc_override = icc_override
+        self.emit_xmp_sidecar = emit_xmp_sidecar
+        self.recompress_lossless = recompress_lossless
+        self.quality_mode = quality_mode
+        self.watermark = watermark
+        self.canvas = canvas
+        self.canvas_bg = canvas_bg
+        self.tone_map = tone_map
+        self.avif_speed = avif_speed
+        self.frames = frames
         self._stop = False
 
     def stop(self):
@@ -1931,9 +1950,36 @@ class ConvertWorker(QThread):
 
         self.log.emit(f"Starting conversion of {total} files with {self.workers} workers...")
 
+        # Multi-frame handling — extract or animate when source has >1 frame.
+        if self.frames in ("all", "animate"):
+            animated_files = [f for f in self.files if count_frames(f) > 1]
+            if animated_files:
+                self.log.emit(
+                    f"[multi-frame] {len(animated_files)} sources have >1 frame; "
+                    f"--frames={self.frames} active"
+                )
+                for f in animated_files:
+                    r = _convert_animated_or_sequence(
+                        f, self.output_dir, self.fmt,
+                        extract_frames=(self.frames == "all"),
+                        base_dir=self.base_dir,
+                        preserve_structure=self.preserve_structure,
+                    )
+                    results.append(r)
+                    done += 1
+                    self.progress.emit(done, total)
+                    self.current_file.emit(r.src.name)
+                    self.file_done.emit(r)
+                    if r.success:
+                        self.log.emit(f"[OK*] {f.name}: {r.warnings[-1] if r.warnings else 'ok'}")
+                    else:
+                        self.log.emit(f"[FAIL*] {f.name}: {r.error}")
+                self.files = [f for f in self.files if f not in animated_files]
+                total = len(self.files) + done
+
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futures = {}
-            for f in self.files:
+            for seq_i, f in enumerate(self.files, start=1):
                 if self._stop:
                     break
                 fut = pool.submit(
@@ -1947,6 +1993,19 @@ class ConvertWorker(QThread):
                     self.chroma_subsampling, self.convert_to_srgb,
                     self.tiff_compression, self.png_compress_level,
                     self.use_exiftool,
+                    self.name_template,             # name_template
+                    seq_i,                          # seq
+                    self.only_if_smaller_pct,       # only_if_smaller_pct
+                    self.dpi,                       # dpi
+                    self.icc_override,              # icc_override
+                    self.emit_xmp_sidecar,          # emit_xmp_sidecar
+                    self.recompress_lossless,        # recompress_lossless
+                    self.quality_mode,               # quality_mode
+                    self.watermark,                  # watermark
+                    self.canvas,                     # canvas
+                    self.canvas_bg,                  # canvas_bg
+                    self.tone_map,                   # tone_map
+                    self.avif_speed,                 # avif_speed
                 )
                 futures[fut] = f
 
@@ -2050,7 +2109,7 @@ def _create_app_icon() -> QIcon:
     p.setPen(QColor(CAT["crust"]))
     f = QFont("Segoe UI", 30, QFont.Weight.Bold)
     p.setFont(f)
-    p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "H")
+    p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "I")
     p.end()
     return QIcon(pm)
 
@@ -2272,6 +2331,19 @@ class MainWindow(QMainWindow):
             ("resize_chk",          "Enable resize",            "Resize images during conversion"),
             ("resize_combo",        "Resize mode",              "Max dimension in pixels, or percent scale"),
             ("resize_spin",         "Resize value",             "Numeric value for the chosen resize mode"),
+            ("template_edit",       "Filename template",        "Output filename template with tokens like {stem} {width} {height}"),
+            ("dpi_spin",            "DPI override",             "Set output DPI for JPEG/PNG/TIFF, 0 keeps original"),
+            ("avif_speed_spin",     "AVIF speed",               "AVIF encoding speed 0-10, lower is slower but smaller"),
+            ("frames_combo",        "Multi-frame mode",         "How to handle animated or multi-frame source images"),
+            ("tone_map_combo",      "Tone mapping curve",       "HDR tone mapping for PQ/HLG/wide-gamut sources"),
+            ("icc_edit",            "ICC profile override",     "Embed a specific ICC profile or leave blank to keep source"),
+            ("watermark_edit",      "Watermark specification",  "Watermark text or image with position and opacity"),
+            ("canvas_edit",         "Canvas size",              "Pad output to WxH canvas with background fill"),
+            ("canvas_bg_edit",      "Canvas background",        "Canvas background color: transparent, hex, or named color"),
+            ("xmp_sidecar_chk",     "Emit XMP sidecar",         "Write .xmp sidecar alongside output"),
+            ("recompress_chk",      "Lossless JPEG recompress", "Pixel-lossless JPEG size reduction via jpegoptim/jpegtran"),
+            ("only_if_smaller_chk", "Only if smaller",          "Discard output when not meaningfully smaller than input"),
+            ("target_kb_spin",      "Target file size KB",      "Binary-search quality to hit a target output size in KB"),
         ]
         for attr, name, desc in labels:
             w = getattr(self, attr, None)
@@ -2505,7 +2577,7 @@ class MainWindow(QMainWindow):
         self._preset_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._preset_btn.setToolTip("Apply a conversion preset")
         preset_menu = QMenu(self)
-        for name in PRESETS:
+        for name in list_presets():
             preset_menu.addAction(name, lambda n=name: self._apply_preset(n))
         self._preset_btn.setMenu(preset_menu)
         opt_grid.addWidget(self._preset_btn, 0, 3)
@@ -2618,6 +2690,123 @@ class MainWindow(QMainWindow):
         self._on_format_changed(self.fmt_combo.currentIndex())
 
         scroll_layout.addWidget(opt_group)
+
+        # ── Advanced Options (v3.0.0 features) ──
+        adv_group = QGroupBox("Advanced Options")
+        adv_grid = QGridLayout(adv_group)
+        adv_grid.setColumnStretch(0, 0)
+        adv_grid.setColumnStretch(1, 1)
+        adv_grid.setColumnStretch(2, 0)
+        adv_grid.setColumnStretch(3, 1)
+
+        adv_grid.addWidget(QLabel("Template:"), 0, 0)
+        self.template_edit = QLineEdit()
+        self.template_edit.setPlaceholderText("{stem}  (overrides prefix/suffix)")
+        self.template_edit.setToolTip(
+            "Output filename template. Tokens: {stem} {ext} {fmt} {src_dir} "
+            "{rel_dir} {width} {height} {date[:FMT]} {seq[:###]}"
+        )
+        adv_grid.addWidget(self.template_edit, 0, 1)
+
+        adv_grid.addWidget(QLabel("DPI:"), 0, 2)
+        self.dpi_spin = QSpinBox()
+        self.dpi_spin.setRange(0, 2400)
+        self.dpi_spin.setValue(0)
+        self.dpi_spin.setSpecialValueText("(unchanged)")
+        self.dpi_spin.setToolTip("Set output DPI tag for JPEG/PNG/TIFF (0 = keep original)")
+        adv_grid.addWidget(self.dpi_spin, 0, 3)
+
+        self.avif_speed_label = QLabel("AVIF Speed:")
+        adv_grid.addWidget(self.avif_speed_label, 1, 0)
+        self.avif_speed_spin = QSpinBox()
+        self.avif_speed_spin.setRange(0, 10)
+        self.avif_speed_spin.setValue(6)
+        self.avif_speed_spin.setToolTip(
+            "AVIF encoding speed 0-10. Lower = smaller file, slower encode. "
+            "0 = best compression, 10 = fastest."
+        )
+        adv_grid.addWidget(self.avif_speed_spin, 1, 1)
+
+        self.frames_label = QLabel("Multi-Frame:")
+        adv_grid.addWidget(self.frames_label, 1, 2)
+        self.frames_combo = QComboBox()
+        self.frames_combo.addItems(["First Frame Only", "Extract All Frames", "Preserve Animation"])
+        self.frames_combo.setToolTip(
+            "How to handle multi-frame sources (animated WebP/GIF/APNG, multi-page TIFF, HEIC sequences)"
+        )
+        adv_grid.addWidget(self.frames_combo, 1, 3)
+
+        self.tone_map_label = QLabel("Tone Map:")
+        adv_grid.addWidget(self.tone_map_label, 2, 0)
+        self.tone_map_combo = QComboBox()
+        self.tone_map_combo.addItems(["None", "Reinhard", "Hable", "Clip"])
+        self.tone_map_combo.setToolTip(
+            "HDR tone-mapping curve for PQ/HLG/wide-gamut sources"
+        )
+        adv_grid.addWidget(self.tone_map_combo, 2, 1)
+
+        adv_grid.addWidget(QLabel("ICC Override:"), 2, 2)
+        self.icc_edit = QLineEdit()
+        self.icc_edit.setPlaceholderText("sRGB or path to .icc file")
+        self.icc_edit.setToolTip(
+            "Embed a specific ICC profile. Enter 'sRGB' for built-in or "
+            "a path to an .icc/.icm file. Leave empty to keep source profile."
+        )
+        adv_grid.addWidget(self.icc_edit, 2, 3)
+
+        adv_grid.addWidget(QLabel("Watermark:"), 3, 0)
+        self.watermark_edit = QLineEdit()
+        self.watermark_edit.setPlaceholderText("text|position|opacity  or  logo.png|position|opacity")
+        self.watermark_edit.setToolTip(
+            "Watermark spec: 'TEXT|position|opacity' or 'image.png|position|opacity'. "
+            "Positions: top-left, top, top-right, left, center, right, "
+            "bottom-left, bottom, bottom-right. Opacity: 0.0-1.0."
+        )
+        adv_grid.addWidget(self.watermark_edit, 3, 1, 1, 3)
+
+        adv_grid.addWidget(QLabel("Canvas:"), 4, 0)
+        self.canvas_edit = QLineEdit()
+        self.canvas_edit.setPlaceholderText("WxH  (e.g. 1920x1080)")
+        self.canvas_edit.setToolTip("Pad output to canvas size preserving aspect ratio")
+        adv_grid.addWidget(self.canvas_edit, 4, 1)
+
+        adv_grid.addWidget(QLabel("Canvas BG:"), 4, 2)
+        self.canvas_bg_edit = QLineEdit()
+        self.canvas_bg_edit.setText("transparent")
+        self.canvas_bg_edit.setToolTip("Canvas background: 'transparent', '#RRGGBB', or named color")
+        adv_grid.addWidget(self.canvas_bg_edit, 4, 3)
+
+        self.xmp_sidecar_chk = QCheckBox("Emit XMP sidecar")
+        self.xmp_sidecar_chk.setToolTip("Write .xmp sidecar alongside output (Adobe Bridge / darktable convention)")
+        adv_grid.addWidget(self.xmp_sidecar_chk, 5, 0, 1, 2)
+
+        self.recompress_chk = QCheckBox("Recompress JPEG (lossless)")
+        self.recompress_chk.setToolTip(
+            "For JPEG→JPEG: use jpegoptim/jpegtran for pixel-lossless size reduction "
+            "instead of decode-re-encode. Requires jpegoptim or jpegtran on PATH."
+        )
+        adv_grid.addWidget(self.recompress_chk, 5, 2, 1, 2)
+
+        self.only_if_smaller_chk = QCheckBox("Only if smaller by")
+        self.only_if_smaller_chk.setToolTip("Discard output when it's not meaningfully smaller than input")
+        adv_grid.addWidget(self.only_if_smaller_chk, 6, 0)
+        self.only_if_smaller_spin = QSpinBox()
+        self.only_if_smaller_spin.setRange(1, 99)
+        self.only_if_smaller_spin.setValue(20)
+        self.only_if_smaller_spin.setSuffix(" %")
+        self.only_if_smaller_spin.setEnabled(False)
+        self.only_if_smaller_chk.toggled.connect(self.only_if_smaller_spin.setEnabled)
+        adv_grid.addWidget(self.only_if_smaller_spin, 6, 1)
+
+        adv_grid.addWidget(QLabel("Target KB:"), 6, 2)
+        self.target_kb_spin = QSpinBox()
+        self.target_kb_spin.setRange(0, 100000)
+        self.target_kb_spin.setValue(0)
+        self.target_kb_spin.setSpecialValueText("(disabled)")
+        self.target_kb_spin.setToolTip("Binary-search quality to hit a target output size in KB (0 = disabled)")
+        adv_grid.addWidget(self.target_kb_spin, 6, 3)
+
+        scroll_layout.addWidget(adv_group)
 
         # ── Actions ──
         actions = QHBoxLayout()
@@ -2843,7 +3032,7 @@ class MainWindow(QMainWindow):
 
     # ── Presets ──
     def _apply_preset(self, name: str):
-        preset = PRESETS.get(name)
+        preset = list_presets().get(name)
         if not preset:
             return
         if "fmt" in preset:
@@ -2994,6 +3183,10 @@ class MainWindow(QMainWindow):
         # PNG compression: PNG only
         self.png_level_label.setVisible(is_png)
         self.png_level_spin.setVisible(is_png)
+
+        # AVIF speed: AVIF only
+        self.avif_speed_label.setVisible(is_avif)
+        self.avif_speed_spin.setVisible(is_avif)
 
     # ── Resize controls ──
     def _on_resize_toggled(self, checked: bool):
@@ -3244,6 +3437,19 @@ class MainWindow(QMainWindow):
             convert_to_srgb=self.srgb_chk.isChecked(),
             tiff_compression=["none", "lzw", "deflate"][self.tiff_comp_combo.currentIndex()],
             png_compress_level=self.png_level_spin.value(),
+            name_template=self.template_edit.text() or None,
+            only_if_smaller_pct=float(self.only_if_smaller_spin.value()) if self.only_if_smaller_chk.isChecked() else None,
+            dpi=(self.dpi_spin.value(), self.dpi_spin.value()) if self.dpi_spin.value() > 0 else None,
+            icc_override=self.icc_edit.text() or None,
+            emit_xmp_sidecar=self.xmp_sidecar_chk.isChecked(),
+            recompress_lossless=self.recompress_chk.isChecked(),
+            quality_mode=("target-kb", float(self.target_kb_spin.value())) if self.target_kb_spin.value() > 0 else None,
+            watermark=self.watermark_edit.text() or None,
+            canvas=_parse_canvas(self.canvas_edit.text()),
+            canvas_bg=self.canvas_bg_edit.text() or "transparent",
+            tone_map=["none", "reinhard", "hable", "clip"][self.tone_map_combo.currentIndex()],
+            avif_speed=self.avif_speed_spin.value(),
+            frames=["first", "all", "animate"][self.frames_combo.currentIndex()],
         )
         self._worker.log.connect(self._log)
         self._worker.progress.connect(self._on_progress)
@@ -3396,6 +3602,20 @@ class MainWindow(QMainWindow):
         self.settings.setValue("png_compress_level", self.png_level_spin.value())
         self.settings.setValue("strip_metadata", self.strip_meta_chk.isChecked())
         self.settings.setValue("auto_open_output", self.auto_open_chk.isChecked())
+        self.settings.setValue("template", self.template_edit.text())
+        self.settings.setValue("dpi", self.dpi_spin.value())
+        self.settings.setValue("avif_speed", self.avif_speed_spin.value())
+        self.settings.setValue("frames_mode", self.frames_combo.currentIndex())
+        self.settings.setValue("tone_map", self.tone_map_combo.currentIndex())
+        self.settings.setValue("icc_override", self.icc_edit.text())
+        self.settings.setValue("watermark", self.watermark_edit.text())
+        self.settings.setValue("canvas", self.canvas_edit.text())
+        self.settings.setValue("canvas_bg", self.canvas_bg_edit.text())
+        self.settings.setValue("xmp_sidecar", self.xmp_sidecar_chk.isChecked())
+        self.settings.setValue("recompress", self.recompress_chk.isChecked())
+        self.settings.setValue("only_if_smaller_enabled", self.only_if_smaller_chk.isChecked())
+        self.settings.setValue("only_if_smaller_pct", self.only_if_smaller_spin.value())
+        self.settings.setValue("target_kb", self.target_kb_spin.value())
         self.settings.setValue("geometry", self.saveGeometry())
         # Format filter states
         filter_state = {name: chk.isChecked() for name, chk in self._format_filters.items()}
@@ -3484,6 +3704,34 @@ class MainWindow(QMainWindow):
             self.strip_meta_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("auto_open_output")) is not None:
             self.auto_open_chk.setChecked(v == "true" or v is True)
+        if v := self.settings.value("template"):
+            self.template_edit.setText(v)
+        if (v := self.settings.value("dpi")) is not None:
+            self.dpi_spin.setValue(int(v))
+        if (v := self.settings.value("avif_speed")) is not None:
+            self.avif_speed_spin.setValue(int(v))
+        if (v := self.settings.value("frames_mode")) is not None:
+            self.frames_combo.setCurrentIndex(int(v))
+        if (v := self.settings.value("tone_map")) is not None:
+            self.tone_map_combo.setCurrentIndex(int(v))
+        if v := self.settings.value("icc_override"):
+            self.icc_edit.setText(v)
+        if v := self.settings.value("watermark"):
+            self.watermark_edit.setText(v)
+        if v := self.settings.value("canvas"):
+            self.canvas_edit.setText(v)
+        if v := self.settings.value("canvas_bg"):
+            self.canvas_bg_edit.setText(v)
+        if (v := self.settings.value("xmp_sidecar")) is not None:
+            self.xmp_sidecar_chk.setChecked(v == "true" or v is True)
+        if (v := self.settings.value("recompress")) is not None:
+            self.recompress_chk.setChecked(v == "true" or v is True)
+        if (v := self.settings.value("only_if_smaller_enabled")) is not None:
+            self.only_if_smaller_chk.setChecked(v == "true" or v is True)
+        if (v := self.settings.value("only_if_smaller_pct")) is not None:
+            self.only_if_smaller_spin.setValue(int(v))
+        if (v := self.settings.value("target_kb")) is not None:
+            self.target_kb_spin.setValue(int(v))
         if v := self.settings.value("geometry"):
             self.restoreGeometry(v)
         # Restore format filter states
@@ -3601,6 +3849,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--canvas-bg", type=str, default="transparent", metavar="COLOR",
                    help="Canvas background: 'transparent' (default), '#RRGGBB', "
                         "'#RRGGBBAA', or named color")
+    p.add_argument("--avif-speed", type=int, default=6, metavar="N",
+                   help="AVIF encoding speed 0-10 (default: 6). Lower = smaller file, "
+                        "slower encode. 0 = best compression, 10 = fastest.")
     p.add_argument("--register-shell", action="store_true",
                    help="Install OS shell integration: Windows Explorer right-click menu "
                         "or Linux .desktop file. macOS prints Automator recipe. Then exit.")
@@ -4216,6 +4467,7 @@ def _run_cli(args):
                 _parse_canvas(getattr(args, "canvas", None)), # canvas
                 getattr(args, "canvas_bg", "transparent"),    # canvas_bg
                 getattr(args, "tone_map", "none"),             # tone_map
+                getattr(args, "avif_speed", 6),                # avif_speed
             )
             futures[fut] = f
 
@@ -4455,4 +4707,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

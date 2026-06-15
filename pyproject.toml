@@ -31,8 +31,8 @@ classifiers = [
 ]
 dependencies = [
     # Floors pinned to close documented CVE matrix — see ROADMAP.md Appendix A6.
-    "Pillow>=11.3.0",
-    "pillow-heif>=1.3.0",
+    "Pillow>=12.1.1",
+    "pillow-heif>=1.4.0",
     "PyQt6>=6.8",
     "numpy>=1.26",
 ]
