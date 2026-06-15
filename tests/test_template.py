@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from heicshift import _apply_output_template, convert_file
+from imgconverter import _apply_output_template, convert_file
 from pathlib import Path
 
 

@@ -1,4 +1,4 @@
-# HEICShift runtime dependencies — pinned floors.
+# ImgConverter runtime dependencies — pinned floors.
 # Floors close the libheif/libjxl/Pillow CVE matrix documented in ROADMAP.md
 # Appendix A6. Newer versions are fine; *older* versions of these are not.
 #

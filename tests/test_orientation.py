@@ -2,14 +2,14 @@
 
 Background: HEIC stores orientation in two places (irot box AND EXIF tag).
 Naive converters apply rotation twice — see ImageMagick #1232, sharp #4384,
-Geeqie #923, Pillow #9294. HEICShift uses ImageOps.exif_transpose() once and
+Geeqie #923, Pillow #9294. ImgConverter uses ImageOps.exif_transpose() once and
 must end up with output pixels at displayed-orientation + no remaining
 EXIF Orientation tag.
 """
 import pytest
 from PIL import Image
 
-from heicshift import convert_file
+from imgconverter import convert_file
 
 
 def _build_tagged_jpeg(path, orientation_value: int):

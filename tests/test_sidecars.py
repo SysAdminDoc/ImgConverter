@@ -1,7 +1,7 @@
 """Tests for sidecar companion outputs (Live Photo, depth map, HDR gain map)."""
 import pytest
 
-from heicshift import convert_file
+from imgconverter import convert_file
 
 
 def test_live_photo_mov_paired_through_conversion(rgb_image, tmp_workdir):

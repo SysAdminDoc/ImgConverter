@@ -1,7 +1,7 @@
 """Smoke-test: every supported output format produces a valid file with matching dimensions."""
 import pytest
 
-from heicshift import convert_file, HAS_JXL
+from imgconverter import convert_file, HAS_JXL
 
 
 OUTPUT_FORMATS_BASE = ["jpeg", "png", "webp", "avif", "tiff"]

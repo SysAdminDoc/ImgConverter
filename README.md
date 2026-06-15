@@ -1,4 +1,4 @@
-# HEICShift
+# ImgConverter
 
 Universal image batch converter with a modern GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
 
@@ -9,11 +9,11 @@ Universal image batch converter with a modern GUI. Scans directories recursively
 
 ![Screenshot](screenshot.png)
 
-## Why HEICShift?
+## Why ImgConverter?
 
-Most image converters get the details wrong — they strip metadata, mangle colors by dropping ICC profiles, or use lossy 4:2:0 chroma subsampling by default. HEICShift is built on research into what existing tools do poorly:
+Most image converters get the details wrong — they strip metadata, mangle colors by dropping ICC profiles, or use lossy 4:2:0 chroma subsampling by default. ImgConverter is built on research into what existing tools do poorly:
 
-| Problem | Other Tools | HEICShift |
+| Problem | Other Tools | ImgConverter |
 |---|---|---|
 | **Color accuracy** | ImageMagick strips ICC profiles with `-strip`, causing Display P3 → sRGB color shift | Passes ICC profiles through to output — colors stay accurate |
 | **Chroma subsampling** | Most default to 4:2:0 (halves color resolution) | Uses 4:4:4 — full color fidelity |
@@ -50,7 +50,7 @@ Most image converters get the details wrong — they strip metadata, mangle colo
 | `qoi` | QOI input | `pip install qoi` |
 | `exiftool` | Recovers MakerNotes / GPS sub-IFDs / IPTC / sidecar XMP that Pillow drops silently | [exiftool.org](https://exiftool.org/) |
 
-Run `heicshift --install-deps` to install all required + optional Python packages, or `pip install -r requirements.txt`. If a format-specific decoder is missing, that family is skipped gracefully and the app logs which are unavailable. `exiftool` is detected automatically when present on `PATH`; pass `--no-exiftool` to disable the tag-copy pass.
+Run `imgconverter --install-deps` to install all required + optional Python packages, or `pip install -r requirements.txt`. If a format-specific decoder is missing, that family is skipped gracefully and the app logs which are unavailable. `exiftool` is detected automatically when present on `PATH`; pass `--no-exiftool` to disable the tag-copy pass.
 
 ## Features
 
@@ -107,9 +107,9 @@ Run `heicshift --install-deps` to install all required + optional Python package
 ## Installation
 
 ```bash
-git clone https://github.com/SysAdminDoc/HEICShift.git
-cd HEICShift
-python heicshift.py
+git clone https://github.com/SysAdminDoc/ImgConverter.git
+cd ImgConverter
+python imgconverter.py
 ```
 
 All dependencies install automatically on first launch. No manual setup.
@@ -130,41 +130,41 @@ The log panel shows per-file results with size before/after and conversion time.
 
 ## CLI Usage
 
-Run HEICShift from the command line for scripted or headless operation. If `--input` is provided, the GUI is skipped entirely.
+Run ImgConverter from the command line for scripted or headless operation. If `--input` is provided, the GUI is skipped entirely.
 
 ```bash
 # Convert a directory to JPEG at quality 85
-python heicshift.py --input ./photos --format jpeg --quality 85
+python imgconverter.py --input ./photos --format jpeg --quality 85
 
 # Convert to WebP with 4 workers, output to specific folder
-python heicshift.py -i ./photos -o ./output -f webp -w 4
+python imgconverter.py -i ./photos -o ./output -f webp -w 4
 
 # Dry run — list files that would be converted
-python heicshift.py --input ./photos --dry-run
+python imgconverter.py --input ./photos --dry-run
 
 # In-place conversion (saves next to originals, deletes source)
-python heicshift.py --input ./photos --in-place
+python imgconverter.py --input ./photos --in-place
 
 # Strip metadata and resize
-python heicshift.py --input ./photos --strip-metadata --resize max_dim:1920
+python imgconverter.py --input ./photos --strip-metadata --resize max_dim:1920
 
 # Convert to AVIF with sRGB color conversion
-python heicshift.py --input ./photos --format avif --srgb
+python imgconverter.py --input ./photos --format avif --srgb
 
 # Convert to JPEG XL (requires pillow-jxl-plugin)
-python heicshift.py --input ./photos --format jxl --quality 90
+python imgconverter.py --input ./photos --format jxl --quality 90
 
 # Resize by scale percentage
-python heicshift.py --input ./photos --resize scale:50
+python imgconverter.py --input ./photos --resize scale:50
 
 # TIFF with LZW compression
-python heicshift.py --input ./photos --format tiff --tiff-compression lzw
+python imgconverter.py --input ./photos --format tiff --tiff-compression lzw
 
 # Progressive JPEG with filename prefix, skip already-converted
-python heicshift.py -i ./photos -f jpeg --progressive --prefix "web_" --skip-existing
+python imgconverter.py -i ./photos -f jpeg --progressive --prefix "web_" --skip-existing
 
 # Print version
-python heicshift.py --version
+python imgconverter.py --version
 ```
 
 **CLI flags:**
@@ -213,7 +213,7 @@ python heicshift.py --version
 ## How It Works
 
 ```
-Source Directory          HEICShift                    Output
+Source Directory          ImgConverter                 Output
  photos/                                                converted/
   ├─ IMG_001.heic   ──→  pillow-heif decoder    ──→    ├─ IMG_001.jpg
   ├─ IMG_002.avif   ──→  Pillow processing      ──→    ├─ IMG_002.jpg

@@ -9,7 +9,7 @@ on:
   push:
     branches: [master, main]
     paths:
-      - 'heicshift.py'
+      - 'imgconverter.py'
       - 'tests/**'
       - 'pyproject.toml'
       - 'requirements.txt'
@@ -64,14 +64,14 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: HEICShift-Windows.exe
-            pyinstaller_args: --onefile --windowed --name HEICShift --collect-all pillow_heif
+            artifact: ImgConverter-Windows.exe
+            pyinstaller_args: --onefile --windowed --name ImgConverter --collect-all pillow_heif
           - os: macos-latest
-            artifact: HEICShift-macOS
-            pyinstaller_args: --onefile --windowed --name HEICShift --collect-all pillow_heif
+            artifact: ImgConverter-macOS
+            pyinstaller_args: --onefile --windowed --name ImgConverter --collect-all pillow_heif
           - os: ubuntu-latest
-            artifact: HEICShift-Linux
-            pyinstaller_args: --onefile --name HEICShift --collect-all pillow_heif
+            artifact: ImgConverter-Linux
+            pyinstaller_args: --onefile --name ImgConverter --collect-all pillow_heif
 
     runs-on: ${{ matrix.os }}
 
@@ -92,15 +92,15 @@ jobs:
           pip install "qoi>=0.7" || true
 
       - name: Build with PyInstaller
-        run: pyinstaller ${{ matrix.pyinstaller_args }} heicshift.py
+        run: pyinstaller ${{ matrix.pyinstaller_args }} imgconverter.py
 
       - name: Rename artifact (Linux/macOS)
         if: runner.os != 'Windows'
-        run: mv dist/HEICShift dist/${{ matrix.artifact }}
+        run: mv dist/ImgConverter dist/${{ matrix.artifact }}
 
       - name: Rename artifact (Windows)
         if: runner.os == 'Windows'
-        run: mv dist/HEICShift.exe dist/${{ matrix.artifact }}
+        run: mv dist/ImgConverter.exe dist/${{ matrix.artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -124,7 +124,7 @@ jobs:
         run: |
           gh release create "${{ github.event.inputs.version }}" \
             --repo "${{ github.repository }}" \
-            --title "HEICShift ${{ github.event.inputs.version }}" \
+            --title "ImgConverter ${{ github.event.inputs.version }}" \
             --generate-notes \
             || true
           gh release upload "${{ github.event.inputs.version }}" \

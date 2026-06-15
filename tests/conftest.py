@@ -1,11 +1,11 @@
-"""Shared pytest fixtures for HEICShift regression tests."""
+"""Shared pytest fixtures for ImgConverter regression tests."""
 import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
-# Make `heicshift` importable when running `pytest` from repo root.
+# Make `imgconverter` importable when running `pytest` from repo root.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -13,7 +13,7 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture
 def tmp_workdir():
     """Provide an isolated working directory per test."""
-    with tempfile.TemporaryDirectory(prefix="heicshift-test-") as td:
+    with tempfile.TemporaryDirectory(prefix="imgconverter-test-") as td:
         yield Path(td)
 
 

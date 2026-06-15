@@ -38,7 +38,7 @@ recipe stubs here are scaffolding for the day signing is wired up.
 `packaging/conda-forge/meta.yaml` is the conda-forge recipe template.
 On each release:
 1. Compute the source-tarball sha256: `gh release download vX.Y.Z` then
-   `sha256sum HEICShift-X.Y.Z.tar.gz`.
+   `sha256sum ImgConverter-X.Y.Z.tar.gz`.
 2. Update `version` and `sha256` in `meta.yaml`.
 3. Submit a PR to https://github.com/conda-forge/staged-recipes for the
    initial submission, or to the feedstock repo for subsequent updates.

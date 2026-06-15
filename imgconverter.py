@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HEICShift v3.0.0 - Universal image batch converter
+ImgConverter v3.0.0 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -94,9 +94,9 @@ def _check_required_deps_or_exit():
             missing.append(DEP_FLOORS[module][0])
     if missing:
         print(
-            f"[heicshift] Missing required dependencies: {', '.join(missing)}\n"
+            f"[imgconverter] Missing required dependencies: {', '.join(missing)}\n"
             f"  Install all required + optional deps with:\n"
-            f"      {sys.executable} -m heicshift --install-deps\n"
+            f"      {sys.executable} -m imgconverter --install-deps\n"
             f"  Or manually:\n"
             f"      pip install -r requirements.txt",
             file=sys.stderr,
@@ -121,9 +121,9 @@ def _warn_below_floor():
         try:
             if Version(installed) < Version(floor):
                 print(
-                    f"[heicshift] WARNING: {pkg} {installed} is below the documented "
+                    f"[imgconverter] WARNING: {pkg} {installed} is below the documented "
                     f"floor of {floor}. Older versions have known CVEs — see "
-                    f"ROADMAP.md Appendix A6. Run: heicshift --install-deps",
+                    f"ROADMAP.md Appendix A6. Run: imgconverter --install-deps",
                     file=sys.stderr,
                 )
         except Exception:
@@ -278,12 +278,12 @@ def _verify_quality(src: Path, dst: Path) -> str | None:
     return None
 
 
-# Plugin system — drop .py files into ~/.heicshift/plugins/ defining a
-# top-level register(opts) callable; HEICShift logs discovered plugins
+# Plugin system — drop .py files into ~/.imgconverter/plugins/ defining a
+# top-level register(opts) callable; ImgConverter logs discovered plugins
 # on startup. Decoder / Encoder hook signatures are documented in
 # PLUGINS.md.
 def _plugin_dir() -> Path:
-    return Path.home() / ".heicshift" / "plugins"
+    return Path.home() / ".imgconverter" / "plugins"
 
 
 def _load_plugins() -> list[str]:
@@ -299,7 +299,7 @@ def _load_plugins() -> list[str]:
         if py.name.startswith("_"):
             continue
         try:
-            mod_name = f"heicshift_plugin_{py.stem}"
+            mod_name = f"imgconverter_plugin_{py.stem}"
             spec = importlib.util.spec_from_file_location(mod_name, py)
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
@@ -1667,7 +1667,7 @@ def convert_file(
 
         # Atomic write: use temp file for in-place mode
         if in_place:
-            temp_path = out_path.parent / (out_path.name + ".heicshift.tmp")
+            temp_path = out_path.parent / (out_path.name + ".imgconverter.tmp")
             img.save(str(temp_path), out_fmt, **save_kwargs)
         else:
             img.save(str(out_path), out_fmt, **save_kwargs)
@@ -2057,10 +2057,10 @@ def _create_app_icon() -> QIcon:
 
 # ── Conversion Presets ────────────────────────────────────────────────────────
 
-USER_CACHE_DIR = Path.home() / ".cache" / "heicshift"
-USER_CONFIG_DIR = Path.home() / ".heicshift"
+USER_CACHE_DIR = Path.home() / ".cache" / "imgconverter"
+USER_CONFIG_DIR = Path.home() / ".imgconverter"
 USER_PRESET_DIR = USER_CONFIG_DIR / "presets"
-USER_LOG_PATH = USER_CACHE_DIR / "heicshift.log"
+USER_LOG_PATH = USER_CACHE_DIR / "imgconverter.log"
 
 # QSettings shape version — bump when on-disk settings layout changes so the
 # migration in _maybe_migrate_settings() runs once on startup.
@@ -2068,7 +2068,7 @@ SETTINGS_SCHEMA = 2
 
 
 def _diag_log(message: str, level: str = "INFO"):
-    """Append a timestamped line to ~/.cache/heicshift/heicshift.log.
+    """Append a timestamped line to ~/.cache/imgconverter/imgconverter.log.
 
     Best-effort: failures (disk full, permission denied) are swallowed so
     diagnostics never break the converter.
@@ -2101,9 +2101,9 @@ def _check_for_update(current_version: str, timeout: float = 3.0) -> str | None:
         import urllib.request
         import urllib.error
         req = urllib.request.Request(
-            "https://api.github.com/repos/SysAdminDoc/HEICShift/releases/latest",
+            "https://api.github.com/repos/SysAdminDoc/ImgConverter/releases/latest",
             headers={"Accept": "application/vnd.github+json",
-                     "User-Agent": f"HEICShift/{current_version}"},
+                     "User-Agent": f"ImgConverter/{current_version}"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -2221,7 +2221,7 @@ def _estimate_output_size(total_input_bytes: int, fmt: str) -> int:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"HEICShift v{APP_VERSION}")
+        self.setWindowTitle(f"ImgConverter v{APP_VERSION}")
         self.setMinimumSize(700, 520)
         self.resize(900, 800)
         self.setAcceptDrops(True)
@@ -2229,7 +2229,7 @@ class MainWindow(QMainWindow):
         self._icon = _create_app_icon()
         self.setWindowIcon(self._icon)
 
-        self.settings = QSettings("HEICShift", "HEICShift")
+        self.settings = QSettings("ImgConverter", "ImgConverter")
         self._scan_result: ScanResult | None = None
         self._worker: ConvertWorker | None = None
         self._results: list[ConvertResult] = []
@@ -2244,7 +2244,7 @@ class MainWindow(QMainWindow):
         self._restore_state()
         self._apply_accessibility_labels()
         self._log_startup()
-        _diag_log(f"HEICShift v{APP_VERSION} started (GUI mode)")
+        _diag_log(f"ImgConverter v{APP_VERSION} started (GUI mode)")
         # Optional update check — defer so we don't block startup paint.
         QTimer.singleShot(2000, self._maybe_check_for_update)
 
@@ -2299,15 +2299,15 @@ class MainWindow(QMainWindow):
             self.settings.setValue("last_update_check", _time.time())
             latest = _check_for_update(APP_VERSION)
             if latest:
-                self._log(f"[UPDATE] HEICShift v{latest} is available "
-                          f"(https://github.com/SysAdminDoc/HEICShift/releases)")
+                self._log(f"[UPDATE] ImgConverter v{latest} is available "
+                          f"(https://github.com/SysAdminDoc/ImgConverter/releases)")
                 _diag_log(f"Update available: v{latest}")
         except Exception:
             pass
 
     def _log_startup(self):
         """Log supported formats, dependency versions, and optional dep status on launch."""
-        self._log(f"HEICShift v{APP_VERSION}")
+        self._log(f"ImgConverter v{APP_VERSION}")
         # Core dependency versions
         from PIL import __version__ as pil_ver
         from PyQt6.QtCore import PYQT_VERSION_STR
@@ -2339,7 +2339,7 @@ class MainWindow(QMainWindow):
 
     def _update_title(self, state: str = "base", **kwargs):
         """Update window title bar with contextual info."""
-        base = f"HEICShift v{APP_VERSION}"
+        base = f"ImgConverter v{APP_VERSION}"
         if state == "scanned":
             count = kwargs.get("count", 0)
             self.setWindowTitle(f"{base} -- {count} files")
@@ -2386,7 +2386,7 @@ class MainWindow(QMainWindow):
 
         # ── Header ──
         hdr = QHBoxLayout()
-        title = QLabel("HEICShift")
+        title = QLabel("ImgConverter")
         title.setStyleSheet(f"font-size: 20px; font-weight: 800; color: {CAT['lavender']};")
         ver = QLabel(f"v{APP_VERSION}")
         ver.setStyleSheet(f"color: {CAT['overlay0']}; font-size: 12px; margin-left: 6px;")
@@ -3015,7 +3015,7 @@ class MainWindow(QMainWindow):
     # ── Log controls ──
     def _export_log(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export Log", str(Path.home() / "heicshift_log.txt"),
+            self, "Export Log", str(Path.home() / "imgconverter_log.txt"),
             "Text Files (*.txt);;All Files (*)"
         )
         if path:
@@ -3028,7 +3028,7 @@ class MainWindow(QMainWindow):
             self._log("[ERROR] No conversion results to export.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export CSV Report", str(Path.home() / "heicshift_report.csv"),
+            self, "Export CSV Report", str(Path.home() / "imgconverter_report.csv"),
             "CSV Files (*.csv);;All Files (*)"
         )
         if path:
@@ -3344,7 +3344,7 @@ class MainWindow(QMainWindow):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
             self._tray.showMessage(
-                "HEICShift — Conversion Complete",
+                "ImgConverter — Conversion Complete",
                 f"{ok} converted, {fail} failed" + (f", {skipped} skipped" if skipped else ""),
                 QSystemTrayIcon.MessageIcon.Information,
                 5000,
@@ -3510,10 +3510,10 @@ class MainWindow(QMainWindow):
 def _build_parser() -> argparse.ArgumentParser:
     """Build argument parser for CLI mode."""
     p = argparse.ArgumentParser(
-        prog="heicshift",
-        description=f"HEICShift v{APP_VERSION} - High-performance image batch converter",
+        prog="imgconverter",
+        description=f"ImgConverter v{APP_VERSION} - High-performance image batch converter",
     )
-    p.add_argument("--version", action="version", version=f"HEICShift v{APP_VERSION}")
+    p.add_argument("--version", action="version", version=f"ImgConverter v{APP_VERSION}")
     p.add_argument("--install-deps", action="store_true",
                    help="Install/upgrade required + optional Python dependencies, then exit")
     p.add_argument("-i", "--input", type=str, help="Source directory to scan")
@@ -3567,9 +3567,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Write structured per-file JSON report to PATH after conversion. "
                         "Top-level object: {summary: {...}, files: [...]}")
     p.add_argument("--preset", type=str, default=None, metavar="NAME",
-                   help="Load preset from ~/.heicshift/presets/NAME.json before applying other flags")
+                   help="Load preset from ~/.imgconverter/presets/NAME.json before applying other flags")
     p.add_argument("--list-presets", action="store_true",
-                   help="List available presets (built-ins + ~/.heicshift/presets/*.json) and exit")
+                   help="List available presets (built-ins + ~/.imgconverter/presets/*.json) and exit")
     p.add_argument("--only-if-smaller", type=float, default=None, metavar="PCT",
                    help="Discard output and keep original when output is not at least PCT%% smaller "
                         "than source (e.g. --only-if-smaller 20 means keep only when output <= 80%% of input)")
@@ -3607,13 +3607,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--unregister-shell", action="store_true",
                    help="Remove the shell integration installed by --register-shell")
     p.add_argument("--use-cache", action="store_true",
-                   help="Use ~/.cache/heicshift/seen.sqlite to skip files whose (source-hash, "
+                   help="Use ~/.cache/imgconverter/seen.sqlite to skip files whose (source-hash, "
                         "preset-hash) was successfully converted before. Use when re-running "
                         "the same batch.")
     p.add_argument("--clear-cache", action="store_true",
-                   help="Delete ~/.cache/heicshift/seen.sqlite and exit")
+                   help="Delete ~/.cache/imgconverter/seen.sqlite and exit")
     p.add_argument("--resume", action="store_true",
-                   help="Resume a previously interrupted batch from ~/.cache/heicshift/queue.json")
+                   help="Resume a previously interrupted batch from ~/.cache/imgconverter/queue.json")
     p.add_argument("--frames", type=str, default="first", choices=["first", "all", "animate"],
                    help="Multi-frame source handling: 'first' (default - first frame only), "
                         "'all' (export every frame as {stem}.NNN.{ext}), "
@@ -3634,7 +3634,7 @@ def _build_parser() -> argparse.ArgumentParser:
                         "Bypasses the GIL on Python interpreters that still have it; "
                         "no benefit on free-threaded builds. Cost: per-image fork overhead.")
     p.add_argument("--sidecar-history", action="store_true",
-                   help="Write {output}.heicshift.json next to each converted file with the "
+                   help="Write {output}.imgconverter.json next to each converted file with the "
                         "exact preset that produced it. Enables reproducible re-runs.")
     p.add_argument("--backend", type=str, default="pillow",
                    choices=["pillow", "vips"],
@@ -3854,12 +3854,12 @@ def _watch_directory(args, input_dir: Path, output_dir: Path) -> int:
 def _install_shell_integration(uninstall: bool = False) -> int:
     """Install / uninstall OS-level shell integration.
 
-    Windows : adds 'Convert with HEICShift' to the Explorer right-click menu
+    Windows : adds 'Convert with ImgConverter' to the Explorer right-click menu
               for image files via HKCU\\Software\\Classes\\* registry keys.
     macOS   : prints the Automator Quick Action recipe (manual; safer than
               auto-installing into ~/Library/Services).
-    Linux   : writes ~/.local/share/applications/heicshift.desktop +
-              ~/.local/share/file-manager/actions/heicshift.desktop.
+    Linux   : writes ~/.local/share/applications/imgconverter.desktop +
+              ~/.local/share/file-manager/actions/imgconverter.desktop.
     """
     system = platform.system()
     exe = sys.executable
@@ -3873,7 +3873,7 @@ def _install_shell_integration(uninstall: bool = False) -> int:
             print("[shell-integration] winreg unavailable.", file=sys.stderr)
             return EXIT_DEP_MISSING
         root = winreg.HKEY_CURRENT_USER
-        base = r"Software\Classes\*\shell\HEICShift"
+        base = r"Software\Classes\*\shell\ImgConverter"
         cmd_key = base + r"\command"
         if uninstall:
             try:
@@ -3888,7 +3888,7 @@ def _install_shell_integration(uninstall: bool = False) -> int:
             return EXIT_OK
         try:
             with winreg.CreateKeyEx(root, base, 0, winreg.KEY_SET_VALUE) as k:
-                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Convert with HEICShift")
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Convert with ImgConverter")
                 winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ, exe)
             with winreg.CreateKeyEx(root, cmd_key, 0, winreg.KEY_SET_VALUE) as k:
                 winreg.SetValueEx(k, "", 0, winreg.REG_SZ, cmd_args)
@@ -3903,8 +3903,8 @@ def _install_shell_integration(uninstall: bool = False) -> int:
         apps_dir = share / "applications"
         actions_dir = share / "file-manager" / "actions"
         if uninstall:
-            for p in (apps_dir / "heicshift.desktop",
-                       actions_dir / "heicshift.desktop"):
+            for p in (apps_dir / "imgconverter.desktop",
+                       actions_dir / "imgconverter.desktop"):
                 try:
                     p.unlink()
                 except FileNotFoundError:
@@ -3916,15 +3916,15 @@ def _install_shell_integration(uninstall: bool = False) -> int:
         desktop_content = (
             "[Desktop Entry]\n"
             "Type=Application\n"
-            "Name=Convert with HEICShift\n"
+            "Name=Convert with ImgConverter\n"
             f"Exec={exe} {script} --input %f\n"
             "MimeType=image/heic;image/heif;image/avif;image/jpeg;image/png;image/webp;image/tiff;\n"
             "Terminal=false\n"
             "Categories=Graphics;\n"
         )
-        (apps_dir / "heicshift.desktop").write_text(desktop_content)
-        (actions_dir / "heicshift.desktop").write_text(desktop_content)
-        print(f"[shell-integration] installed at {apps_dir / 'heicshift.desktop'}")
+        (apps_dir / "imgconverter.desktop").write_text(desktop_content)
+        (actions_dir / "imgconverter.desktop").write_text(desktop_content)
+        print(f"[shell-integration] installed at {apps_dir / 'imgconverter.desktop'}")
         return EXIT_OK
 
     if system == "Darwin":
@@ -3934,7 +3934,7 @@ def _install_shell_integration(uninstall: bool = False) -> int:
             "  2. Workflow receives: image files in Finder\n"
             "  3. Add 'Run Shell Script' action:\n"
             f"      {exe} {script} --input \"$@\"\n"
-            "  4. Save as 'Convert with HEICShift'\n"
+            "  4. Save as 'Convert with ImgConverter'\n"
             "  Auto-install into ~/Library/Services is intentionally skipped\n"
             "  because Automator workflows are signed bundles."
         )
@@ -3992,7 +3992,7 @@ def _run_cli(args):
     else:
         output_dir = input_dir / "converted"
 
-    print(f"HEICShift v{APP_VERSION} (CLI mode)")
+    print(f"ImgConverter v{APP_VERSION} (CLI mode)")
     _log_dep_versions_cli()
     if getattr(args, "backend", "pillow") == "vips":
         if not HAS_VIPS:
@@ -4028,7 +4028,7 @@ def _run_cli(args):
     # Validate AVIF dependency (Pillow 11.3+ native, was pillow-heif before v1.0)
     if args.format == "avif" and not HAS_AVIF:
         print("[ERROR] AVIF output requires Pillow >=11.3 with native AVIF support. "
-              "Run: heicshift --install-deps", file=sys.stderr)
+              "Run: imgconverter --install-deps", file=sys.stderr)
         sys.exit(EXIT_DEP_MISSING)
 
     # Validate PNG compression level
@@ -4254,7 +4254,7 @@ def _run_cli(args):
                 # output is reproducible from the metadata.
                 if getattr(args, "sidecar_history", False) and result.dst:
                     try:
-                        sidecar = result.dst.with_suffix(result.dst.suffix + ".heicshift.json")
+                        sidecar = result.dst.with_suffix(result.dst.suffix + ".imgconverter.json")
                         sidecar.write_text(json.dumps({
                             "version": APP_VERSION,
                             "timestamp": int(time.time()),
