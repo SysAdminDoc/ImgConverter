@@ -144,7 +144,6 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-import numpy as np
 from PIL import Image, ImageCms, ImageOps
 import pillow_heif
 from pillow_heif import register_heif_opener
@@ -316,6 +315,7 @@ def _load_plugins() -> list[str]:
 # size reduction without re-encoding pixels. Either is sufficient.
 JPEGOPTIM_PATH = shutil.which("jpegoptim")
 JPEGTRAN_PATH = shutil.which("jpegtran")
+PNGQUANT_PATH = shutil.which("pngquant")
 HAS_JPEG_RECOMPRESS = JPEGOPTIM_PATH is not None or JPEGTRAN_PATH is not None
 
 
@@ -1032,6 +1032,7 @@ def _tone_map_hdr(img: "Image.Image", curve: str) -> "Image.Image":
     """
     if curve == "none":
         return img
+    import numpy as np
     arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
     if curve == "clip":
         out = np.clip(arr, 0.0, 1.0)
@@ -1053,6 +1054,7 @@ def _tone_map_hdr(img: "Image.Image", curve: str) -> "Image.Image":
 
 def _psnr(a: "Image.Image", b: "Image.Image") -> float:
     """Compute PSNR between two images. Returns +inf when identical."""
+    import numpy as np
     if a.size != b.size:
         return 0.0
     ma = np.asarray(a.convert("RGB"), dtype=np.float32)
@@ -1295,6 +1297,8 @@ def convert_file(
     canvas_bg: str = "transparent",
     tone_map: str = "none",
     avif_speed: int = 6,
+    avif_codec: str = "auto",
+    png_lossy: bool = False,
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
@@ -1608,9 +1612,17 @@ def convert_file(
                 save_kwargs["compression"] = "tiff_lzw"
             elif tiff_compression == "deflate":
                 save_kwargs["compression"] = "tiff_deflate"
+            w, h = img.size
+            bpp = len(img.getbands()) * (8 if img.mode not in ("I;16", "I;16L", "I;16B") else 16)
+            est_raw = w * h * bpp // 8
+            if est_raw > 4 * 1024 * 1024 * 1024:
+                save_kwargs["big_tiff"] = True
+                result.warnings.append("tiff: using BigTIFF for >4 GB estimated output")
         elif out_fmt == "AVIF":
             save_kwargs["quality"] = jpeg_quality
             save_kwargs["speed"] = avif_speed
+            if avif_codec and avif_codec != "auto":
+                save_kwargs["codec"] = avif_codec
             # Wide-gamut / 10-bit preservation when source is HEIC at >8 bpp.
             # iPhone HEIC is 10-bit + Display P3; default downcast to 8-bit
             # loses dynamic range that AVIF (and JXL) can carry natively.
@@ -1672,6 +1684,22 @@ def convert_file(
             img.save(str(temp_path), out_fmt, **save_kwargs)
         else:
             img.save(str(out_path), out_fmt, **save_kwargs)
+
+        # pngquant lossy optimization — 50-80% size reduction via quantization.
+        if png_lossy and out_fmt == "PNG" and PNGQUANT_PATH:
+            target = temp_path if in_place else out_path
+            try:
+                proc = subprocess.run(
+                    [PNGQUANT_PATH, "--force", "--output", str(target), "--quality=65-80",
+                     "--skip-if-larger", str(target)],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if proc.returncode == 0:
+                    result.warnings.append("png: pngquant lossy optimization applied")
+                elif proc.returncode == 99:
+                    result.warnings.append("png: pngquant skipped (output not smaller)")
+            except Exception as e:
+                result.warnings.append(f"pngquant failed: {e}")
 
         # Validate output file integrity. Image.verify() only checks the header;
         # pair it with a re-open + size-match so a truncated encode is detected.
@@ -1902,7 +1930,8 @@ class ConvertWorker(QThread):
                  dpi=None, icc_override=None, emit_xmp_sidecar=False,
                  recompress_lossless=False, quality_mode=None,
                  watermark=None, canvas=None, canvas_bg="transparent",
-                 tone_map="none", avif_speed=6, frames="first"):
+                 tone_map="none", avif_speed=6, avif_codec="auto",
+                 png_lossy=False, frames="first"):
         super().__init__()
         self.files = files
         self.output_dir = Path(output_dir)
@@ -1937,6 +1966,8 @@ class ConvertWorker(QThread):
         self.canvas_bg = canvas_bg
         self.tone_map = tone_map
         self.avif_speed = avif_speed
+        self.avif_codec = avif_codec
+        self.png_lossy = png_lossy
         self.frames = frames
         self._stop = False
 
@@ -2006,6 +2037,8 @@ class ConvertWorker(QThread):
                     self.canvas_bg,                  # canvas_bg
                     self.tone_map,                   # tone_map
                     self.avif_speed,                 # avif_speed
+                    self.avif_codec,                 # avif_codec
+                    self.png_lossy,                  # png_lossy
                 )
                 futures[fut] = f
 
@@ -2727,34 +2760,44 @@ class MainWindow(QMainWindow):
         )
         adv_grid.addWidget(self.avif_speed_spin, 1, 1)
 
+        self.avif_codec_label = QLabel("AVIF Codec:")
+        adv_grid.addWidget(self.avif_codec_label, 1, 2)
+        self.avif_codec_combo = QComboBox()
+        self.avif_codec_combo.addItems(["Auto", "aom", "rav1e", "svt"])
+        self.avif_codec_combo.setToolTip(
+            "AVIF encoder. Auto lets Pillow choose, svt is fastest, "
+            "aom has best compression, rav1e is in between."
+        )
+        adv_grid.addWidget(self.avif_codec_combo, 1, 3)
+
         self.frames_label = QLabel("Multi-Frame:")
-        adv_grid.addWidget(self.frames_label, 1, 2)
+        adv_grid.addWidget(self.frames_label, 2, 0)
         self.frames_combo = QComboBox()
         self.frames_combo.addItems(["First Frame Only", "Extract All Frames", "Preserve Animation"])
         self.frames_combo.setToolTip(
             "How to handle multi-frame sources (animated WebP/GIF/APNG, multi-page TIFF, HEIC sequences)"
         )
-        adv_grid.addWidget(self.frames_combo, 1, 3)
+        adv_grid.addWidget(self.frames_combo, 2, 1)
 
         self.tone_map_label = QLabel("Tone Map:")
-        adv_grid.addWidget(self.tone_map_label, 2, 0)
+        adv_grid.addWidget(self.tone_map_label, 2, 2)
         self.tone_map_combo = QComboBox()
         self.tone_map_combo.addItems(["None", "Reinhard", "Hable", "Clip"])
         self.tone_map_combo.setToolTip(
             "HDR tone-mapping curve for PQ/HLG/wide-gamut sources"
         )
-        adv_grid.addWidget(self.tone_map_combo, 2, 1)
+        adv_grid.addWidget(self.tone_map_combo, 2, 3)
 
-        adv_grid.addWidget(QLabel("ICC Override:"), 2, 2)
+        adv_grid.addWidget(QLabel("ICC Override:"), 3, 0)
         self.icc_edit = QLineEdit()
         self.icc_edit.setPlaceholderText("sRGB or path to .icc file")
         self.icc_edit.setToolTip(
             "Embed a specific ICC profile. Enter 'sRGB' for built-in or "
             "a path to an .icc/.icm file. Leave empty to keep source profile."
         )
-        adv_grid.addWidget(self.icc_edit, 2, 3)
+        adv_grid.addWidget(self.icc_edit, 3, 1, 1, 3)
 
-        adv_grid.addWidget(QLabel("Watermark:"), 3, 0)
+        adv_grid.addWidget(QLabel("Watermark:"), 4, 0)
         self.watermark_edit = QLineEdit()
         self.watermark_edit.setPlaceholderText("text|position|opacity  or  logo.png|position|opacity")
         self.watermark_edit.setToolTip(
@@ -2762,49 +2805,56 @@ class MainWindow(QMainWindow):
             "Positions: top-left, top, top-right, left, center, right, "
             "bottom-left, bottom, bottom-right. Opacity: 0.0-1.0."
         )
-        adv_grid.addWidget(self.watermark_edit, 3, 1, 1, 3)
+        adv_grid.addWidget(self.watermark_edit, 4, 1, 1, 3)
 
-        adv_grid.addWidget(QLabel("Canvas:"), 4, 0)
+        adv_grid.addWidget(QLabel("Canvas:"), 5, 0)
         self.canvas_edit = QLineEdit()
         self.canvas_edit.setPlaceholderText("WxH  (e.g. 1920x1080)")
         self.canvas_edit.setToolTip("Pad output to canvas size preserving aspect ratio")
-        adv_grid.addWidget(self.canvas_edit, 4, 1)
+        adv_grid.addWidget(self.canvas_edit, 5, 1)
 
-        adv_grid.addWidget(QLabel("Canvas BG:"), 4, 2)
+        adv_grid.addWidget(QLabel("Canvas BG:"), 5, 2)
         self.canvas_bg_edit = QLineEdit()
         self.canvas_bg_edit.setText("transparent")
         self.canvas_bg_edit.setToolTip("Canvas background: 'transparent', '#RRGGBB', or named color")
-        adv_grid.addWidget(self.canvas_bg_edit, 4, 3)
+        adv_grid.addWidget(self.canvas_bg_edit, 5, 3)
+
+        self.png_lossy_chk = QCheckBox("Lossy PNG (pngquant)")
+        self.png_lossy_chk.setToolTip(
+            "Run pngquant for 50-80% PNG size reduction via lossy quantization. "
+            "Requires pngquant on PATH."
+        )
+        adv_grid.addWidget(self.png_lossy_chk, 5, 2, 1, 2)
 
         self.xmp_sidecar_chk = QCheckBox("Emit XMP sidecar")
         self.xmp_sidecar_chk.setToolTip("Write .xmp sidecar alongside output (Adobe Bridge / darktable convention)")
-        adv_grid.addWidget(self.xmp_sidecar_chk, 5, 0, 1, 2)
+        adv_grid.addWidget(self.xmp_sidecar_chk, 6, 0, 1, 2)
 
         self.recompress_chk = QCheckBox("Recompress JPEG (lossless)")
         self.recompress_chk.setToolTip(
             "For JPEG→JPEG: use jpegoptim/jpegtran for pixel-lossless size reduction "
             "instead of decode-re-encode. Requires jpegoptim or jpegtran on PATH."
         )
-        adv_grid.addWidget(self.recompress_chk, 5, 2, 1, 2)
+        adv_grid.addWidget(self.recompress_chk, 6, 2, 1, 2)
 
         self.only_if_smaller_chk = QCheckBox("Only if smaller by")
         self.only_if_smaller_chk.setToolTip("Discard output when it's not meaningfully smaller than input")
-        adv_grid.addWidget(self.only_if_smaller_chk, 6, 0)
+        adv_grid.addWidget(self.only_if_smaller_chk, 7, 0)
         self.only_if_smaller_spin = QSpinBox()
         self.only_if_smaller_spin.setRange(1, 99)
         self.only_if_smaller_spin.setValue(20)
         self.only_if_smaller_spin.setSuffix(" %")
         self.only_if_smaller_spin.setEnabled(False)
         self.only_if_smaller_chk.toggled.connect(self.only_if_smaller_spin.setEnabled)
-        adv_grid.addWidget(self.only_if_smaller_spin, 6, 1)
+        adv_grid.addWidget(self.only_if_smaller_spin, 7, 1)
 
-        adv_grid.addWidget(QLabel("Target KB:"), 6, 2)
+        adv_grid.addWidget(QLabel("Target KB:"), 7, 2)
         self.target_kb_spin = QSpinBox()
         self.target_kb_spin.setRange(0, 100000)
         self.target_kb_spin.setValue(0)
         self.target_kb_spin.setSpecialValueText("(disabled)")
         self.target_kb_spin.setToolTip("Binary-search quality to hit a target output size in KB (0 = disabled)")
-        adv_grid.addWidget(self.target_kb_spin, 6, 3)
+        adv_grid.addWidget(self.target_kb_spin, 7, 3)
 
         scroll_layout.addWidget(adv_group)
 
@@ -2826,6 +2876,11 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._stop)
         actions.addWidget(self.stop_btn)
+
+        self.paste_btn = QPushButton("Paste Image")
+        self.paste_btn.setToolTip("Paste an image from clipboard as input (Ctrl+V)")
+        self.paste_btn.clicked.connect(self._paste_clipboard)
+        actions.addWidget(self.paste_btn)
 
         actions.addStretch()
 
@@ -2994,6 +3049,36 @@ class MainWindow(QMainWindow):
             self._update_title("scanned", count=len(files))
             self._log(f"Added {len(files)} file{'s' if len(files) != 1 else ''} via drag & drop")
             event.acceptProposedAction()
+
+    # ── Clipboard paste ──
+    def keyPressEvent(self, event):
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_V:
+            self._paste_clipboard()
+            return
+        super().keyPressEvent(event)
+
+    def _paste_clipboard(self):
+        clipboard = QApplication.clipboard()
+        img = clipboard.image()
+        if img.isNull():
+            self._log("[PASTE] No image found on clipboard.")
+            return
+        tmp_dir = USER_CACHE_DIR / "clipboard"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        ts = int(time.time() * 1000)
+        tmp_path = tmp_dir / f"clipboard_{ts}.png"
+        img.save(str(tmp_path), "PNG")
+        files = [tmp_path]
+        total_size = tmp_path.stat().st_size
+        self._scan_result = ScanResult(files=files, total_size=total_size, elapsed=0)
+        self.src_edit.setText(str(tmp_dir))
+        if not self.dst_edit.text() and not self.inplace_chk.isChecked():
+            self.dst_edit.setText(str(tmp_dir / "converted"))
+        self.stat_files._val.setText("1")
+        self.stat_size._val.setText(_fmt_size(total_size))
+        self.convert_btn.setEnabled(True)
+        self._update_title("scanned", count=1)
+        self._log(f"[PASTE] Pasted clipboard image as {tmp_path.name} ({_fmt_size(total_size)})")
 
     # ── Log context menu ──
     def _on_log_context_menu(self, pos):
@@ -3184,9 +3269,11 @@ class MainWindow(QMainWindow):
         self.png_level_label.setVisible(is_png)
         self.png_level_spin.setVisible(is_png)
 
-        # AVIF speed: AVIF only
+        # AVIF speed + codec: AVIF only
         self.avif_speed_label.setVisible(is_avif)
         self.avif_speed_spin.setVisible(is_avif)
+        self.avif_codec_label.setVisible(is_avif)
+        self.avif_codec_combo.setVisible(is_avif)
 
     # ── Resize controls ──
     def _on_resize_toggled(self, checked: bool):
@@ -3449,6 +3536,8 @@ class MainWindow(QMainWindow):
             canvas_bg=self.canvas_bg_edit.text() or "transparent",
             tone_map=["none", "reinhard", "hable", "clip"][self.tone_map_combo.currentIndex()],
             avif_speed=self.avif_speed_spin.value(),
+            avif_codec=["auto", "aom", "rav1e", "svt"][self.avif_codec_combo.currentIndex()],
+            png_lossy=self.png_lossy_chk.isChecked(),
             frames=["first", "all", "animate"][self.frames_combo.currentIndex()],
         )
         self._worker.log.connect(self._log)
@@ -3605,6 +3694,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("template", self.template_edit.text())
         self.settings.setValue("dpi", self.dpi_spin.value())
         self.settings.setValue("avif_speed", self.avif_speed_spin.value())
+        self.settings.setValue("avif_codec", self.avif_codec_combo.currentIndex())
         self.settings.setValue("frames_mode", self.frames_combo.currentIndex())
         self.settings.setValue("tone_map", self.tone_map_combo.currentIndex())
         self.settings.setValue("icc_override", self.icc_edit.text())
@@ -3710,6 +3800,8 @@ class MainWindow(QMainWindow):
             self.dpi_spin.setValue(int(v))
         if (v := self.settings.value("avif_speed")) is not None:
             self.avif_speed_spin.setValue(int(v))
+        if (v := self.settings.value("avif_codec")) is not None:
+            self.avif_codec_combo.setCurrentIndex(int(v))
         if (v := self.settings.value("frames_mode")) is not None:
             self.frames_combo.setCurrentIndex(int(v))
         if (v := self.settings.value("tone_map")) is not None:
@@ -3800,6 +3892,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="TIFF compression method (default: none)")
     p.add_argument("--png-level", type=int, default=6,
                    help="PNG compression level 1-9 (default: 6)")
+    p.add_argument("--png-lossy", action="store_true",
+                   help="Run pngquant on PNG output for 50-80%% size reduction via "
+                        "lossy quantization + dithering. Requires pngquant on PATH.")
     p.add_argument("--no-structure", action="store_true",
                    help="Flatten output (no subdirectory mirroring)")
     p.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
@@ -3852,6 +3947,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--avif-speed", type=int, default=6, metavar="N",
                    help="AVIF encoding speed 0-10 (default: 6). Lower = smaller file, "
                         "slower encode. 0 = best compression, 10 = fastest.")
+    p.add_argument("--avif-codec", type=str, default="auto",
+                   choices=["auto", "aom", "rav1e", "svt"],
+                   help="AVIF encoder codec. 'auto' (default) lets Pillow choose, "
+                        "'svt' is fastest, 'aom' is smallest, 'rav1e' is in between.")
     p.add_argument("--register-shell", action="store_true",
                    help="Install OS shell integration: Windows Explorer right-click menu "
                         "or Linux .desktop file. macOS prints Automator recipe. Then exit.")
@@ -4490,6 +4589,8 @@ def _run_cli(args):
                 getattr(args, "canvas_bg", "transparent"),    # canvas_bg
                 getattr(args, "tone_map", "none"),             # tone_map
                 getattr(args, "avif_speed", 6),                # avif_speed
+                getattr(args, "avif_codec", "auto"),           # avif_codec
+                getattr(args, "png_lossy", False),             # png_lossy
             )
             futures[fut] = f
 
