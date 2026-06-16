@@ -277,27 +277,174 @@ def _verify_quality(src: Path, dst: Path) -> str | None:
     return None
 
 
-# Plugin system — drop .py files into ~/.imgconverter/plugins/ defining a
-# top-level register(opts) callable; ImgConverter logs discovered plugins
-# on startup. Decoder / Encoder hook signatures are documented in
-# PLUGINS.md.
+# Plugin system — drop trusted .py files into ~/.imgconverter/plugins/ defining
+# a top-level register(opts) callable. Decoder / Encoder hook signatures are
+# documented in PLUGINS.md.
+PLUGIN_TRUST_SCHEMA = 1
+PLUGIN_TRUST_FILE = "trusted-plugins.json"
+
+
 def _plugin_dir() -> Path:
     return Path.home() / ".imgconverter" / "plugins"
 
 
+def _plugin_trust_path() -> Path:
+    return _plugin_dir() / PLUGIN_TRUST_FILE
+
+
+def _load_plugin_trust() -> dict[str, dict]:
+    path = _plugin_trust_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[plugins] ignoring unreadable trust manifest: {e}", file=sys.stderr)
+        return {}
+    records = data.get("plugins", {}) if isinstance(data, dict) else {}
+    if not isinstance(records, dict):
+        return {}
+    return {
+        str(name): record
+        for name, record in records.items()
+        if isinstance(record, dict)
+    }
+
+
+def _write_plugin_trust(records: dict[str, dict]) -> None:
+    path = _plugin_trust_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": PLUGIN_TRUST_SCHEMA,
+        "plugins": dict(sorted(records.items())),
+    }
+    import tempfile
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=".trusted-plugins.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            json.dump(payload, fp, indent=2, sort_keys=True)
+            fp.write("\n")
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _resolve_plugin_ref(ref: str | Path) -> Path:
+    plugin_dir = _plugin_dir()
+    raw = Path(ref).expanduser()
+    candidate = raw if raw.is_absolute() or raw.parent != Path(".") else plugin_dir / raw
+    if candidate.suffix.lower() != ".py":
+        raise ValueError("plugin must be a .py file")
+    if candidate.name.startswith("_"):
+        raise ValueError("helper plugins beginning with '_' are not executable entry points")
+    if candidate.is_symlink():
+        raise ValueError("symlinked plugin files are not supported")
+    if not candidate.is_file():
+        raise ValueError(f"plugin not found: {candidate}")
+    try:
+        if candidate.parent.resolve() != plugin_dir.resolve():
+            raise ValueError(f"plugin must live in {plugin_dir}")
+    except OSError as e:
+        raise ValueError(f"plugin path cannot be resolved: {e}") from e
+    return candidate
+
+
+def _plugin_name_from_ref(ref: str | Path) -> str:
+    name = Path(ref).name
+    if Path(name).suffix == "":
+        name += ".py"
+    return name
+
+
+def _plugin_trust_status(py: Path, records: dict[str, dict]) -> tuple[str, str]:
+    if py.name.startswith("_"):
+        return "skipped", "helper module"
+    if py.suffix.lower() != ".py":
+        return "skipped", "not a Python plugin"
+    if py.is_symlink():
+        return "blocked", "symlinked plugin files are not loaded"
+    if not py.is_file():
+        return "blocked", "not a regular file"
+    try:
+        digest = _file_sha256(py)
+    except OSError as e:
+        return "blocked", str(e)
+    record = records.get(py.name)
+    if not record:
+        return "untrusted", f"run --trust-plugin {py.name} after auditing it"
+    if record.get("sha256") != digest:
+        return "changed", f"content hash changed; re-audit and run --trust-plugin {py.name}"
+    return "trusted", digest
+
+
+def _trust_plugin(ref: str | Path) -> tuple[bool, str]:
+    try:
+        py = _resolve_plugin_ref(ref)
+        digest = _file_sha256(py)
+        records = _load_plugin_trust()
+        records[py.name] = {
+            "sha256": digest,
+            "trusted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "path": str(py),
+        }
+        _write_plugin_trust(records)
+        return True, f"[plugins] trusted {py.name} ({digest[:12]})"
+    except (OSError, ValueError) as e:
+        return False, f"[plugins] trust failed: {e}"
+
+
+def _untrust_plugin(ref: str | Path) -> tuple[bool, str]:
+    name = _plugin_name_from_ref(ref)
+    records = _load_plugin_trust()
+    if name not in records:
+        return False, f"[plugins] no trusted entry for {name}"
+    del records[name]
+    _write_plugin_trust(records)
+    return True, f"[plugins] removed trust for {name}"
+
+
+def _list_plugins() -> int:
+    plugin_dir = _plugin_dir()
+    records = _load_plugin_trust()
+    print(f"[plugins] directory: {plugin_dir}")
+    if not plugin_dir.is_dir():
+        print("[plugins] no plugin directory")
+        return EXIT_OK
+    seen = set()
+    for py in sorted(plugin_dir.glob("*.py")):
+        seen.add(py.name)
+        status, detail = _plugin_trust_status(py, records)
+        suffix = detail[:12] if status == "trusted" else detail
+        print(f"[plugins] {py.name}: {status} ({suffix})")
+    for name in sorted(set(records) - seen):
+        print(f"[plugins] {name}: missing trusted entry")
+    return EXIT_OK
+
+
 def _load_plugins() -> list[str]:
-    """Discover and import user plugins. Returns list of loaded module names."""
+    """Discover and import trusted user plugins. Returns loaded module names."""
     plugin_dir = _plugin_dir()
     if not plugin_dir.is_dir():
         return []
+    trust_records = _load_plugin_trust()
     loaded = []
     sys_path_added = str(plugin_dir)
-    if sys_path_added not in sys.path:
-        sys.path.insert(0, sys_path_added)
     for py in sorted(plugin_dir.glob("*.py")):
-        if py.name.startswith("_"):
+        status, detail = _plugin_trust_status(py, trust_records)
+        if status != "trusted":
+            print(f"[plugins] skipped {py.name}: {detail}", file=sys.stderr)
             continue
         try:
+            if sys_path_added not in sys.path:
+                sys.path.append(sys_path_added)
             mod_name = f"imgconverter_plugin_{py.stem}"
             spec = importlib.util.spec_from_file_location(mod_name, py)
             if spec and spec.loader:
@@ -800,9 +947,17 @@ def scan_directory(
     exclude_patterns = exclude_patterns or []
 
     def _excluded(rel: Path) -> bool:
+        import fnmatch
         s = rel.as_posix()
         for pat in exclude_patterns:
-            if rel.match(pat) or Path(s).match(pat):
+            norm = pat.replace("\\", "/")
+            if fnmatch.fnmatchcase(s, norm) or fnmatch.fnmatchcase(rel.name, norm):
+                return True
+            if norm.endswith("/**"):
+                prefix = norm[:-3].rstrip("/")
+                if s == prefix or s.startswith(prefix + "/"):
+                    return True
+            if rel.match(norm) or Path(s).match(norm):
                 return True
         return False
 
@@ -822,6 +977,12 @@ def scan_directory(
         for p in entries:
             try:
                 if p.is_dir():
+                    try:
+                        rel_dir = p.relative_to(root)
+                    except ValueError:
+                        rel_dir = p
+                    if _excluded(rel_dir):
+                        continue
                     if recursive:
                         _walk(p)
                     continue
@@ -1213,6 +1374,17 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
         meta["xmp"] = xmp
 
     return img, meta
+
+
+def _estimated_raw_bytes(img: Image.Image) -> int:
+    """Estimate uncompressed image payload size for TIFF container selection."""
+    w, h = img.size
+    bits_per_channel = 16 if img.mode in ("I;16", "I;16L", "I;16B") else 8
+    return w * h * len(img.getbands()) * bits_per_channel // 8
+
+
+def _requires_bigtiff(img: Image.Image) -> bool:
+    return _estimated_raw_bytes(img) > 4 * 1024 * 1024 * 1024
 
 
 def _convert_animated_or_sequence(
@@ -1648,10 +1820,7 @@ def convert_file(
                 save_kwargs["compression"] = "tiff_lzw"
             elif tiff_compression == "deflate":
                 save_kwargs["compression"] = "tiff_deflate"
-            w, h = img.size
-            bpp = len(img.getbands()) * (8 if img.mode not in ("I;16", "I;16L", "I;16B") else 16)
-            est_raw = w * h * bpp // 8
-            if est_raw > 4 * 1024 * 1024 * 1024:
+            if _requires_bigtiff(img):
                 save_kwargs["big_tiff"] = True
                 result.warnings.append("tiff: using BigTIFF for >4 GB estimated output")
         elif out_fmt == "AVIF":
@@ -4005,6 +4174,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Load preset from ~/.imgconverter/presets/NAME.json before applying other flags")
     p.add_argument("--list-presets", action="store_true",
                    help="List available presets (built-ins + ~/.imgconverter/presets/*.json) and exit")
+    p.add_argument("--list-plugins", action="store_true",
+                   help="List plugin files with trust status without loading them, then exit")
+    p.add_argument("--trust-plugin", type=str, default=None, metavar="PATH",
+                   help="Trust a plugin file in ~/.imgconverter/plugins/ by recording its SHA-256, then exit")
+    p.add_argument("--untrust-plugin", type=str, default=None, metavar="NAME",
+                   help="Remove a plugin from the local trust manifest, then exit")
     p.add_argument("--only-if-smaller", type=float, default=None, metavar="PCT",
                    help="Discard output and keep original when output is not at least PCT%% smaller "
                         "than source (e.g. --only-if-smaller 20 means keep only when output <= 80%% of input)")
@@ -4874,6 +5049,17 @@ def main():
             for k, v in sorted(payload.items()):
                 print(f"      {k}: {v}")
         sys.exit(EXIT_OK)
+
+    if getattr(args, "list_plugins", False):
+        sys.exit(_list_plugins())
+    if getattr(args, "trust_plugin", None):
+        ok, msg = _trust_plugin(args.trust_plugin)
+        print(msg, file=sys.stderr if not ok else sys.stdout)
+        sys.exit(EXIT_OK if ok else EXIT_INPUT_ERROR)
+    if getattr(args, "untrust_plugin", None):
+        ok, msg = _untrust_plugin(args.untrust_plugin)
+        print(msg, file=sys.stderr if not ok else sys.stdout)
+        sys.exit(EXIT_OK if ok else EXIT_INPUT_ERROR)
 
     if getattr(args, "register_shell", False):
         sys.exit(_install_shell_integration(uninstall=False))

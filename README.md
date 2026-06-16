@@ -193,6 +193,9 @@ python imgconverter.py --version
 | `--exclude PATTERN` | Glob pattern to exclude from scan (repeatable) |
 | `--no-exiftool` | Skip the ExifTool tag-copy pass (use Pillow's EXIF/ICC/XMP only) |
 | `--install-deps` | Install/upgrade all required + optional Python deps, then exit |
+| `--list-plugins` | List plugin files and trust status without loading them |
+| `--trust-plugin PATH` | Trust a plugin in `~/.imgconverter/plugins/` by recording its SHA-256 |
+| `--untrust-plugin NAME` | Remove a plugin from the local trust manifest |
 | `--tiff-compression` | TIFF compression: `none`, `lzw`, `deflate` (default: none) |
 | `--png-level` | PNG compression level 1–9 (default: 6) |
 | `--no-structure` | Flatten output (no subdirectory mirroring) |

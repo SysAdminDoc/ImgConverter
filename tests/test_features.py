@@ -239,16 +239,16 @@ class TestQualityTargeting:
 class TestOnlyIfSmaller:
 
     def test_output_discarded_when_not_smaller(self, rgb_image, tmp_workdir):
-        """Converting BMP -> PNG with only_if_smaller_pct=99 should keep the
-        output only if it's at least 99 % smaller. For our tiny synthetic
-        image the PNG is likely *larger* than the tiny threshold, so the
+        """Converting BMP -> PNG with only_if_smaller_pct=99.9 should keep the
+        output only if it's at least 99.9 % smaller. For our tiny synthetic
+        image the PNG is still larger than the tiny threshold, so the
         output will be discarded (skipped=True)."""
         src = tmp_workdir / "src.bmp"
         rgb_image.save(src)
-        # Make a very aggressive threshold — require 99 % reduction.
+        # Make a very aggressive threshold: require 99.9 % reduction.
         out = tmp_workdir / "out"
-        result = convert_file(src, out, fmt="png", only_if_smaller_pct=99)
-        assert result.skipped, "Expected skipped=True when output isn't 99 % smaller"
+        result = convert_file(src, out, fmt="png", only_if_smaller_pct=99.9)
+        assert result.skipped, "Expected skipped=True when output isn't 99.9 % smaller"
         assert result.dst is None
         assert any("only-if-smaller" in w for w in result.warnings)
 
@@ -370,8 +370,7 @@ class TestBigTIFF:
         """When the raw-pixel estimate exceeds 4 GB, save_kwargs should get
         big_tiff=True and the warning should appear.
 
-        We simulate this by creating a tiny image but monkeypatching its
-        size property to return enormous dimensions."""
+        We simulate this by forcing the BigTIFF decision helper to return true."""
         from PIL import Image as PILImage
 
         # Create small image
@@ -380,25 +379,7 @@ class TestBigTIFF:
         img.save(src)
 
         out = tmp_workdir / "out"
-
-        # Monkeypatch Image.size at the instance level after _open_image.
-        # The BigTIFF check does:  w, h = img.size; bpp = ...; est_raw = w * h * bpp // 8
-        # For RGB 8-bit: bpp=24, so est_raw = w * h * 3.
-        # Need w*h*3 > 4 GB => w*h > ~1.43 billion.
-        # Use 50000 x 30000 = 1.5 billion.
-        real_open_image = __import__("imgconverter")._open_image
-
-        def patched_open(path):
-            img, meta = real_open_image(path)
-            # Inject a fake .size via subclass to fool the BigTIFF check.
-            class FakeImg(type(img)):
-                @property
-                def size(self):
-                    return (50000, 30000)
-            img.__class__ = FakeImg
-            return img, meta
-
-        monkeypatch.setattr("imgconverter._open_image", patched_open)
+        monkeypatch.setattr("imgconverter._requires_bigtiff", lambda img: True)
 
         # Also patch img.save to avoid writing a 4.5 GB file; just write a
         # valid small TIFF and verify the kwargs were propagated.
@@ -415,7 +396,9 @@ class TestBigTIFF:
 
         result = convert_file(src, out, fmt="tiff")
         # The spy should have received big_tiff=True.
+        assert result.success
         assert saved_kwargs.get("big_tiff") is True
+        assert any("BigTIFF" in w for w in result.warnings)
 
 
 # ── 12. Multi-frame handling ──────────────────────────────────────────────────
