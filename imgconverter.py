@@ -1228,7 +1228,12 @@ def _tone_map_hdr(img: "Image.Image", curve: str) -> "Image.Image":
     """
     if curve == "none":
         return img
-    import numpy as np
+    try:
+        import numpy as np
+    except ImportError:
+        raise RuntimeError(
+            "numpy is required for --tone-map. Install it: pip install numpy"
+        )
     arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
     if curve == "clip":
         out = np.clip(arr, 0.0, 1.0)
@@ -1250,7 +1255,12 @@ def _tone_map_hdr(img: "Image.Image", curve: str) -> "Image.Image":
 
 def _psnr(a: "Image.Image", b: "Image.Image") -> float:
     """Compute PSNR between two images. Returns +inf when identical."""
-    import numpy as np
+    try:
+        import numpy as np
+    except ImportError:
+        raise RuntimeError(
+            "numpy is required for --target-psnr. Install it: pip install numpy"
+        )
     if a.size != b.size:
         return 0.0
     ma = np.asarray(a.convert("RGB"), dtype=np.float32)
@@ -4455,7 +4465,8 @@ def _clear_queue_state():
         pass
 
 
-def _watch_directory(args, input_dir: Path, output_dir: Path) -> int:
+def _watch_directory(args, input_dir: Path, output_dir: Path,
+                     resize_mode: str = "none", resize_value: int = 1920) -> int:
     """Polling-based watch mode. Avoids hard dep on watchdog.
 
     Every poll interval, rescan the directory; convert any file we haven't
@@ -4513,12 +4524,40 @@ def _watch_directory(args, input_dir: Path, output_dir: Path) -> int:
                 seq = len(converted) + 1
                 try:
                     r = convert_file(
-                        f, output_dir, args.format, args.quality,
-                        not args.strip_metadata, not args.no_structure, input_dir,
-                        args.in_place, args.skip_existing, "none", 1920,
-                        args.prefix, args.suffix, args.lossless, args.progressive,
-                        args.chroma_420, args.srgb, args.tiff_compression, args.png_level,
-                        not args.no_exiftool, getattr(args, "template", None), seq,
+                        f, output_dir,
+                        fmt=args.format,
+                        jpeg_quality=args.quality,
+                        preserve_metadata=not args.strip_metadata,
+                        preserve_structure=not args.no_structure,
+                        base_dir=input_dir,
+                        in_place=args.in_place,
+                        skip_existing=args.skip_existing,
+                        resize_mode=resize_mode,
+                        resize_value=resize_value,
+                        prefix=args.prefix,
+                        suffix=args.suffix,
+                        lossless_webp=args.lossless,
+                        progressive_jpeg=args.progressive,
+                        chroma_subsampling=args.chroma_420,
+                        convert_to_srgb=args.srgb,
+                        tiff_compression=args.tiff_compression,
+                        png_compress_level=args.png_level,
+                        use_exiftool=not args.no_exiftool,
+                        name_template=getattr(args, "template", None),
+                        seq=seq,
+                        only_if_smaller_pct=getattr(args, "only_if_smaller", None),
+                        dpi=(args.dpi, args.dpi) if getattr(args, "dpi", None) else None,
+                        icc_override=getattr(args, "icc", None),
+                        emit_xmp_sidecar=getattr(args, "xmp_sidecar", False),
+                        recompress_lossless=getattr(args, "recompress", False),
+                        quality_mode=_build_quality_mode(args),
+                        watermark=getattr(args, "watermark", None),
+                        canvas=_parse_canvas(getattr(args, "canvas", None)),
+                        canvas_bg=getattr(args, "canvas_bg", "transparent"),
+                        tone_map=getattr(args, "tone_map", "none"),
+                        avif_speed=getattr(args, "avif_speed", 6),
+                        avif_codec=getattr(args, "avif_codec", "auto"),
+                        png_lossy=getattr(args, "png_lossy", False),
                     )
                     if r.success:
                         print(f"[watch] OK  {f.name} -> {r.dst.name}")
@@ -4688,7 +4727,10 @@ def _run_cli(args):
             print("[ERROR] --backend vips requires pyvips. Run: pip install pyvips",
                   file=sys.stderr)
             sys.exit(EXIT_DEP_MISSING)
-        print("[backend] using libvips (streaming pipeline)")
+        print("[backend] WARNING: --backend vips is experimental. Metadata, resize,\n"
+              "  watermark, canvas, tone-map, ICC override, and ExifTool passes are\n"
+              "  not yet implemented — output will be quality-only conversion.",
+              file=sys.stderr)
     print(f"Input:  {input_dir}")
     print(f"Output: {output_dir}")
     print(f"Format: {args.format}  Quality: {args.quality}  Workers: {args.workers}")
@@ -4748,7 +4790,7 @@ def _run_cli(args):
 
     # Watch mode short-circuits the scan/convert pipeline.
     if getattr(args, "watch", False):
-        sys.exit(_watch_directory(args, input_dir, output_dir))
+        sys.exit(_watch_directory(args, input_dir, output_dir, resize_mode, resize_value))
 
     # Scan
     print(f"\nScanning{'  recursively' if args.recursive else ''}...")
