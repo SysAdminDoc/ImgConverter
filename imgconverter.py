@@ -179,8 +179,8 @@ try:
     set_limits = getattr(pillow_heif, "set_security_limits", None)
     if callable(set_limits):
         set_limits(max_image_size_pixels=8000 * 8000)  # 64 MP guard; raise via env if needed
-except Exception:
-    pass
+except Exception as _heif_sec_err:
+    print(f"[WARN] HEIF security limits could not be set: {_heif_sec_err}", file=sys.stderr)
 
 # Optional: JPEG XL plugin (registers into Pillow automatically on import)
 HAS_JXL = False
@@ -526,20 +526,50 @@ def _run_exiftool_copy(src: Path, dst: Path) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
-from PyQt6.QtCore import (
-    Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QUrl,
-)
-from PyQt6.QtGui import (
-    QFont, QColor, QPalette, QIcon, QPixmap, QPainter, QAction,
-    QDragEnterEvent, QDropEvent,
-)
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFileDialog, QComboBox, QSpinBox, QSlider,
-    QProgressBar, QPlainTextEdit, QCheckBox, QGroupBox, QGridLayout,
-    QFrame, QSplitter, QStatusBar, QMessageBox, QLineEdit, QStyle,
-    QSystemTrayIcon, QMenu, QToolButton, QScrollArea,
-)
+_CLI_ONLY = any(a in sys.argv for a in ("--input", "-i", "--install-deps", "--version",
+                                         "--list-presets", "--list-plugins", "--help", "-h"))
+try:
+    from PyQt6.QtCore import (
+        Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QUrl,
+    )
+    from PyQt6.QtGui import (
+        QFont, QColor, QPalette, QIcon, QPixmap, QPainter, QAction,
+        QDragEnterEvent, QDropEvent,
+    )
+    from PyQt6.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+        QLabel, QPushButton, QFileDialog, QComboBox, QSpinBox, QSlider,
+        QProgressBar, QPlainTextEdit, QCheckBox, QGroupBox, QGridLayout,
+        QFrame, QSplitter, QStatusBar, QMessageBox, QLineEdit, QStyle,
+        QSystemTrayIcon, QMenu, QToolButton, QScrollArea,
+    )
+    HAS_PYQT6 = True
+except ImportError:
+    HAS_PYQT6 = False
+    if not _CLI_ONLY:
+        print("[ERROR] PyQt6 is required for GUI mode. Install it:\n"
+              "  pip install PyQt6>=6.8\n"
+              "Or use CLI mode: imgconverter --input ./photos --format jpeg",
+              file=sys.stderr)
+        sys.exit(EXIT_DEP_MISSING)
+
+    class _Stub:
+        pass
+
+    def _signal_stub(*a, **kw):
+        return None
+
+    QThread = QMainWindow = QWidget = _Stub
+    pyqtSignal = _signal_stub
+    Qt = QSettings = QSize = QUrl = _Stub
+    QFont = QColor = QPalette = QIcon = QPixmap = QPainter = QAction = _Stub
+    QDragEnterEvent = QDropEvent = _Stub
+    QApplication = QVBoxLayout = QHBoxLayout = _Stub
+    QLabel = QPushButton = QFileDialog = QComboBox = QSpinBox = QSlider = _Stub
+    QProgressBar = QPlainTextEdit = QCheckBox = QGroupBox = QGridLayout = _Stub
+    QFrame = QSplitter = QStatusBar = QMessageBox = QLineEdit = QStyle = _Stub
+    QSystemTrayIcon = QMenu = QToolButton = QScrollArea = _Stub
+    QTimer = _Stub
 
 # ── Catppuccin Mocha Palette ──────────────────────────────────────────────────
 CAT = {
@@ -1487,6 +1517,87 @@ def _convert_animated_or_sequence(
     return result
 
 
+def _run_sidecar_hooks(
+    src: Path, out_path: Path, meta: dict,
+    result: "ConvertResult", emit_xmp_sidecar: bool, in_place: bool,
+):
+    """Post-save sidecar generation: XMP, Live Photo .MOV, depth, HDR gain-map."""
+    if emit_xmp_sidecar and meta.get("xmp"):
+        xmp_path = out_path.with_suffix(out_path.suffix + ".xmp")
+        try:
+            xmp_payload = meta["xmp"]
+            if isinstance(xmp_payload, str):
+                xmp_payload = xmp_payload.encode("utf-8")
+            xmp_path.write_bytes(xmp_payload)
+            result.warnings.append(f"xmp-sidecar: wrote {xmp_path.name}")
+        except OSError as e:
+            result.warnings.append(f"xmp-sidecar failed: {e}")
+
+    if not in_place:
+        mov_candidates = [
+            src.with_suffix(".mov"), src.with_suffix(".MOV"),
+            src.with_suffix(".heic.mov"),
+        ]
+        for mov in mov_candidates:
+            if mov.exists():
+                dst_mov = out_path.with_suffix(mov.suffix)
+                try:
+                    shutil.copy2(mov, dst_mov)
+                    result.warnings.append(f"live-photo: copied {mov.name} -> {dst_mov.name}")
+                except OSError as e:
+                    result.warnings.append(f"live-photo: copy failed ({e})")
+                break
+
+    if src.suffix.lower() in HEIC_EXTS:
+        depth_list = None
+        try:
+            heif_file = pillow_heif.read_heif(str(src))
+            depth_list = getattr(heif_file, "depth_images", None)
+        except Exception as e:
+            depth_list = None
+            result.warnings.append(f"depth: HEIC re-open failed ({e})")
+        if depth_list:
+            for i, depth in enumerate(depth_list):
+                suffix = ".depth.png" if i == 0 else f".depth{i}.png"
+                depth_path = out_path.with_suffix(suffix)
+                try:
+                    depth_img = Image.frombytes(
+                        depth.mode, depth.size, bytes(depth.data),
+                        "raw", depth.mode, depth.stride,
+                    )
+                    depth_img.save(depth_path, "PNG", optimize=True)
+                    result.warnings.append(
+                        f"depth: saved {depth_path.name} ({depth.size[0]}x{depth.size[1]})"
+                    )
+                except Exception as e:
+                    result.warnings.append(f"depth: extract failed ({e})")
+
+    if (HAS_EXIFTOOL and src.suffix.lower() in HEIC_EXTS and not in_place):
+        try:
+            probe = subprocess.run(
+                [EXIFTOOL_PATH, "-j", "-GainMapHeadroom", "-HDRGainMap",
+                 "-HDRImage", "-HasHDR", str(src)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if probe.returncode == 0 and probe.stdout:
+                import json as _json
+                meta_probe = _json.loads(probe.stdout)
+                if meta_probe and any(
+                    meta_probe[0].get(k) for k in
+                    ("GainMapHeadroom", "HDRGainMap", "HasHDR", "HDRImage")
+                ):
+                    gainmap_sidecar = out_path.with_suffix(".gainmap.heic")
+                    if not gainmap_sidecar.exists():
+                        shutil.copy2(src, gainmap_sidecar)
+                    result.warnings.append(
+                        f"hdr-gainmap: ISO 21496-1 detected; archived "
+                        f"original as {gainmap_sidecar.name} (libheif "
+                        f"cannot yet transcode gain maps)"
+                    )
+        except Exception as e:
+            result.warnings.append(f"hdr-gainmap: detection failed ({e})")
+
+
 def convert_file(
     src: Path,
     output_dir: Path,
@@ -2023,93 +2134,7 @@ def convert_file(
         # so the GUI/CLI pass it via the result.warnings post-write
         # block; see post-loop verify in _run_cli.
 
-        # XMP sidecar emit — for archival workflows that strip metadata from
-        # the binary but want it preserved separately (Adobe Bridge / darktable
-        # convention). Sidecar is named <output>.xmp.
-        if emit_xmp_sidecar and meta.get("xmp"):
-            xmp_path = out_path.with_suffix(out_path.suffix + ".xmp")
-            try:
-                xmp_payload = meta["xmp"]
-                if isinstance(xmp_payload, str):
-                    xmp_payload = xmp_payload.encode("utf-8")
-                xmp_path.write_bytes(xmp_payload)
-                result.warnings.append(f"xmp-sidecar: wrote {xmp_path.name}")
-            except OSError as e:
-                result.warnings.append(f"xmp-sidecar failed: {e}")
-
-        # ── Sidecar companions ────────────────────────────────────────────
-        # Live Photo .MOV — iPhone HEIC stills are paired with a sibling
-        # .MOV motion file. Carry it through alongside the converted still
-        # so users keep the dynamic version.
-        if not in_place:
-            mov_candidates = [
-                src.with_suffix(".mov"), src.with_suffix(".MOV"),
-                src.with_suffix(".heic.mov"),
-            ]
-            for mov in mov_candidates:
-                if mov.exists():
-                    dst_mov = out_path.with_suffix(mov.suffix)
-                    try:
-                        shutil.copy2(mov, dst_mov)
-                        result.warnings.append(f"live-photo: copied {mov.name} -> {dst_mov.name}")
-                    except OSError as e:
-                        result.warnings.append(f"live-photo: copy failed ({e})")
-                    break
-
-        # Depth map / aux images — pillow_heif >= 0.20 exposes depth_images
-        # via info; emit each as a 16-bit PNG sidecar next to the output.
-        if src.suffix.lower() in HEIC_EXTS:
-            depth_list = None
-            try:
-                # Re-open via pillow_heif's typed API to get the depth payload.
-                heif_file = pillow_heif.read_heif(str(src))
-                depth_list = getattr(heif_file, "depth_images", None)
-            except Exception:
-                depth_list = None
-            if depth_list:
-                for i, depth in enumerate(depth_list):
-                    suffix = ".depth.png" if i == 0 else f".depth{i}.png"
-                    depth_path = out_path.with_suffix(suffix)
-                    try:
-                        depth_img = Image.frombytes(
-                            depth.mode, depth.size, bytes(depth.data),
-                            "raw", depth.mode, depth.stride,
-                        )
-                        depth_img.save(depth_path, "PNG", optimize=True)
-                        result.warnings.append(
-                            f"depth: saved {depth_path.name} ({depth.size[0]}x{depth.size[1]})"
-                        )
-                    except Exception as e:
-                        result.warnings.append(f"depth: extract failed ({e})")
-
-        # HDR gain-map detection (ISO 21496-1) — libheif lacks native support
-        # so we can't TRANSCODE the gain map yet, but ExifTool can tell us
-        # whether a Display P3 / Adaptive HDR map is present, and we copy
-        # the source HEIC alongside as an archival fallback.
-        if (HAS_EXIFTOOL and src.suffix.lower() in HEIC_EXTS and not in_place):
-            try:
-                probe = subprocess.run(
-                    [EXIFTOOL_PATH, "-j", "-GainMapHeadroom", "-HDRGainMap",
-                     "-HDRImage", "-HasHDR", str(src)],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if probe.returncode == 0 and probe.stdout:
-                    import json as _json
-                    meta_probe = _json.loads(probe.stdout)
-                    if meta_probe and any(
-                        meta_probe[0].get(k) for k in
-                        ("GainMapHeadroom", "HDRGainMap", "HasHDR", "HDRImage")
-                    ):
-                        gainmap_sidecar = out_path.with_suffix(".gainmap.heic")
-                        if not gainmap_sidecar.exists():
-                            shutil.copy2(src, gainmap_sidecar)
-                        result.warnings.append(
-                            f"hdr-gainmap: ISO 21496-1 detected; archived "
-                            f"original as {gainmap_sidecar.name} (libheif "
-                            f"cannot yet transcode gain maps)"
-                        )
-            except Exception:
-                pass
+        _run_sidecar_hooks(src, out_path, meta, result, emit_xmp_sidecar, in_place)
 
         # In-place mode: delete the original after successful conversion
         if in_place and result.success:
@@ -4402,7 +4427,8 @@ def _open_hash_cache():
             " ts INTEGER, PRIMARY KEY (src_hash, preset_hash))"
         )
         return conn
-    except Exception:
+    except Exception as e:
+        _diag_log(f"hash cache open failed: {e}", level="WARNING")
         return None
 
 
@@ -4443,8 +4469,8 @@ def _save_queue_state(input_dir: Path, output_dir: Path, args, pending: list[Pat
             "failed": failed,
         }
         QUEUE_STATE_PATH.write_text(json.dumps(state, indent=2))
-    except Exception:
-        pass
+    except Exception as e:
+        _diag_log(f"queue save failed: {e}", level="WARNING")
 
 
 def _load_queue_state() -> dict | None:
@@ -4452,7 +4478,8 @@ def _load_queue_state() -> dict | None:
         return None
     try:
         return json.loads(QUEUE_STATE_PATH.read_text())
-    except Exception:
+    except Exception as e:
+        _diag_log(f"queue load failed: {e}", level="WARNING")
         return None
 
 
@@ -5051,8 +5078,8 @@ def _run_cli(args):
                              _file_sha256(result.dst) if result.dst and result.dst.exists() else "",
                              result.size_after, int(time.time())),
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _diag_log(f"cache persist failed for {result.src.name}: {e}", level="WARNING")
 
             # Persist queue state every 5 completions so a power cycle
             # doesn't lose more than a handful of converts.
@@ -5179,10 +5206,16 @@ def main():
     if plugins:
         print(f"[plugins] loaded: {', '.join(plugins)}")
 
-    # CLI mode if --input is provided
     if args.input:
         _run_cli(args)
         return
+
+    if not HAS_PYQT6:
+        print("[ERROR] PyQt6 is required for GUI mode. Install it:\n"
+              "  pip install PyQt6>=6.8\n"
+              "Or use CLI mode: imgconverter --input ./photos --format jpeg",
+              file=sys.stderr)
+        sys.exit(EXIT_DEP_MISSING)
 
     app = QApplication(sys.argv)
 
