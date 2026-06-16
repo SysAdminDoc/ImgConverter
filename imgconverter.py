@@ -63,14 +63,7 @@ def _install_deps(include_optional: bool = False) -> int:
         spec = f"{pkg}>={floor}"
         print(f"[install-deps] {spec} …", flush=True)
         ok = False
-        for cmd_extra in ([], ["--user"], ["--break-system-packages"]):
-            if "--break-system-packages" in cmd_extra:
-                print(
-                    f"[install-deps] WARNING: falling back to --break-system-packages for {spec}.\n"
-                    f"  This can conflict with your system package manager (PEP 668).\n"
-                    f"  Consider using a virtualenv instead: python -m venv .venv && .venv/bin/pip install -r requirements.txt",
-                    file=sys.stderr,
-                )
+        for cmd_extra in ([], ["--user"]):
             try:
                 subprocess.check_call(
                     [sys.executable, "-m", "pip", "install", "--upgrade", spec] + cmd_extra
@@ -81,7 +74,12 @@ def _install_deps(include_optional: bool = False) -> int:
                 continue
         if not ok:
             failed.append(spec)
-            print(f"[install-deps] FAILED: {spec}", file=sys.stderr)
+            print(
+                f"[install-deps] FAILED: {spec}\n"
+                f"  If on a PEP 668 system (Debian/Ubuntu), use a virtualenv:\n"
+                f"  python -m venv .venv && .venv/bin/pip install -r requirements.txt",
+                file=sys.stderr,
+            )
     if failed:
         print(f"[install-deps] {len(failed)} package(s) failed to install.", file=sys.stderr)
         return 3
@@ -442,15 +440,12 @@ def _load_plugins() -> list[str]:
         return []
     trust_records = _load_plugin_trust()
     loaded = []
-    sys_path_added = str(plugin_dir)
     for py in sorted(plugin_dir.glob("*.py")):
         status, detail = _plugin_trust_status(py, trust_records)
         if status != "trusted":
             print(f"[plugins] skipped {py.name}: {detail}", file=sys.stderr)
             continue
         try:
-            if sys_path_added not in sys.path:
-                sys.path.append(sys_path_added)
             mod_name = f"imgconverter_plugin_{py.stem}"
             spec = importlib.util.spec_from_file_location(mod_name, py)
             if spec and spec.loader:
@@ -1189,7 +1184,11 @@ def _apply_canvas(img: "Image.Image", canvas_size: tuple[int, int],
     new_h = max(1, int(ih * scale))
     if (new_w, new_h) != (iw, ih):
         img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    base.paste(img, ((cw - new_w) // 2, (ch - new_h) // 2))
+    offset = ((cw - new_w) // 2, (ch - new_h) // 2)
+    if img.mode in ("RGBA", "LA", "PA"):
+        base.paste(img, offset, mask=img)
+    else:
+        base.paste(img, offset)
     return base
 
 
@@ -1536,6 +1535,7 @@ def convert_file(
         # EXIF auto-rotate — apply orientation and strip the tag
         rotated = ImageOps.exif_transpose(img)
         if rotated is not None:
+            img.close()
             img = rotated
             # Refresh EXIF from the transposed image (orientation tag removed)
             if "exif" in img.info:
@@ -1680,6 +1680,12 @@ def convert_file(
             resize_mode == "none"
             and not convert_to_srgb
             and preserve_metadata
+            and not watermark
+            and canvas is None
+            and tone_map == "none"
+            and dpi is None
+            and icc_override is None
+            and not name_template
         )
         if same_fmt and no_processing and not recompress_lossless:
             result.skipped = True
@@ -1714,7 +1720,7 @@ def convert_file(
                 result.size_after = out_path.stat().st_size
                 result.success = True
                 result.warnings.append(f"recompress: pixel-lossless via {tool}")
-                if in_place and result.success and out_path != src:
+                if in_place and result.success and out_path.resolve() != src.resolve():
                     src.unlink()
                     result.src_deleted = True
                 result.elapsed = time.perf_counter() - t0
@@ -1925,7 +1931,9 @@ def convert_file(
             with Image.open(str(check_path)) as verify_img:
                 verify_img.verify()
             with Image.open(str(check_path)) as decoded:
-                if decoded.size != img.size:
+                dw, dh = decoded.size
+                sw, sh = img.size
+                if abs(dw - sw) > 1 or abs(dh - sh) > 1:
                     raise RuntimeError(
                         f"Output size {decoded.size} != source size {img.size}"
                     )
@@ -3868,8 +3876,9 @@ class MainWindow(QMainWindow):
         self.open_output_btn.setEnabled(True)
         self.src_edit.setEnabled(True)
         self.src_btn.setEnabled(True)
-        self.dst_edit.setEnabled(True)
-        self.dst_btn.setEnabled(True)
+        if not self.inplace_chk.isChecked():
+            self.dst_edit.setEnabled(True)
+            self.dst_btn.setEnabled(True)
         self.fmt_combo.setEnabled(True)
         self.progress_bar.setFormat("%p%")
 
@@ -4907,7 +4916,12 @@ def _run_cli(args):
             futures[fut] = f
 
         for fut in as_completed(futures):
-            result = fut.result()
+            try:
+                result = fut.result()
+            except Exception as exc:
+                f = futures[fut]
+                result = ConvertResult(src=f, size_before=0)
+                result.error = str(exc)
             all_results.append(result)
             done_count += 1
             if result.skipped:
@@ -4946,8 +4960,8 @@ def _run_cli(args):
                             "version": APP_VERSION,
                             "timestamp": int(time.time()),
                             "src": str(result.src),
-                            "src_hash": _file_sha256(result.src),
-                            "dst_hash": _file_sha256(result.dst),
+                            "src_hash": _file_sha256(result.src) if not result.src_deleted else "deleted",
+                            "dst_hash": _file_sha256(result.dst) if result.dst and result.dst.exists() else "",
                             "preset": {
                                 "format": args.format,
                                 "quality": args.quality,
@@ -4987,8 +5001,9 @@ def _run_cli(args):
                             "INSERT OR REPLACE INTO seen "
                             "(src_hash, preset_hash, dst_hash, dst_size, ts) "
                             "VALUES (?, ?, ?, ?, ?)",
-                            (_file_sha256(result.src), cache_preset_key,
-                             _file_sha256(result.dst) if result.dst else "",
+                            (_file_sha256(result.src) if not result.src_deleted else "",
+                             cache_preset_key,
+                             _file_sha256(result.dst) if result.dst and result.dst.exists() else "",
                              result.size_after, int(time.time())),
                         )
                     except Exception:
