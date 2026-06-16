@@ -8,7 +8,7 @@ images with transparency, JPEG for photos. Preserves EXIF, ICC, and
 XMP. CLI + GUI parity. See ROADMAP.md for in-flight work.
 """
 
-import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil
+import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil, tempfile
 from pathlib import Path
 
 
@@ -66,6 +66,13 @@ def _install_deps(include_optional: bool = False) -> int:
         print(f"[install-deps] {spec} …", flush=True)
         ok = False
         for cmd_extra in ([], ["--user"], ["--break-system-packages"]):
+            if "--break-system-packages" in cmd_extra:
+                print(
+                    f"[install-deps] WARNING: falling back to --break-system-packages for {spec}.\n"
+                    f"  This can conflict with your system package manager (PEP 668).\n"
+                    f"  Consider using a virtualenv instead: python -m venv .venv && .venv/bin/pip install -r requirements.txt",
+                    file=sys.stderr,
+                )
             try:
                 subprocess.check_call(
                     [sys.executable, "-m", "pip", "install", "--upgrade", spec] + cmd_extra
@@ -139,6 +146,7 @@ _check_required_deps_or_exit()
 import io
 import time
 import json
+import threading
 import traceback
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1885,7 +1893,11 @@ def convert_file(
 
         # Atomic write: use temp file for in-place mode
         if in_place:
-            temp_path = out_path.parent / (out_path.name + ".imgconverter.tmp")
+            fd, tmp_str = tempfile.mkstemp(
+                suffix=".imgconverter.tmp", dir=str(out_path.parent),
+            )
+            os.close(fd)
+            temp_path = Path(tmp_str)
             img.save(str(temp_path), out_fmt, **save_kwargs)
         else:
             img.save(str(out_path), out_fmt, **save_kwargs)
@@ -2174,10 +2186,10 @@ class ConvertWorker(QThread):
         self.avif_codec = avif_codec
         self.png_lossy = png_lossy
         self.frames = frames
-        self._stop = False
+        self._stop_event = threading.Event()
 
     def stop(self):
-        self._stop = True
+        self._stop_event.set()
 
     def run(self):
         results = []
@@ -2216,7 +2228,7 @@ class ConvertWorker(QThread):
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futures = {}
             for seq_i, f in enumerate(self.files, start=1):
-                if self._stop:
+                if self._stop_event.is_set():
                     break
                 fut = pool.submit(
                     convert_file, f, self.output_dir, self.fmt,
@@ -2248,7 +2260,7 @@ class ConvertWorker(QThread):
                 futures[fut] = f
 
             for fut in as_completed(futures):
-                if self._stop:
+                if self._stop_event.is_set():
                     pool.shutdown(wait=False, cancel_futures=True)
                     self.log.emit("Conversion cancelled by user.")
                     break
@@ -2947,8 +2959,11 @@ class MainWindow(QMainWindow):
 
         scroll_layout.addWidget(opt_group)
 
-        # ── Advanced Options (v3.0.0 features) ──
-        adv_group = QGroupBox("Advanced Options")
+        # ── Advanced Options (v3.0.0 features) — collapsed by default ──
+        self.adv_group = QGroupBox("Advanced Options")
+        self.adv_group.setCheckable(True)
+        self.adv_group.setChecked(False)
+        adv_group = self.adv_group
         adv_grid = QGridLayout(adv_group)
         adv_grid.setColumnStretch(0, 0)
         adv_grid.setColumnStretch(1, 1)
@@ -3806,6 +3821,16 @@ class MainWindow(QMainWindow):
         self._results.append(result)
         if result.success and result.dst:
             self._last_ok_dst = result.dst
+
+        # Disk-full auto-stop: detect errno 28 / "No space left" and halt batch.
+        if (not result.success and not result.skipped and result.error
+                and ("errno 28" in result.error.lower()
+                     or "no space left" in result.error.lower()
+                     or "not enough space" in result.error.lower())):
+            self._log(f"[ERROR] Disk full detected on {result.src.name} — stopping batch.")
+            if self._worker:
+                self._worker.stop()
+
         ok = sum(1 for r in self._results if r.success)
         skipped = sum(1 for r in self._results if r.skipped)
         fail = sum(1 for r in self._results if not r.success and not r.skipped)
@@ -3884,13 +3909,25 @@ class MainWindow(QMainWindow):
         except (ImportError, AttributeError):
             pass
 
+        # All-files-failed escalation — warn user prominently when nothing converted.
+        total_attempted = ok + fail + skipped
+        if ok == 0 and fail > 0 and total_attempted > 0:
+            tray_icon = QSystemTrayIcon.MessageIcon.Critical
+            QMessageBox.warning(
+                self, "Conversion Failed",
+                f"All {fail} file(s) failed to convert.\n\n"
+                f"Check the log panel for error details.",
+            )
+        else:
+            tray_icon = QSystemTrayIcon.MessageIcon.Information
+
         # System tray notification
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
             self._tray.showMessage(
                 "ImgConverter — Conversion Complete",
                 f"{ok} converted, {fail} failed" + (f", {skipped} skipped" if skipped else ""),
-                QSystemTrayIcon.MessageIcon.Information,
+                tray_icon,
                 5000,
             )
             QTimer.singleShot(6000, self._tray.hide)
@@ -3956,6 +3993,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("only_if_smaller_pct", self.only_if_smaller_spin.value())
         self.settings.setValue("target_kb", self.target_kb_spin.value())
         self.settings.setValue("png_lossy", self.png_lossy_chk.isChecked())
+        self.settings.setValue("adv_expanded", self.adv_group.isChecked())
         self.settings.setValue("geometry", self.saveGeometry())
         # Format filter states
         filter_state = {name: chk.isChecked() for name, chk in self._format_filters.items()}
@@ -4085,6 +4123,8 @@ class MainWindow(QMainWindow):
             self.target_kb_spin.setValue(n)
         if (v := self.settings.value("png_lossy")) is not None:
             self.png_lossy_chk.setChecked(v == "true" or v is True)
+        if (v := self.settings.value("adv_expanded")) is not None:
+            self.adv_group.setChecked(v == "true" or v is True)
         if v := self.settings.value("geometry"):
             self.restoreGeometry(v)
         # Restore format filter states
