@@ -12,7 +12,6 @@ import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil, tempf
 from pathlib import Path
 
 
-# codex-branding:start
 def _branding_icon_path() -> Path:
     candidates = []
     if getattr(sys, "frozen", False):
@@ -27,7 +26,6 @@ def _branding_icon_path() -> Path:
         if candidate.exists():
             return candidate
     return Path("icon.png")
-# codex-branding:end
 
 
 APP_VERSION = "3.0.0"
