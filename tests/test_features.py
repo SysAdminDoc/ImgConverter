@@ -9,15 +9,20 @@ from pathlib import Path
 from PIL import Image
 
 from imgconverter import (
+    _apply_canvas,
     _build_parser,
     _build_quality_mode,
+    _convert_animated_or_sequence,
+    _load_queue_state,
     _parse_canvas,
+    _save_queue_state,
     convert_file,
     count_frames,
     list_presets,
     scan_directory,
     ConvertResult,
     PRESETS,
+    QUEUE_STATE_PATH,
     HAS_JPEG_RECOMPRESS,
     HAS_JXL,
 )
@@ -458,3 +463,156 @@ class TestScanExclude:
         names = {f.name for f in result.files}
         assert "photo.jpg" in names
         assert "thumb.jpg" not in names
+
+
+# ── 14. In-place mode ───────────────────────────────────────────────────────
+
+
+class TestInPlace:
+
+    def test_in_place_deletes_source_and_creates_output(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.bmp"
+        rgb_image.save(src)
+        result = convert_file(src, tmp_workdir, fmt="jpeg", in_place=True)
+        assert result.success
+        assert result.src_deleted
+        assert not src.exists()
+        assert result.dst is not None
+        assert result.dst.exists()
+        assert result.dst.suffix == ".jpg"
+
+    def test_in_place_failure_preserves_source(self, tmp_workdir):
+        src = tmp_workdir / "bad.bmp"
+        src.write_bytes(b"not an image")
+        result = convert_file(src, tmp_workdir, fmt="jpeg", in_place=True)
+        assert not result.success
+        assert src.exists()
+
+    def test_in_place_same_ext_no_self_delete(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=90)
+        result = convert_file(
+            src, tmp_workdir, fmt="jpeg", in_place=True,
+            convert_to_srgb=True,
+        )
+        assert result.success
+        assert result.dst.exists()
+
+
+# ── 15. Same-format skip guard completeness ─────────────────────────────────
+
+
+class TestSkipGuard:
+
+    def test_same_format_with_watermark_not_skipped(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=90)
+        out = tmp_workdir / "out"
+        result = convert_file(src, out, fmt="jpeg", watermark="Test|center|0.5")
+        assert not result.skipped
+
+    def test_same_format_with_canvas_not_skipped(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=90)
+        out = tmp_workdir / "out"
+        result = convert_file(src, out, fmt="jpeg", canvas=(400, 400))
+        assert not result.skipped
+
+    def test_same_format_with_dpi_not_skipped(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=90)
+        out = tmp_workdir / "out"
+        result = convert_file(src, out, fmt="jpeg", dpi=(300, 300))
+        assert not result.skipped
+
+    def test_same_format_no_processing_is_skipped(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=90)
+        out = tmp_workdir / "out"
+        result = convert_file(src, out, fmt="jpeg")
+        assert result.skipped
+
+
+# ── 16. Strip metadata ─────────────────────────────────────────────────────
+
+
+class TestStripMetadata:
+
+    def test_strip_removes_exif(self, tmp_workdir):
+        from PIL import Image
+        img = Image.new("RGB", (100, 100), (128, 128, 128))
+        from PIL.ExifTags import IFD
+        exif = img.getexif()
+        exif[0x010F] = "TestCamera"
+        src = tmp_workdir / "exif.jpg"
+        img.save(src, "JPEG", exif=exif.tobytes())
+        with Image.open(src) as check:
+            assert check.getexif().get(0x010F) == "TestCamera"
+        out = tmp_workdir / "out"
+        result = convert_file(src, out, fmt="jpeg", preserve_metadata=False,
+                              use_exiftool=False)
+        assert result.success
+        with Image.open(result.dst) as opened:
+            raw_exif = opened.info.get("exif", b"")
+            assert not raw_exif or opened.getexif().get(0x010F) is None
+
+
+# ── 17. Canvas alpha preservation ──────────────────────────────────────────
+
+
+class TestCanvasAlpha:
+
+    def test_rgba_canvas_preserves_transparency(self, rgba_image, tmp_workdir):
+        canvas_img = _apply_canvas(rgba_image, (200, 200), (0, 0, 0, 0))
+        assert canvas_img.mode == "RGBA"
+        corner = canvas_img.getpixel((0, 0))
+        assert corner[3] == 0
+
+    def test_rgb_canvas_no_alpha_issue(self, rgb_image, tmp_workdir):
+        canvas_img = _apply_canvas(rgb_image, (400, 300), (0, 0, 0))
+        assert canvas_img.mode == "RGB"
+
+
+# ── 18. Queue persistence ──────────────────────────────────────────────────
+
+
+class TestQueuePersistence:
+
+    def test_save_and_load_roundtrip(self, tmp_workdir, monkeypatch):
+        monkeypatch.setattr("imgconverter.USER_CACHE_DIR", tmp_workdir)
+        monkeypatch.setattr("imgconverter.QUEUE_STATE_PATH", tmp_workdir / "queue.json")
+        args = types.SimpleNamespace(format="jpeg", quality=92)
+        input_dir = tmp_workdir / "input"
+        output_dir = tmp_workdir / "output"
+        pending = [tmp_workdir / "a.jpg", tmp_workdir / "b.jpg"]
+        _save_queue_state(input_dir, output_dir, args, pending, ["done.jpg"], [])
+        state = _load_queue_state()
+        assert state is not None
+        assert state["input"] == str(input_dir)
+        assert len(state["pending"]) == 2
+        assert state["done"] == ["done.jpg"]
+
+    def test_load_corrupt_returns_none(self, tmp_workdir, monkeypatch):
+        qpath = tmp_workdir / "queue.json"
+        qpath.write_text("{bad json!!!")
+        monkeypatch.setattr("imgconverter.QUEUE_STATE_PATH", qpath)
+        assert _load_queue_state() is None
+
+
+# ── 19. Multi-frame export ─────────────────────────────────────────────────
+
+
+class TestMultiFrameExport:
+
+    def test_extract_frames_produces_sequence(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "multi.tiff"
+        frame2 = Image.new("RGB", rgb_image.size, (255, 0, 0))
+        rgb_image.save(src, save_all=True, append_images=[frame2])
+        out = tmp_workdir / "out"
+        result = _convert_animated_or_sequence(
+            src, out, "jpeg", extract_frames=True,
+        )
+        assert result.success
+        assert result.dst is not None
+        exported = list((out).glob("*.jpg"))
+        assert len(exported) == 2
