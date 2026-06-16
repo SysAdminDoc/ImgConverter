@@ -1388,6 +1388,15 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
     if xmp := img.info.get("xmp"):
         meta["xmp"] = xmp
 
+    if suffix in HEIC_EXTS and HAS_HEIF:
+        try:
+            heif_file = pillow_heif.open_heif(str(src))
+            bd = getattr(heif_file, "bit_depth", None)
+            if bd:
+                meta["bit_depth"] = bd
+        except Exception:
+            pass
+
     return img, meta
 
 
@@ -1439,16 +1448,14 @@ def _convert_animated_or_sequence(
         ext = ext_map.get(fmt, ".jpg")
 
         with Image.open(str(src)) as img:
-            frames = list(ImageSequence.Iterator(img))
-            n = len(frames)
+            n = getattr(img, "n_frames", 1)
             if extract_frames or fmt_pil not in ("WEBP", "GIF", "PNG"):
-                # Per-frame export
                 pad_width = max(3, len(str(n)))
                 written = []
-                for i, frame in enumerate(frames, start=1):
-                    seq = str(i).zfill(pad_width)
-                    dst = dest_dir / f"{src.stem}.{seq}{ext}"
-                    frame_save = frame.convert("RGB") if fmt_pil == "JPEG" else frame
+                for i, frame in enumerate(ImageSequence.Iterator(img), start=1):
+                    seq_str = str(i).zfill(pad_width)
+                    dst = dest_dir / f"{src.stem}.{seq_str}{ext}"
+                    frame_save = frame.convert("RGB") if fmt_pil == "JPEG" else frame.copy()
                     save_kwargs = {}
                     if fmt_pil in ("JPEG", "WEBP", "AVIF", "JXL"):
                         save_kwargs["quality"] = 92
@@ -1461,7 +1468,7 @@ def _convert_animated_or_sequence(
                     f"multi-frame: exported {len(written)} frames as {pad_width}-digit sequence"
                 )
             else:
-                # Preserve as animated output (WebP/PNG/GIF only here).
+                frames = [f.copy() for f in ImageSequence.Iterator(img)]
                 dst = dest_dir / f"{src.stem}{ext}"
                 save_kwargs = {"save_all": True,
                                 "append_images": frames[1:] if len(frames) > 1 else [],
@@ -1473,7 +1480,7 @@ def _convert_animated_or_sequence(
                 result.dst = dst
                 result.size_after = dst.stat().st_size
                 result.success = True
-                result.warnings.append(f"multi-frame: animated {fmt_pil} with {n} frames")
+                result.warnings.append(f"multi-frame: animated {fmt_pil} with {len(frames)} frames")
     except Exception as e:
         result.error = f"multi-frame: {e}"
     result.elapsed = time.perf_counter() - t0
@@ -1851,18 +1858,12 @@ def convert_file(
             if avif_codec and avif_codec != "auto":
                 save_kwargs["codec"] = avif_codec
             # Wide-gamut / 10-bit preservation when source is HEIC at >8 bpp.
-            # iPhone HEIC is 10-bit + Display P3; default downcast to 8-bit
-            # loses dynamic range that AVIF (and JXL) can carry natively.
-            if src.suffix.lower() in HEIC_EXTS:
-                try:
-                    bit_depth = pillow_heif.open_heif(str(src)).bit_depth
-                    if bit_depth and bit_depth > 8:
-                        save_kwargs["bits"] = bit_depth
-                        result.warnings.append(
-                            f"avif: preserving {bit_depth}-bit depth from source HEIC"
-                        )
-                except Exception:
-                    pass
+            bit_depth = meta.get("bit_depth")
+            if bit_depth and bit_depth > 8:
+                save_kwargs["bits"] = bit_depth
+                result.warnings.append(
+                    f"avif: preserving {bit_depth}-bit depth from source HEIC"
+                )
         elif out_fmt == "JXL":
             save_kwargs["quality"] = jpeg_quality
             save_kwargs["effort"] = 7
@@ -1877,16 +1878,13 @@ def convert_file(
                     "jxl: lossless JPEG reconstruction (bit-exact, reversible)"
                 )
             # Wide-gamut / 10-bit preservation for HEIC source.
-            elif src.suffix.lower() in HEIC_EXTS:
-                try:
-                    bit_depth = pillow_heif.open_heif(str(src)).bit_depth
-                    if bit_depth and bit_depth > 8:
-                        save_kwargs["bit_depth"] = bit_depth
-                        result.warnings.append(
-                            f"jxl: preserving {bit_depth}-bit depth from source HEIC"
-                        )
-                except Exception:
-                    pass
+            else:
+                bit_depth = meta.get("bit_depth")
+                if bit_depth and bit_depth > 8:
+                    save_kwargs["bit_depth"] = bit_depth
+                    result.warnings.append(
+                        f"jxl: preserving {bit_depth}-bit depth from source HEIC"
+                    )
 
         # Optional DPI tag — JPEG/TIFF/PNG support dpi; ignore for others.
         if dpi and out_fmt in ("JPEG", "PNG", "TIFF"):
@@ -4909,7 +4907,10 @@ def _run_cli(args):
     cache_skipped: list[Path] = []
     if cache_conn:
         pruned = []
-        for f in scan.files:
+        n_files = len(scan.files)
+        for idx, f in enumerate(scan.files, 1):
+            if idx % 50 == 0 or idx == n_files:
+                print(f"\r[cache] checking {idx}/{n_files}...", end="", flush=True)
             try:
                 src_h = _file_sha256(f)
                 row = cache_conn.execute(
@@ -4922,6 +4923,8 @@ def _run_cli(args):
             except Exception:
                 pass
             pruned.append(f)
+        if n_files:
+            print()
         if cache_skipped:
             print(f"[cache] skipping {len(cache_skipped)} files seen with this preset")
         scan.files = pruned
