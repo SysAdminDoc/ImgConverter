@@ -181,7 +181,7 @@ python imgconverter.py --version
 | `-i`, `--input` | Source file or directory (enables CLI mode) |
 | `--files PATH...` | One or more selected files/directories, used by shell integration |
 | `-o`, `--output` | Output directory (default: `<input>/converted`) |
-| `-f`, `--format` | Output format: `auto`, `jpeg`, `png`, `webp`, `avif`, `tiff`, `jxl` |
+| `-f`, `--format` | Output format: `auto`, `jpeg`, `png`, `webp`, `avif`, `tiff`, `jxl`, or a trusted plugin encoder format |
 | `-q`, `--quality` | JPEG/WebP quality 50–100 (default: 92) |
 | `-w`, `--workers` | Parallel worker count (default: min(cpu_count, 8)) |
 | `--in-place` | Convert next to originals, delete source |
@@ -240,6 +240,8 @@ python imgconverter.py --version
 | `--version` | Print version and exit |
 
 Parser, GUI, and README parity is guarded by `build_cli_parity_matrix()` and the test suite: every long CLI flag must be classified as GUI-backed, CLI-only, admin-only, or internal-only, and every user-facing flag must remain documented here.
+
+Trusted plugins may register decoder, encoder, and storage shapes from `PLUGINS.md`. Registered decoders are included in scans, registered encoders can be selected with `--format <fmt>` or from the GUI format menu, and registered storage schemes appear in the startup support summary.
 
 **Preset JSON:**
 

@@ -286,6 +286,84 @@ def _verify_quality(src: Path, dst: Path) -> str | None:
 # documented in PLUGINS.md.
 PLUGIN_TRUST_SCHEMA = 1
 PLUGIN_TRUST_FILE = "trusted-plugins.json"
+PLUGIN_DECODERS: dict[str, object] = {}
+PLUGIN_ENCODERS: dict[str, object] = {}
+PLUGIN_STORAGE: dict[str, object] = {}
+PLUGIN_CAPABILITIES: dict[str, dict[str, list[str]]] = {}
+
+
+def _reset_plugin_registry():
+    PLUGIN_DECODERS.clear()
+    PLUGIN_ENCODERS.clear()
+    PLUGIN_STORAGE.clear()
+    PLUGIN_CAPABILITIES.clear()
+
+
+def _as_plugin_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return [value]
+
+
+def _register_plugin_capabilities(plugin_name: str, payload) -> dict[str, list[str]]:
+    """Validate and register Decoder/Encoder/Storage objects returned by register()."""
+    summary = {"decoders": [], "encoders": [], "storage": []}
+    if not payload:
+        return summary
+    if not isinstance(payload, dict):
+        raise ValueError("register() must return a dict or None")
+
+    for decoder in _as_plugin_list(payload.get("decoders")):
+        extensions = getattr(decoder, "extensions", None)
+        open_fn = getattr(decoder, "open", None)
+        if not extensions or not callable(open_fn):
+            raise ValueError("decoder must expose extensions and open(src)")
+        for ext in extensions:
+            ext = str(ext).strip().lower()
+            if not ext:
+                continue
+            if not ext.startswith("."):
+                ext = f".{ext}"
+            PLUGIN_DECODERS[ext] = decoder
+            summary["decoders"].append(ext)
+
+    for encoder in _as_plugin_list(payload.get("encoders")):
+        fmt = str(getattr(encoder, "fmt", "")).strip().lower()
+        extension = str(getattr(encoder, "extension", "")).strip().lower()
+        save_fn = getattr(encoder, "save", None)
+        if not fmt or not extension or not callable(save_fn):
+            raise ValueError("encoder must expose fmt, extension, and save(img, path, options)")
+        if not extension.startswith("."):
+            extension = f".{extension}"
+        setattr(encoder, "extension", extension)
+        PLUGIN_ENCODERS[fmt] = encoder
+        summary["encoders"].append(fmt)
+
+    for storage in _as_plugin_list(payload.get("storage")):
+        scheme = str(getattr(storage, "scheme", "")).strip().lower().rstrip(":")
+        write_fn = getattr(storage, "write", None)
+        if not scheme or not callable(write_fn):
+            raise ValueError("storage must expose scheme and write(src, dst_uri)")
+        PLUGIN_STORAGE[scheme] = storage
+        summary["storage"].append(scheme)
+
+    PLUGIN_CAPABILITIES[plugin_name] = {
+        key: sorted(set(values)) for key, values in summary.items() if values
+    }
+    return summary
+
+
+def get_plugin_capability_summary() -> str:
+    parts = []
+    if PLUGIN_DECODERS:
+        parts.append("Plugin decoders " + ", ".join(sorted(PLUGIN_DECODERS)))
+    if PLUGIN_ENCODERS:
+        parts.append("Plugin encoders " + ", ".join(sorted(PLUGIN_ENCODERS)))
+    if PLUGIN_STORAGE:
+        parts.append("Plugin storage " + ", ".join(f"{s}://" for s in sorted(PLUGIN_STORAGE)))
+    return "; ".join(parts)
 
 
 def _plugin_dir() -> Path:
@@ -435,6 +513,7 @@ def _list_plugins() -> int:
 
 def _load_plugins() -> list[str]:
     """Discover and import trusted user plugins. Returns loaded module names."""
+    _reset_plugin_registry()
     plugin_dir = _plugin_dir()
     if not plugin_dir.is_dir():
         return []
@@ -453,7 +532,17 @@ def _load_plugins() -> list[str]:
                 spec.loader.exec_module(mod)
                 # If plugin has register() at module level, call it.
                 if hasattr(mod, "register"):
-                    mod.register({"app_version": APP_VERSION})
+                    capabilities = mod.register({"app_version": APP_VERSION})
+                    registered = _register_plugin_capabilities(py.stem, capabilities)
+                    details = []
+                    if registered.get("decoders"):
+                        details.append("decoders=" + ",".join(registered["decoders"]))
+                    if registered.get("encoders"):
+                        details.append("encoders=" + ",".join(registered["encoders"]))
+                    if registered.get("storage"):
+                        details.append("storage=" + ",".join(registered["storage"]))
+                    if details:
+                        print(f"[plugins] {py.name}: registered {'; '.join(details)}")
                 loaded.append(py.stem)
         except Exception as e:
             print(f"[plugins] failed to load {py.name}: {e}", file=sys.stderr)
@@ -980,6 +1069,13 @@ FORMAT_FAMILIES = {
 }
 
 
+def get_format_families() -> dict[str, tuple[set[str], bool]]:
+    families = {name: (set(exts), available) for name, (exts, available) in FORMAT_FAMILIES.items()}
+    if PLUGIN_DECODERS:
+        families["Plugins"] = (set(PLUGIN_DECODERS), True)
+    return families
+
+
 def get_supported_extensions() -> set[str]:
     """Return all input extensions we can currently decode."""
     exts = JPEG_EXTS | PNG_EXTS | HEIC_EXTS | AVIF_EXTS | WEBP_EXTS | TIFF_EXTS | BMP_EXTS | JP2_EXTS | ICO_EXTS
@@ -989,6 +1085,7 @@ def get_supported_extensions() -> set[str]:
         exts |= RAW_EXTS
     if HAS_QOI:
         exts |= QOI_EXTS
+    exts |= set(PLUGIN_DECODERS)
     return exts
 
 
@@ -1001,6 +1098,8 @@ def get_format_support_summary() -> str:
         families.append("Camera RAW")
     if HAS_QOI:
         families.append("QOI")
+    if plugin_summary := get_plugin_capability_summary():
+        families.append(plugin_summary)
     return ", ".join(families)
 
 
@@ -1487,6 +1586,13 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
     suffix = src.suffix.lower()
     meta = {}
 
+    if suffix in PLUGIN_DECODERS:
+        opened = PLUGIN_DECODERS[suffix].open(src)
+        if isinstance(opened, tuple):
+            img, plugin_meta = opened
+            return img, dict(plugin_meta or {})
+        return opened, meta
+
     if suffix in RAW_EXTS and HAS_RAWPY:
         raw = rawpy.imread(str(src))
         rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
@@ -1862,7 +1968,12 @@ def convert_file(
                 result.warnings.append(f"watermark failed: {e}")
 
         # Determine output format
-        if fmt == "auto":
+        plugin_encoder = None
+        fmt_key = str(fmt).lower()
+        if fmt_key in PLUGIN_ENCODERS:
+            plugin_encoder = PLUGIN_ENCODERS[fmt_key]
+            out_fmt = fmt_key
+        elif fmt == "auto":
             out_fmt = "PNG" if has_transparency(img) else "JPEG"
         elif fmt == "jpeg":
             out_fmt = "JPEG"
@@ -1884,7 +1995,7 @@ def convert_file(
                 raise RuntimeError("JPEG XL output requires pillow-jxl-plugin (pip install pillow-jxl-plugin)")
             out_fmt = "JXL"
         else:
-            out_fmt = "JPEG"
+            raise RuntimeError(f"Unsupported output format: {fmt}")
 
         # Same-format guard — skip if input is already the output format
         # and no processing (resize, sRGB, strip metadata) is requested
@@ -1896,6 +2007,7 @@ def convert_file(
             or (out_fmt == "AVIF" and src_ext in AVIF_EXTS)
             or (out_fmt == "TIFF" and src_ext in TIFF_EXTS)
             or (out_fmt == "JXL" and src_ext in JXL_EXTS)
+            or (plugin_encoder is not None and src_ext == getattr(plugin_encoder, "extension", ""))
         )
         no_processing = (
             resize_mode == "none"
@@ -1952,7 +2064,7 @@ def convert_file(
                 )
 
         ext_map = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "AVIF": ".avif", "TIFF": ".tiff", "JXL": ".jxl"}
-        ext = ext_map.get(out_fmt, ".jpg")
+        ext = getattr(plugin_encoder, "extension", None) if plugin_encoder is not None else ext_map.get(out_fmt, ".jpg")
 
         # Build output path — in-place writes next to the source file
         if in_place:
@@ -2107,6 +2219,16 @@ def convert_file(
                 f"quality-mode {mode_name}: q={best_q}, "
                 f"size={best_sz}B, metric={best_metric:.2f}"
             )
+        plugin_save_options = None
+        if plugin_encoder is not None:
+            plugin_save_options = dict(save_kwargs)
+            plugin_save_options.setdefault("quality", jpeg_quality)
+            plugin_save_options.update({
+                "fmt": out_fmt,
+                "extension": ext,
+                "preserve_metadata": preserve_metadata,
+                "source": str(src),
+            })
 
         # Atomic write: use temp file for in-place mode
         if in_place:
@@ -2115,9 +2237,17 @@ def convert_file(
             )
             os.close(fd)
             temp_path = Path(tmp_str)
-            img.save(str(temp_path), out_fmt, **save_kwargs)
+            if plugin_encoder is not None:
+                plugin_encoder.save(img, temp_path, dict(plugin_save_options or {}))
+                result.warnings.append(f"plugin encoder: {out_fmt}")
+            else:
+                img.save(str(temp_path), out_fmt, **save_kwargs)
         else:
-            img.save(str(out_path), out_fmt, **save_kwargs)
+            if plugin_encoder is not None:
+                plugin_encoder.save(img, out_path, dict(plugin_save_options or {}))
+                result.warnings.append(f"plugin encoder: {out_fmt}")
+            else:
+                img.save(str(out_path), out_fmt, **save_kwargs)
 
         # pngquant lossy optimization — 50-80% size reduction via quantization.
         if png_lossy and out_fmt == "PNG" and PNGQUANT_PATH:
@@ -2141,15 +2271,18 @@ def convert_file(
         if not check_path.exists() or check_path.stat().st_size == 0:
             raise RuntimeError(f"Output file missing or empty: {check_path.name}")
         try:
-            with Image.open(str(check_path)) as verify_img:
-                verify_img.verify()
-            with Image.open(str(check_path)) as decoded:
-                dw, dh = decoded.size
-                sw, sh = img.size
-                if abs(dw - sw) > 1 or abs(dh - sh) > 1:
-                    raise RuntimeError(
-                        f"Output size {decoded.size} != source size {img.size}"
-                    )
+            if plugin_encoder is not None:
+                result.warnings.append("plugin output: skipped Pillow integrity decode")
+            else:
+                with Image.open(str(check_path)) as verify_img:
+                    verify_img.verify()
+                with Image.open(str(check_path)) as decoded:
+                    dw, dh = decoded.size
+                    sw, sh = img.size
+                    if abs(dw - sw) > 1 or abs(dh - sh) > 1:
+                        raise RuntimeError(
+                            f"Output size {decoded.size} != source size {img.size}"
+                        )
         except Exception as ve:
             raise RuntimeError(f"Output validation failed: {ve}")
 
@@ -2591,9 +2724,14 @@ def normalize_preset(preset: dict) -> dict:
     """Normalize legacy GUI-shaped and CLI-shaped preset payloads to CLI keys."""
     norm: dict = {"schema_version": int(preset.get("schema_version", 1) or 1)}
     if "fmt" in preset or "format" in preset:
-        fmt = _preset_choice(preset.get("format", preset.get("fmt")), FORMAT_CHOICES, "auto")
+        raw_fmt = preset.get("format", preset.get("fmt"))
+        fmt = _preset_choice(raw_fmt, FORMAT_CHOICES)
+        if fmt is None:
+            candidate = str(raw_fmt).strip().lower()
+            fmt = candidate if candidate in PLUGIN_ENCODERS else "auto"
         norm["format"] = fmt
-        norm["fmt"] = FORMAT_CHOICES.index(fmt)
+        if fmt in FORMAT_CHOICES:
+            norm["fmt"] = FORMAT_CHOICES.index(fmt)
     simple_keys = {
         "quality": int,
         "workers": int,
@@ -2832,7 +2970,9 @@ def _apply_preset_to_gui_controls(window, preset: dict):
     """Apply a normalized or legacy preset to MainWindow-like controls."""
     norm = normalize_preset(preset)
     if "format" in norm:
-        window.fmt_combo.setCurrentIndex(FORMAT_CHOICES.index(norm["format"]))
+        fmt_values = getattr(window, "_fmt_values", list(FORMAT_CHOICES))
+        if norm["format"] in fmt_values:
+            window.fmt_combo.setCurrentIndex(fmt_values.index(norm["format"]))
     if "quality" in norm:
         window.quality_slider.setValue(norm["quality"])
     if "workers" in norm:
@@ -3244,7 +3384,7 @@ class MainWindow(QMainWindow):
         self._format_filters: dict[str, QCheckBox] = {}
         col = 0
         row = 0
-        for name, (exts, available) in FORMAT_FAMILIES.items():
+        for name, (exts, available) in get_format_families().items():
             chk = QCheckBox(name)
             chk.setProperty("decoderAvailable", available)
             chk.setChecked(available)
@@ -3280,10 +3420,15 @@ class MainWindow(QMainWindow):
         self.fmt_combo = QComboBox()
         self.fmt_combo.setMinimumWidth(120)
         self.fmt_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.fmt_combo.addItems([
+        self._fmt_values = ["auto", "jpeg", "png", "webp", "avif", "tiff", "jxl"]
+        fmt_labels = [
             "Auto (JPEG for photos, PNG for transparency)",
             "JPEG", "PNG", "WebP", "AVIF", "TIFF", "JPEG XL"
-        ])
+        ]
+        for plugin_fmt in sorted(PLUGIN_ENCODERS):
+            self._fmt_values.append(plugin_fmt)
+            fmt_labels.append(f"Plugin: {plugin_fmt}")
+        self.fmt_combo.addItems(fmt_labels)
         self.fmt_combo.setItemData(0, "JPEG for photos, PNG when transparency exists", Qt.ItemDataRole.ToolTipRole)
         self.fmt_combo.setItemData(1, "Best for photographs, lossy compression", Qt.ItemDataRole.ToolTipRole)
         self.fmt_combo.setItemData(2, "Lossless, supports transparency", Qt.ItemDataRole.ToolTipRole)
@@ -3296,6 +3441,13 @@ class MainWindow(QMainWindow):
             model = self.fmt_combo.model()
             model.item(6).setEnabled(False)
             self.fmt_combo.setItemData(6, "Requires pillow-jxl-plugin (pip install pillow-jxl-plugin)", Qt.ItemDataRole.ToolTipRole)
+        for idx, plugin_fmt in enumerate(self._fmt_values[7:], start=7):
+            encoder = PLUGIN_ENCODERS[plugin_fmt]
+            self.fmt_combo.setItemData(
+                idx,
+                f"Registered by trusted plugin, writes {getattr(encoder, 'extension', '')}",
+                Qt.ItemDataRole.ToolTipRole,
+            )
         opt_grid.addWidget(self.fmt_combo, 0, 1, 1, 2)
 
         self._preset_btn = QToolButton()
@@ -4301,8 +4453,7 @@ class MainWindow(QMainWindow):
             except (ValueError, TypeError):
                 pass
 
-        fmt_map = {0: "auto", 1: "jpeg", 2: "png", 3: "webp", 4: "avif", 5: "tiff", 6: "jxl"}
-        fmt = fmt_map.get(self.fmt_combo.currentIndex(), "auto")
+        fmt = self._fmt_values[self.fmt_combo.currentIndex()] if hasattr(self, "_fmt_values") else "auto"
 
         # Disk space pre-check
         try:
@@ -4772,7 +4923,6 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="One or more selected image files/directories to convert (used by shell integration)")
     p.add_argument("-o", "--output", type=str, help="Output directory (default: <input>/converted)")
     p.add_argument("-f", "--format", type=str, default="auto",
-                   choices=["auto", "jpeg", "png", "webp", "avif", "tiff", "jxl"],
                    help="Output format (default: auto)")
     p.add_argument("-q", "--quality", type=int, default=92, help="JPEG/WebP quality 50-100 (default: 92)")
     p.add_argument("-w", "--workers", type=int, default=min(os.cpu_count() or 4, 8),
@@ -5486,6 +5636,7 @@ def _run_cli(args):
             sys.exit(EXIT_INPUT_ERROR)
         _apply_preset_to_args(args, preset)
         print(f"[preset] applied: {args.preset}")
+    args.format = str(args.format).lower()
 
     input_dir, input_dirs, input_files = _collect_cli_input_refs(args)
 
@@ -5541,6 +5692,11 @@ def _run_cli(args):
         print("[ERROR] AVIF output requires Pillow >=11.3 with native AVIF support. "
               "Run: imgconverter --install-deps", file=sys.stderr)
         sys.exit(EXIT_DEP_MISSING)
+
+    built_in_formats = {"auto", "jpeg", "png", "webp", "avif", "tiff", "jxl"}
+    if args.format not in built_in_formats and args.format not in PLUGIN_ENCODERS:
+        print(f"[ERROR] Unsupported output format: {args.format}", file=sys.stderr)
+        sys.exit(EXIT_INPUT_ERROR)
 
     # Validate PNG compression level
     if args.png_level < 1 or args.png_level > 9:
