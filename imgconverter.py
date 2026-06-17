@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.0.0 - Universal image batch converter
+ImgConverter v3.1.0 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -28,7 +28,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.1.0"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -541,7 +541,7 @@ try:
         QLabel, QPushButton, QFileDialog, QComboBox, QSpinBox, QSlider,
         QProgressBar, QPlainTextEdit, QCheckBox, QGroupBox, QGridLayout,
         QFrame, QSplitter, QStatusBar, QMessageBox, QLineEdit, QStyle,
-        QSystemTrayIcon, QMenu, QToolButton, QScrollArea,
+        QSystemTrayIcon, QMenu, QToolButton, QScrollArea, QSizePolicy,
     )
     HAS_PYQT6 = True
 except ImportError:
@@ -568,7 +568,7 @@ except ImportError:
     QLabel = QPushButton = QFileDialog = QComboBox = QSpinBox = QSlider = _Stub
     QProgressBar = QPlainTextEdit = QCheckBox = QGroupBox = QGridLayout = _Stub
     QFrame = QSplitter = QStatusBar = QMessageBox = QLineEdit = QStyle = _Stub
-    QSystemTrayIcon = QMenu = QToolButton = QScrollArea = _Stub
+    QSystemTrayIcon = QMenu = QToolButton = QScrollArea = QSizePolicy = _Stub
     QTimer = _Stub
 
 # ── Catppuccin Mocha Palette ──────────────────────────────────────────────────
@@ -584,27 +584,68 @@ CAT = {
     "flamingo":  "#f2cdcd", "rosewater":"#f5e0dc",
 }
 
+STAT_VALUE_STYLE = f"color: {CAT['green']}; font-size: 22px; font-weight: 700;"
+
 STYLESHEET = f"""
-QMainWindow, QWidget {{
+QMainWindow {{
+    background-color: {CAT['base']};
+}}
+QWidget {{
     background-color: {CAT['base']};
     color: {CAT['text']};
     font-family: 'Segoe UI', 'Inter', sans-serif;
     font-size: 13px;
 }}
+QLabel, QCheckBox {{
+    background-color: transparent;
+}}
+QFrame#appHeader {{
+    background-color: {CAT['mantle']};
+    border: 1px solid {CAT['surface0']};
+    border-radius: 8px;
+}}
+QLabel#appTitle {{
+    color: {CAT['text']};
+    font-size: 22px;
+    font-weight: 800;
+}}
+QLabel#appVersion {{
+    color: {CAT['overlay2']};
+    font-size: 12px;
+    font-weight: 600;
+}}
+QLabel#appSubtitle {{
+    color: {CAT['subtext0']};
+    font-size: 12px;
+}}
+QLabel#workflowState {{
+    color: {CAT['lavender']};
+    background-color: {CAT['surface0']};
+    border: 1px solid {CAT['surface1']};
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 700;
+}}
+QLabel#fieldLabel {{
+    color: {CAT['subtext1']};
+    font-size: 12px;
+    font-weight: 600;
+}}
 QGroupBox {{
     background-color: {CAT['mantle']};
-    border: 1px solid {CAT['surface1']};
+    border: 1px solid {CAT['surface0']};
     border-radius: 8px;
-    margin-top: 14px;
-    padding: 16px 12px 12px 12px;
-    font-weight: 600;
+    margin-top: 16px;
+    padding: 18px 12px 12px 12px;
+    font-weight: 700;
     font-size: 13px;
     color: {CAT['lavender']};
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    padding: 2px 10px;
+    padding: 2px 10px 3px 10px;
     background-color: {CAT['mantle']};
     border-radius: 4px;
 }}
@@ -613,13 +654,16 @@ QPushButton {{
     color: {CAT['text']};
     border: 1px solid {CAT['surface1']};
     border-radius: 6px;
-    padding: 7px 18px;
-    font-weight: 500;
-    min-height: 20px;
+    padding: 7px 16px;
+    font-weight: 600;
+    min-height: 22px;
 }}
 QPushButton:hover {{
     background-color: {CAT['surface1']};
     border-color: {CAT['lavender']};
+}}
+QPushButton:focus {{
+    border: 1px solid {CAT['blue']};
 }}
 QPushButton:pressed {{
     background-color: {CAT['surface2']};
@@ -632,26 +676,29 @@ QPushButton:disabled {{
 QPushButton#primaryBtn {{
     background-color: {CAT['blue']};
     color: {CAT['crust']};
-    border: none;
-    font-weight: 700;
+    border: 1px solid {CAT['blue']};
+    font-weight: 800;
     font-size: 14px;
-    padding: 10px 28px;
+    padding: 10px 24px;
 }}
 QPushButton#primaryBtn:hover {{
     background-color: {CAT['lavender']};
+    border-color: {CAT['lavender']};
 }}
 QPushButton#primaryBtn:disabled {{
     background-color: {CAT['surface1']};
     color: {CAT['overlay0']};
+    border-color: {CAT['surface1']};
 }}
 QPushButton#stopBtn {{
     background-color: {CAT['red']};
     color: {CAT['crust']};
-    border: none;
-    font-weight: 700;
+    border: 1px solid {CAT['red']};
+    font-weight: 800;
 }}
 QPushButton#stopBtn:hover {{
     background-color: {CAT['maroon']};
+    border-color: {CAT['maroon']};
 }}
 QPushButton#stopBtn:pressed {{
     background-color: {CAT['surface2']};
@@ -661,27 +708,35 @@ QPushButton#stopBtn:disabled {{
     color: {CAT['overlay0']};
     border: none;
 }}
+QPushButton#miniBtn {{
+    font-size: 11px;
+    padding: 3px 10px;
+    min-height: 18px;
+}}
 QLineEdit {{
     background-color: {CAT['surface0']};
     color: {CAT['text']};
     border: 1px solid {CAT['surface1']};
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: 7px 10px;
     selection-background-color: {CAT['blue']};
 }}
 QLineEdit:focus {{
-    border-color: {CAT['lavender']};
+    border: 1px solid {CAT['blue']};
 }}
 QComboBox {{
     background-color: {CAT['surface0']};
     color: {CAT['text']};
     border: 1px solid {CAT['surface1']};
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: 7px 10px;
     min-width: 120px;
 }}
 QComboBox:hover {{
     border-color: {CAT['lavender']};
+}}
+QComboBox:focus {{
+    border: 1px solid {CAT['blue']};
 }}
 QComboBox::drop-down {{
     border: none;
@@ -699,7 +754,10 @@ QSpinBox {{
     color: {CAT['text']};
     border: 1px solid {CAT['surface1']};
     border-radius: 6px;
-    padding: 4px 8px;
+    padding: 5px 8px;
+}}
+QSpinBox:focus {{
+    border: 1px solid {CAT['blue']};
 }}
 QSlider::groove:horizontal {{
     background: {CAT['surface0']};
@@ -708,9 +766,9 @@ QSlider::groove:horizontal {{
 }}
 QSlider::handle:horizontal {{
     background: {CAT['lavender']};
-    width: 16px;
-    height: 16px;
-    margin: -5px 0;
+    width: 18px;
+    height: 18px;
+    margin: -6px 0;
     border-radius: 8px;
 }}
 QSlider::sub-page:horizontal {{
@@ -744,6 +802,9 @@ QCheckBox {{
     spacing: 8px;
     color: {CAT['text']};
 }}
+QCheckBox:hover {{
+    color: {CAT['lavender']};
+}}
 QCheckBox::indicator {{
     width: 18px;
     height: 18px;
@@ -754,6 +815,10 @@ QCheckBox::indicator {{
 QCheckBox::indicator:checked {{
     background-color: {CAT['blue']};
     border-color: {CAT['blue']};
+}}
+QCheckBox::indicator:disabled {{
+    background-color: {CAT['crust']};
+    border-color: {CAT['surface0']};
 }}
 QLabel#dimLabel {{
     color: {CAT['overlay2']};
@@ -767,6 +832,17 @@ QLabel#statValue {{
 QLabel#statLabel {{
     color: {CAT['overlay2']};
     font-size: 11px;
+    font-weight: 600;
+}}
+QFrame#actionBar, QFrame#statsFrame {{
+    background-color: {CAT['mantle']};
+    border: 1px solid {CAT['surface0']};
+    border-radius: 8px;
+}}
+QFrame#statCard {{
+    background-color: {CAT['base']};
+    border: 1px solid {CAT['surface0']};
+    border-radius: 8px;
 }}
 QStatusBar {{
     background-color: {CAT['mantle']};
@@ -830,6 +906,21 @@ QToolButton {{
 QToolButton:hover {{
     background-color: {CAT['surface1']};
     border-color: {CAT['lavender']};
+}}
+QToolButton:focus {{
+    border: 1px solid {CAT['blue']};
+}}
+QToolButton#advancedToggle {{
+    background-color: {CAT['mantle']};
+    border: 1px solid {CAT['surface0']};
+    color: {CAT['subtext1']};
+    font-weight: 700;
+    padding: 9px 12px;
+    text-align: left;
+}}
+QToolButton#advancedToggle:hover {{
+    color: {CAT['text']};
+    border-color: {CAT['surface2']};
 }}
 QToolButton::menu-indicator {{
     image: none;
@@ -2576,7 +2667,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"ImgConverter v{APP_VERSION}")
         self.setMinimumSize(700, 520)
-        self.resize(900, 800)
+        self.resize(1040, 820)
         self.setAcceptDrops(True)
 
         self._icon = _create_app_icon()
@@ -2611,13 +2702,18 @@ class MainWindow(QMainWindow):
         default Qt class name.
         """
         labels = [
+            ("workflow_state",     "Workflow status",          "Current batch workflow state"),
             ("src_edit",            "Source directory",         "Directory to scan for input images"),
+            ("src_btn",             "Choose source folder",     "Open a folder picker for the source directory"),
+            ("recent_btn",          "Recent source folders",    "Open recently used source directories"),
             ("dst_edit",            "Output directory",         "Where converted files go (blank = source/converted)"),
+            ("dst_btn",             "Choose output folder",     "Open a folder picker for the output directory"),
             ("fmt_combo",           "Output format",            "Target image format (auto/jpeg/png/webp/avif/tiff/jxl)"),
+            ("_preset_btn",         "Conversion presets",       "Apply a saved conversion preset"),
             ("quality_slider",      "Quality",                  "Encoder quality 50-100 for JPEG/WebP/AVIF/JXL"),
             ("workers_spin",        "Worker thread count",      "Number of parallel conversion threads"),
             ("recursive_chk",       "Recursive scan",           "Walk subdirectories under the source directory"),
-            ("inplace_chk",         "Convert in place",         "Save output next to each source and delete the source"),
+            ("inplace_chk",         "Convert in place",         "Save output next to each source and delete the source after output validation"),
             ("skip_existing_chk",   "Skip existing outputs",    "Skip files whose output already exists"),
             ("meta_chk",            "Preserve metadata",        "Keep EXIF, ICC, and XMP through conversion"),
             ("progressive_jpeg_chk","Progressive JPEG",         "Encode JPEGs as progressive for web delivery"),
@@ -2647,7 +2743,16 @@ class MainWindow(QMainWindow):
             ("only_if_smaller_spin","Only-if-smaller threshold", "Percentage by which output must be smaller"),
             ("png_level_spin",      "PNG compression level",    "PNG compression 1 (fast) to 9 (smallest)"),
             ("tiff_comp_combo",     "TIFF compression",         "TIFF compression: None, LZW, or Deflate"),
-            ("paste_btn",           "Paste image",              "Paste an image from clipboard as input"),
+            ("adv_toggle",          "Advanced output controls", "Show or hide advanced output controls"),
+            ("scan_btn",            "Scan source",              "Scan the selected source for supported images"),
+            ("convert_btn",         "Convert batch",            "Start converting the scanned batch"),
+            ("stop_btn",            "Cancel conversion",        "Stop the current conversion batch"),
+            ("paste_btn",           "Paste clipboard",          "Paste an image from clipboard as input"),
+            ("auto_open_chk",       "Auto-open output",         "Automatically open the output folder when conversion finishes"),
+            ("open_output_btn",     "Open output folder",       "Open the most recent output folder"),
+            ("export_log_btn",      "Export log",               "Save the conversion log as a text file"),
+            ("export_csv_btn",      "Export CSV",               "Export conversion results as a CSV report"),
+            ("clear_log_btn",       "Clear log",                "Clear the activity log"),
         ]
         for attr, name, desc in labels:
             w = getattr(self, attr, None)
@@ -2751,90 +2856,144 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(16, 12, 16, 8)
-        root.setSpacing(10)
+        root.setContentsMargins(18, 14, 18, 8)
+        root.setSpacing(12)
 
         # ── Scroll area for controls ──
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.setSpacing(10)
+        scroll_layout.setContentsMargins(0, 0, 42, 0)
+        scroll_layout.setSpacing(12)
         scroll.setWidget(scroll_widget)
 
         # ── Header ──
-        hdr = QHBoxLayout()
+        header = QFrame()
+        header.setObjectName("appHeader")
+        hdr = QHBoxLayout(header)
+        hdr.setContentsMargins(14, 12, 14, 12)
+        hdr.setSpacing(12)
+
+        icon_label = QLabel()
+        icon_label.setPixmap(self._icon.pixmap(QSize(32, 32)))
+        icon_label.setFixedSize(34, 34)
+        icon_label.setAccessibleName("ImgConverter app icon")
+        hdr.addWidget(icon_label)
+
+        title_block = QVBoxLayout()
+        title_block.setContentsMargins(0, 0, 0, 0)
+        title_block.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
         title = QLabel("ImgConverter")
-        title.setStyleSheet(f"font-size: 20px; font-weight: 800; color: {CAT['lavender']};")
+        title.setObjectName("appTitle")
         ver = QLabel(f"v{APP_VERSION}")
-        ver.setStyleSheet(f"color: {CAT['overlay2']}; font-size: 12px; margin-left: 6px;")
-        hdr.addWidget(title)
-        hdr.addWidget(ver)
-        hdr.addStretch()
-        desc = QLabel("Universal image batch converter with metadata preservation")
-        desc.setObjectName("dimLabel")
-        hdr.addWidget(desc)
-        scroll_layout.addLayout(hdr)
+        ver.setObjectName("appVersion")
+        self.workflow_state = QLabel("Ready")
+        self.workflow_state.setObjectName("workflowState")
+        self.workflow_state.setAccessibleName("Workflow status")
+        self.workflow_state.setAccessibleDescription("Current batch workflow state")
+        title_row.addWidget(title)
+        title_row.addWidget(ver)
+        title_row.addWidget(self.workflow_state)
+        title_row.addStretch()
+        desc = QLabel("Metadata-safe batch image conversion")
+        desc.setObjectName("appSubtitle")
+        desc.setWordWrap(True)
+        title_block.addLayout(title_row)
+        title_block.addWidget(desc)
+        hdr.addLayout(title_block, 1)
+        scroll_layout.addWidget(header)
 
         # ── Source / Output ──
-        io_group = QGroupBox("Directories")
+        io_group = QGroupBox("Source and output")
         io_grid = QGridLayout(io_group)
+        io_grid.setHorizontalSpacing(10)
+        io_grid.setVerticalSpacing(10)
         io_grid.setColumnStretch(1, 1)
 
-        io_grid.addWidget(QLabel("Source:"), 0, 0)
+        source_label = QLabel("Source folder")
+        source_label.setObjectName("fieldLabel")
         self.src_edit = QLineEdit()
-        self.src_edit.setPlaceholderText("Select or drag & drop a directory containing image files...")
+        self.src_edit.setPlaceholderText("Drop files or choose a folder to scan")
+        self.src_edit.setMinimumWidth(120)
+        self.src_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.src_edit.textChanged.connect(lambda: self.src_edit.setStyleSheet(""))
         io_grid.addWidget(self.src_edit, 0, 1)
-        self.src_btn = QPushButton("Browse")
+        self.src_btn = QPushButton("Choose")
+        self.src_btn.setFixedWidth(84)
         self.src_btn.clicked.connect(self._browse_source)
         io_grid.addWidget(self.src_btn, 0, 2)
 
         self.recent_btn = QToolButton()
-        self.recent_btn.setText("▾")
-        self.recent_btn.setMinimumWidth(28)
+        self.recent_btn.setArrowType(Qt.ArrowType.DownArrow)
+        self.recent_btn.setFixedWidth(30)
         self.recent_btn.setToolTip("Recent directories")
         self._recent_menu = QMenu(self)
         self.recent_btn.setMenu(self._recent_menu)
         self.recent_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._recent_menu.aboutToShow.connect(self._populate_recent_menu)
-        io_grid.addWidget(self.recent_btn, 0, 3)
+        source_label_row = QHBoxLayout()
+        source_label_row.setContentsMargins(0, 0, 0, 0)
+        source_label_row.setSpacing(6)
+        source_label_row.addWidget(source_label)
+        source_label_row.addWidget(self.recent_btn)
+        source_label_row.addStretch()
+        io_grid.addLayout(source_label_row, 0, 0)
 
-        io_grid.addWidget(QLabel("Output:"), 1, 0)
+        output_label = QLabel("Output folder")
+        output_label.setObjectName("fieldLabel")
+        io_grid.addWidget(output_label, 1, 0)
         self.dst_edit = QLineEdit()
-        self.dst_edit.setPlaceholderText("Converted files go here (default: source/converted)")
+        self.dst_edit.setPlaceholderText("Default: source/converted")
+        self.dst_edit.setMinimumWidth(120)
+        self.dst_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.dst_edit.textChanged.connect(lambda: self.dst_edit.setStyleSheet(""))
         io_grid.addWidget(self.dst_edit, 1, 1)
-        self.dst_btn = QPushButton("Browse")
+        self.dst_btn = QPushButton("Choose")
+        self.dst_btn.setFixedWidth(84)
         self.dst_btn.clicked.connect(self._browse_output)
         io_grid.addWidget(self.dst_btn, 1, 2)
 
         self.recursive_chk = QCheckBox("Scan subdirectories")
         self.recursive_chk.setChecked(True)
-        io_grid.addWidget(self.recursive_chk, 2, 1)
 
         self.structure_chk = QCheckBox("Preserve folder structure in output")
         self.structure_chk.setChecked(True)
-        io_grid.addWidget(self.structure_chk, 2, 2)
 
-        self.inplace_chk = QCheckBox("Convert in place (save next to original, delete source)")
+        io_options = QHBoxLayout()
+        io_options.setContentsMargins(0, 0, 0, 0)
+        io_options.setSpacing(18)
+        io_options.addWidget(self.recursive_chk)
+        io_options.addWidget(self.structure_chk)
+        io_options.addStretch()
+        io_grid.addLayout(io_options, 2, 1, 1, 2)
+
+        self.inplace_chk = QCheckBox("Convert in place after verified output")
         self.inplace_chk.setChecked(False)
         self.inplace_chk.setStyleSheet(f"color: {CAT['peach']};")
+        self.inplace_chk.setToolTip("Writes each converted file next to the source, then deletes the source only after output validation succeeds.")
         self.inplace_chk.toggled.connect(self._on_inplace_toggled)
         io_grid.addWidget(self.inplace_chk, 3, 1, 1, 2)
 
         scroll_layout.addWidget(io_group)
 
         # ── Input Format Filter ──
-        filter_group = QGroupBox("Input Format Filter")
+        filter_group = QGroupBox("Input formats")
         filter_layout = QGridLayout(filter_group)
-        filter_layout.setSpacing(6)
+        filter_layout.setHorizontalSpacing(8)
+        filter_layout.setVerticalSpacing(7)
 
         self._format_filters: dict[str, QCheckBox] = {}
         col = 0
         row = 0
         for name, (exts, available) in FORMAT_FAMILIES.items():
             chk = QCheckBox(name)
+            chk.setProperty("decoderAvailable", available)
             chk.setChecked(available)
             chk.setEnabled(available)
             if not available:
@@ -2853,15 +3012,21 @@ class MainWindow(QMainWindow):
         scroll_layout.addWidget(filter_group)
 
         # ── Conversion Options ──
-        opt_group = QGroupBox("Conversion Settings")
+        opt_group = QGroupBox("Output settings")
         opt_grid = QGridLayout(opt_group)
+        opt_grid.setHorizontalSpacing(10)
+        opt_grid.setVerticalSpacing(10)
         opt_grid.setColumnStretch(0, 0)
         opt_grid.setColumnStretch(1, 1)
         opt_grid.setColumnStretch(2, 0)
         opt_grid.setColumnStretch(3, 1)
 
-        opt_grid.addWidget(QLabel("Output Format:"), 0, 0)
+        format_label = QLabel("Format")
+        format_label.setObjectName("fieldLabel")
+        opt_grid.addWidget(format_label, 0, 0)
         self.fmt_combo = QComboBox()
+        self.fmt_combo.setMinimumWidth(120)
+        self.fmt_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.fmt_combo.addItems([
             "Auto (JPEG for photos, PNG for transparency)",
             "JPEG", "PNG", "WebP", "AVIF", "TIFF", "JPEG XL"
@@ -2882,6 +3047,7 @@ class MainWindow(QMainWindow):
 
         self._preset_btn = QToolButton()
         self._preset_btn.setText("Presets")
+        self._preset_btn.setObjectName("menuButton")
         self._preset_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._preset_btn.setToolTip("Apply a conversion preset")
         self._preset_menu = QMenu(self)
@@ -2889,7 +3055,8 @@ class MainWindow(QMainWindow):
         self._preset_btn.setMenu(self._preset_menu)
         opt_grid.addWidget(self._preset_btn, 0, 3)
 
-        self.quality_desc_label = QLabel("JPEG/WebP Quality:")
+        self.quality_desc_label = QLabel("JPEG/WebP quality")
+        self.quality_desc_label.setObjectName("fieldLabel")
         opt_grid.addWidget(self.quality_desc_label, 1, 0)
         self.quality_slider = QSlider(Qt.Orientation.Horizontal)
         self.quality_slider.setRange(50, 100)
@@ -2902,7 +3069,9 @@ class MainWindow(QMainWindow):
         self.quality_slider.valueChanged.connect(lambda v: self.quality_label.setText(str(v)))
         opt_grid.addWidget(self.quality_label, 1, 3)
 
-        opt_grid.addWidget(QLabel("Parallel Workers:"), 2, 0)
+        workers_label = QLabel("Workers")
+        workers_label.setObjectName("fieldLabel")
+        opt_grid.addWidget(workers_label, 2, 0)
         self.workers_spin = QSpinBox()
         self.workers_spin.setRange(1, 32)
         cpu_count = os.cpu_count() or 4
@@ -2943,6 +3112,8 @@ class MainWindow(QMainWindow):
         opt_grid.addWidget(self.resize_chk, 4, 0)
 
         self.resize_combo = QComboBox()
+        self.resize_combo.setMinimumWidth(100)
+        self.resize_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.resize_combo.addItems(["Max Dimension", "Scale"])
         self.resize_combo.setEnabled(False)
         self.resize_combo.currentIndexChanged.connect(self._on_resize_mode_changed)
@@ -2956,14 +3127,22 @@ class MainWindow(QMainWindow):
         opt_grid.addWidget(self.resize_spin, 4, 2, 1, 2)
 
         # ── Filename Prefix / Suffix ──
-        opt_grid.addWidget(QLabel("Prefix:"), 5, 0)
+        prefix_label = QLabel("Prefix")
+        prefix_label.setObjectName("fieldLabel")
+        opt_grid.addWidget(prefix_label, 5, 0)
         self.prefix_edit = QLineEdit()
         self.prefix_edit.setPlaceholderText("e.g. converted_")
+        self.prefix_edit.setMinimumWidth(100)
+        self.prefix_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         opt_grid.addWidget(self.prefix_edit, 5, 1)
 
-        opt_grid.addWidget(QLabel("Suffix:"), 5, 2)
+        suffix_label = QLabel("Suffix")
+        suffix_label.setObjectName("fieldLabel")
+        opt_grid.addWidget(suffix_label, 5, 2)
         self.suffix_edit = QLineEdit()
         self.suffix_edit.setPlaceholderText("e.g. _web")
+        self.suffix_edit.setMinimumWidth(100)
+        self.suffix_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         opt_grid.addWidget(self.suffix_edit, 5, 3)
 
         # ── Chroma Subsampling + sRGB ──
@@ -2978,13 +3157,15 @@ class MainWindow(QMainWindow):
         opt_grid.addWidget(self.srgb_chk, 6, 2, 1, 2)
 
         # ── TIFF Compression + PNG Compression Level ──
-        self.tiff_comp_label = QLabel("TIFF Compression:")
+        self.tiff_comp_label = QLabel("TIFF compression")
+        self.tiff_comp_label.setObjectName("fieldLabel")
         opt_grid.addWidget(self.tiff_comp_label, 7, 0)
         self.tiff_comp_combo = QComboBox()
         self.tiff_comp_combo.addItems(["None", "LZW", "Deflate"])
         opt_grid.addWidget(self.tiff_comp_combo, 7, 1)
 
-        self.png_level_label = QLabel("PNG Compression:")
+        self.png_level_label = QLabel("PNG compression")
+        self.png_level_label.setObjectName("fieldLabel")
         opt_grid.addWidget(self.png_level_label, 7, 2)
         self.png_level_spin = QSpinBox()
         self.png_level_spin.setRange(1, 9)
@@ -2992,33 +3173,46 @@ class MainWindow(QMainWindow):
         self.png_level_spin.setToolTip("PNG compression level (1=fastest, 9=smallest)")
         opt_grid.addWidget(self.png_level_spin, 7, 3)
 
-        # Show/hide TIFF and PNG controls based on format selection
-        self.fmt_combo.currentIndexChanged.connect(self._on_format_changed)
-        self._on_format_changed(self.fmt_combo.currentIndex())
-
         scroll_layout.addWidget(opt_group)
 
-        # ── Advanced Options (v3.0.0 features) — collapsed by default ──
-        self.adv_group = QGroupBox("Advanced Options")
-        self.adv_group.setCheckable(True)
-        self.adv_group.setChecked(False)
+        # ── Advanced output controls ──
+        self.adv_toggle = QToolButton()
+        self.adv_toggle.setObjectName("advancedToggle")
+        self.adv_toggle.setCheckable(True)
+        self.adv_toggle.setChecked(False)
+        self.adv_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.adv_toggle.setText("Show advanced output controls")
+        self.adv_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.adv_toggle.toggled.connect(self._toggle_advanced)
+        scroll_layout.addWidget(self.adv_toggle)
+
+        self.adv_group = QGroupBox("Advanced output controls")
+        self.adv_group.setVisible(False)
         adv_group = self.adv_group
         adv_grid = QGridLayout(adv_group)
+        adv_grid.setHorizontalSpacing(10)
+        adv_grid.setVerticalSpacing(10)
         adv_grid.setColumnStretch(0, 0)
         adv_grid.setColumnStretch(1, 1)
         adv_grid.setColumnStretch(2, 0)
         adv_grid.setColumnStretch(3, 1)
 
-        adv_grid.addWidget(QLabel("Template:"), 0, 0)
+        template_label = QLabel("Name template")
+        template_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(template_label, 0, 0)
         self.template_edit = QLineEdit()
         self.template_edit.setPlaceholderText("{stem}  (overrides prefix/suffix)")
+        self.template_edit.setMinimumWidth(100)
+        self.template_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.template_edit.setToolTip(
             "Output filename template. Tokens: {stem} {ext} {fmt} {src_dir} "
             "{rel_dir} {width} {height} {date[:FMT]} {seq[:###]}"
         )
         adv_grid.addWidget(self.template_edit, 0, 1)
 
-        adv_grid.addWidget(QLabel("DPI:"), 0, 2)
+        dpi_label = QLabel("DPI")
+        dpi_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(dpi_label, 0, 2)
         self.dpi_spin = QSpinBox()
         self.dpi_spin.setRange(0, 2400)
         self.dpi_spin.setValue(0)
@@ -3026,7 +3220,8 @@ class MainWindow(QMainWindow):
         self.dpi_spin.setToolTip("Set output DPI tag for JPEG/PNG/TIFF (0 = keep original)")
         adv_grid.addWidget(self.dpi_spin, 0, 3)
 
-        self.avif_speed_label = QLabel("AVIF Speed:")
+        self.avif_speed_label = QLabel("AVIF speed")
+        self.avif_speed_label.setObjectName("fieldLabel")
         adv_grid.addWidget(self.avif_speed_label, 1, 0)
         self.avif_speed_spin = QSpinBox()
         self.avif_speed_spin.setRange(0, 10)
@@ -3037,7 +3232,8 @@ class MainWindow(QMainWindow):
         )
         adv_grid.addWidget(self.avif_speed_spin, 1, 1)
 
-        self.avif_codec_label = QLabel("AVIF Codec:")
+        self.avif_codec_label = QLabel("AVIF codec")
+        self.avif_codec_label.setObjectName("fieldLabel")
         adv_grid.addWidget(self.avif_codec_label, 1, 2)
         self.avif_codec_combo = QComboBox()
         self.avif_codec_combo.addItems(["Auto", "aom", "rav1e", "svt"])
@@ -3047,7 +3243,8 @@ class MainWindow(QMainWindow):
         )
         adv_grid.addWidget(self.avif_codec_combo, 1, 3)
 
-        self.frames_label = QLabel("Multi-Frame:")
+        self.frames_label = QLabel("Multi-frame")
+        self.frames_label.setObjectName("fieldLabel")
         adv_grid.addWidget(self.frames_label, 2, 0)
         self.frames_combo = QComboBox()
         self.frames_combo.addItems(["First Frame Only", "Extract All Frames", "Preserve Animation"])
@@ -3056,7 +3253,8 @@ class MainWindow(QMainWindow):
         )
         adv_grid.addWidget(self.frames_combo, 2, 1)
 
-        self.tone_map_label = QLabel("Tone Map:")
+        self.tone_map_label = QLabel("Tone map")
+        self.tone_map_label.setObjectName("fieldLabel")
         adv_grid.addWidget(self.tone_map_label, 2, 2)
         self.tone_map_combo = QComboBox()
         self.tone_map_combo.addItems(["None", "Reinhard", "Hable", "Clip"])
@@ -3065,18 +3263,26 @@ class MainWindow(QMainWindow):
         )
         adv_grid.addWidget(self.tone_map_combo, 2, 3)
 
-        adv_grid.addWidget(QLabel("ICC Override:"), 3, 0)
+        icc_label = QLabel("ICC override")
+        icc_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(icc_label, 3, 0)
         self.icc_edit = QLineEdit()
         self.icc_edit.setPlaceholderText("sRGB or path to .icc file")
+        self.icc_edit.setMinimumWidth(100)
+        self.icc_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.icc_edit.setToolTip(
             "Embed a specific ICC profile. Enter 'sRGB' for built-in or "
             "a path to an .icc/.icm file. Leave empty to keep source profile."
         )
         adv_grid.addWidget(self.icc_edit, 3, 1, 1, 3)
 
-        adv_grid.addWidget(QLabel("Watermark:"), 4, 0)
+        watermark_label = QLabel("Watermark")
+        watermark_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(watermark_label, 4, 0)
         self.watermark_edit = QLineEdit()
         self.watermark_edit.setPlaceholderText("text|position|opacity  or  logo.png|position|opacity")
+        self.watermark_edit.setMinimumWidth(100)
+        self.watermark_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.watermark_edit.setToolTip(
             "Watermark spec: 'TEXT|position|opacity' or 'image.png|position|opacity'. "
             "Positions: top-left, top, top-right, left, center, right, "
@@ -3084,15 +3290,23 @@ class MainWindow(QMainWindow):
         )
         adv_grid.addWidget(self.watermark_edit, 4, 1, 1, 3)
 
-        adv_grid.addWidget(QLabel("Canvas:"), 5, 0)
+        canvas_label = QLabel("Canvas")
+        canvas_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(canvas_label, 5, 0)
         self.canvas_edit = QLineEdit()
         self.canvas_edit.setPlaceholderText("WxH  (e.g. 1920x1080)")
+        self.canvas_edit.setMinimumWidth(100)
+        self.canvas_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.canvas_edit.setToolTip("Pad output to canvas size preserving aspect ratio")
         adv_grid.addWidget(self.canvas_edit, 5, 1)
 
-        adv_grid.addWidget(QLabel("Canvas BG:"), 5, 2)
+        canvas_bg_label = QLabel("Canvas BG")
+        canvas_bg_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(canvas_bg_label, 5, 2)
         self.canvas_bg_edit = QLineEdit()
         self.canvas_bg_edit.setText("transparent")
+        self.canvas_bg_edit.setMinimumWidth(100)
+        self.canvas_bg_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.canvas_bg_edit.setToolTip("Canvas background: 'transparent', '#RRGGBB', or named color")
         adv_grid.addWidget(self.canvas_bg_edit, 5, 3)
 
@@ -3118,7 +3332,9 @@ class MainWindow(QMainWindow):
         self.only_if_smaller_chk.toggled.connect(self.only_if_smaller_spin.setEnabled)
         adv_grid.addWidget(self.only_if_smaller_spin, 7, 1)
 
-        adv_grid.addWidget(QLabel("Target KB:"), 7, 2)
+        target_label = QLabel("Target KB")
+        target_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(target_label, 7, 2)
         self.target_kb_spin = QSpinBox()
         self.target_kb_spin.setRange(0, 100000)
         self.target_kb_spin.setValue(0)
@@ -3135,51 +3351,71 @@ class MainWindow(QMainWindow):
 
         scroll_layout.addWidget(adv_group)
 
+        # Show/hide format-specific controls after every dependent widget exists.
+        self.fmt_combo.currentIndexChanged.connect(self._on_format_changed)
+        self._on_format_changed(self.fmt_combo.currentIndex())
+
         # ── Actions ──
-        actions = QHBoxLayout()
-        self.scan_btn = QPushButton("Scan Directory")
+        action_bar = QFrame()
+        action_bar.setObjectName("actionBar")
+        actions = QVBoxLayout(action_bar)
+        actions.setContentsMargins(12, 10, 12, 10)
+        actions.setSpacing(8)
+        primary_actions = QHBoxLayout()
+        primary_actions.setContentsMargins(0, 0, 0, 0)
+        primary_actions.setSpacing(10)
+        secondary_actions = QHBoxLayout()
+        secondary_actions.setContentsMargins(0, 0, 0, 0)
+        secondary_actions.setSpacing(10)
+
+        self.scan_btn = QPushButton("Scan Source")
         self.scan_btn.setObjectName("primaryBtn")
         self.scan_btn.clicked.connect(self._scan)
-        actions.addWidget(self.scan_btn)
+        primary_actions.addWidget(self.scan_btn)
 
-        self.convert_btn = QPushButton("Convert All")
+        self.convert_btn = QPushButton("Convert Batch")
         self.convert_btn.setObjectName("primaryBtn")
         self.convert_btn.setEnabled(False)
         self.convert_btn.clicked.connect(self._convert)
-        actions.addWidget(self.convert_btn)
+        primary_actions.addWidget(self.convert_btn)
 
-        self.stop_btn = QPushButton("Stop")
+        self.stop_btn = QPushButton("Cancel")
         self.stop_btn.setObjectName("stopBtn")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._stop)
-        actions.addWidget(self.stop_btn)
+        primary_actions.addWidget(self.stop_btn)
 
-        self.paste_btn = QPushButton("Paste Image")
-        self.paste_btn.setToolTip("Paste an image from clipboard as input (Ctrl+V)")
+        self.paste_btn = QPushButton("Paste Clipboard")
+        self.paste_btn.setToolTip("Paste an image from the clipboard as a temporary PNG input")
         self.paste_btn.clicked.connect(self._paste_clipboard)
-        actions.addWidget(self.paste_btn)
+        primary_actions.addWidget(self.paste_btn)
 
-        actions.addStretch()
+        primary_actions.addStretch()
 
-        self.auto_open_chk = QCheckBox("Auto-open output folder")
+        self.auto_open_chk = QCheckBox("Auto-open output")
         self.auto_open_chk.setChecked(False)
         self.auto_open_chk.setToolTip("Automatically open the output folder when conversion finishes")
-        actions.addWidget(self.auto_open_chk)
+        secondary_actions.addStretch()
+        secondary_actions.addWidget(self.auto_open_chk)
 
-        self.open_output_btn = QPushButton("Open Output Folder")
+        self.open_output_btn = QPushButton("Open Output")
         self.open_output_btn.setEnabled(False)
         self.open_output_btn.clicked.connect(self._open_output)
-        actions.addWidget(self.open_output_btn)
+        secondary_actions.addWidget(self.open_output_btn)
 
-        scroll_layout.addLayout(actions)
+        actions.addLayout(primary_actions)
+        actions.addLayout(secondary_actions)
+
+        scroll_layout.removeWidget(filter_group)
+        scroll_layout.insertWidget(2, action_bar)
+        scroll_layout.insertWidget(4, filter_group)
 
         # ── Stats bar ──
         stats_frame = QFrame()
-        stats_frame.setStyleSheet(
-            f"background-color: {CAT['mantle']}; border-radius: 8px; padding: 6px;"
-        )
+        stats_frame.setObjectName("statsFrame")
         stats_layout = QHBoxLayout(stats_frame)
-        stats_layout.setContentsMargins(16, 8, 16, 8)
+        stats_layout.setContentsMargins(10, 10, 10, 10)
+        stats_layout.setSpacing(8)
 
         self.stat_files = self._make_stat("0", "Files Found")
         self.stat_size = self._make_stat("0 B", "Total Size")
@@ -3202,25 +3438,25 @@ class MainWindow(QMainWindow):
 
         # ── Log + controls ──
         log_header = QHBoxLayout()
-        log_label = QLabel("Log")
-        log_label.setStyleSheet(f"color: {CAT['overlay2']}; font-weight: 600; font-size: 12px;")
+        log_label = QLabel("Activity log")
+        log_label.setObjectName("fieldLabel")
         log_header.addWidget(log_label)
         log_header.addStretch()
 
         self.export_log_btn = QPushButton("Export Log")
-        self.export_log_btn.setStyleSheet("font-size: 11px; padding: 2px 10px;")
+        self.export_log_btn.setObjectName("miniBtn")
         self.export_log_btn.setToolTip("Save the conversion log as a text file")
         self.export_log_btn.clicked.connect(self._export_log)
         log_header.addWidget(self.export_log_btn)
 
         self.export_csv_btn = QPushButton("Export CSV")
-        self.export_csv_btn.setStyleSheet("font-size: 11px; padding: 2px 10px;")
+        self.export_csv_btn.setObjectName("miniBtn")
         self.export_csv_btn.setToolTip("Export conversion results as a CSV report")
         self.export_csv_btn.clicked.connect(self._export_csv)
         log_header.addWidget(self.export_csv_btn)
 
         self.clear_log_btn = QPushButton("Clear")
-        self.clear_log_btn.setStyleSheet("font-size: 11px; padding: 2px 10px;")
+        self.clear_log_btn.setObjectName("miniBtn")
         self.clear_log_btn.setToolTip("Clear the log output")
         self.clear_log_btn.clicked.connect(self._clear_log)
         log_header.addWidget(self.clear_log_btn)
@@ -3233,6 +3469,7 @@ class MainWindow(QMainWindow):
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
+        self.log_view.setPlaceholderText("Scan a source folder to see matching files, warnings, and conversion results.")
         self.log_view.setMaximumBlockCount(5000)
         self.log_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.log_view.customContextMenuRequested.connect(self._on_log_context_menu)
@@ -3244,22 +3481,27 @@ class MainWindow(QMainWindow):
         splitter.addWidget(log_container)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([760, 160])
         root.addWidget(splitter, 1)
 
         # ── Status bar ──
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
+        self._set_workflow_state("Ready", "Select a source folder to begin.")
 
     def _make_stat(self, value: str, label: str) -> QWidget:
-        w = QWidget()
+        w = QFrame()
+        w.setObjectName("statCard")
+        w.setAccessibleName(label)
+        w.setAccessibleDescription(f"{label}: {value}")
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
+        lay.setContentsMargins(8, 7, 8, 7)
+        lay.setSpacing(2)
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         val = QLabel(value)
         val.setObjectName("statValue")
         val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        val.setMinimumWidth(88)
         lbl = QLabel(label)
         lbl.setObjectName("statLabel")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -3267,6 +3509,54 @@ class MainWindow(QMainWindow):
         lay.addWidget(lbl)
         w._val = val
         return w
+
+    def _toggle_advanced(self, checked: bool):
+        self.adv_group.setVisible(checked)
+        self.adv_toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+        self.adv_toggle.setText(
+            "Hide advanced output controls" if checked else "Show advanced output controls"
+        )
+
+    def _set_workflow_state(self, state: str, message: str | None = None):
+        if hasattr(self, "workflow_state"):
+            self.workflow_state.setText(state)
+        if message and hasattr(self, "status_bar"):
+            self.status_bar.showMessage(message)
+
+    def _set_line_error(self, widget, message: str):
+        widget.setStyleSheet(f"border: 1px solid {CAT['red']};")
+        widget.setFocus()
+        self._set_workflow_state("Needs input", message)
+
+    def _set_conversion_busy(self, busy: bool):
+        enabled = not busy
+        for attr in [
+            "src_edit", "src_btn", "recent_btn", "dst_edit", "dst_btn",
+            "recursive_chk", "structure_chk", "inplace_chk",
+            "fmt_combo", "_preset_btn", "quality_slider", "workers_spin",
+            "meta_chk", "strip_meta_chk", "skip_existing_chk",
+            "progressive_jpeg_chk", "lossless_webp_chk", "resize_chk",
+            "resize_combo", "resize_spin", "prefix_edit", "suffix_edit",
+            "chroma_chk", "srgb_chk", "tiff_comp_combo", "png_level_spin",
+            "adv_toggle", "template_edit", "dpi_spin", "avif_speed_spin",
+            "avif_codec_combo", "frames_combo", "tone_map_combo", "icc_edit",
+            "watermark_edit", "canvas_edit", "canvas_bg_edit",
+            "xmp_sidecar_chk", "recompress_chk", "only_if_smaller_chk",
+            "only_if_smaller_spin", "target_kb_spin", "png_lossy_chk",
+            "paste_btn", "auto_open_chk",
+        ]:
+            w = getattr(self, attr, None)
+            if w is not None:
+                w.setEnabled(enabled)
+        for chk in getattr(self, "_format_filters", {}).values():
+            if chk.property("decoderAvailable") is False:
+                chk.setEnabled(False)
+            else:
+                chk.setEnabled(enabled)
+        if self.inplace_chk.isChecked() and enabled:
+            self.dst_edit.setEnabled(False)
+            self.dst_btn.setEnabled(False)
+            self.structure_chk.setEnabled(False)
 
     def _log(self, msg: str):
         self.log_view.appendPlainText(msg)
@@ -3330,17 +3620,12 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     # ── Clipboard paste ──
-    def keyPressEvent(self, event):
-        if event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_V:
-            self._paste_clipboard()
-            return
-        super().keyPressEvent(event)
-
     def _paste_clipboard(self):
         clipboard = QApplication.clipboard()
         img = clipboard.image()
         if img.isNull():
             self._log("[PASTE] No image found on clipboard.")
+            self._set_workflow_state("No image", "Clipboard does not contain an image.")
             return
         tmp_dir = USER_CACHE_DIR / "clipboard"
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -3357,6 +3642,10 @@ class MainWindow(QMainWindow):
         self.stat_size._val.setText(_fmt_size(total_size))
         self.convert_btn.setEnabled(True)
         self._update_title("scanned", count=1)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("Ready to convert")
+        self._set_workflow_state("Ready to convert", "Clipboard image is ready to convert.")
         self._log(f"[PASTE] Pasted clipboard image as {tmp_path.name} ({_fmt_size(total_size)})")
 
     # ── Log context menu ──
@@ -3443,9 +3732,11 @@ class MainWindow(QMainWindow):
         self.dst_btn.setEnabled(not checked)
         self.structure_chk.setEnabled(not checked)
         if checked:
-            self.dst_edit.setPlaceholderText("(disabled — output goes next to each source file)")
+            self.dst_edit.setPlaceholderText("In-place mode writes next to each source")
+            self._set_workflow_state("In-place mode", "In-place mode will delete each source only after output validation succeeds.")
         else:
-            self.dst_edit.setPlaceholderText("Converted files go here (default: source/converted)")
+            self.dst_edit.setPlaceholderText("Default: source/converted")
+            self._set_workflow_state("Ready", "Output folder mode restored.")
 
     # ── Browse ──
     def _browse_source(self):
@@ -3526,15 +3817,15 @@ class MainWindow(QMainWindow):
 
         # Quality label text
         if is_jpeg:
-            self.quality_desc_label.setText("JPEG Quality:")
+            self.quality_desc_label.setText("JPEG quality")
         elif is_webp:
-            self.quality_desc_label.setText("WebP Quality:")
+            self.quality_desc_label.setText("WebP quality")
         elif is_avif:
-            self.quality_desc_label.setText("AVIF Quality:")
+            self.quality_desc_label.setText("AVIF quality")
         elif is_jxl:
-            self.quality_desc_label.setText("JXL Quality:")
+            self.quality_desc_label.setText("JXL quality")
         else:
-            self.quality_desc_label.setText("JPEG/WebP Quality:")
+            self.quality_desc_label.setText("JPEG/WebP quality")
 
         # Chroma subsampling: JPEG, Auto
         self.chroma_chk.setVisible(is_auto or is_jpeg)
@@ -3554,10 +3845,11 @@ class MainWindow(QMainWindow):
         self.png_level_spin.setVisible(is_png)
 
         # AVIF speed + codec: AVIF only
-        self.avif_speed_label.setVisible(is_avif)
-        self.avif_speed_spin.setVisible(is_avif)
-        self.avif_codec_label.setVisible(is_avif)
-        self.avif_codec_combo.setVisible(is_avif)
+        if hasattr(self, "avif_speed_label"):
+            self.avif_speed_label.setVisible(is_avif)
+            self.avif_speed_spin.setVisible(is_avif)
+            self.avif_codec_label.setVisible(is_avif)
+            self.avif_codec_combo.setVisible(is_avif)
 
     # ── Resize controls ──
     def _on_resize_toggled(self, checked: bool):
@@ -3590,6 +3882,7 @@ class MainWindow(QMainWindow):
         """Export conversion results as a CSV report."""
         if not self._results:
             self._log("[ERROR] No conversion results to export.")
+            self._set_workflow_state("No report", "Run a conversion before exporting a CSV report.")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export CSV Report", str(Path.home() / "imgconverter_report.csv"),
@@ -3621,18 +3914,20 @@ class MainWindow(QMainWindow):
         src = self.src_edit.text().strip()
         if not src or not Path(src).is_dir():
             self._log("[ERROR] Please select a valid source directory.")
+            self._set_line_error(self.src_edit, "Select a valid source folder before scanning.")
             return
 
         self._update_title()
         self.scan_btn.setEnabled(False)
         self.convert_btn.setEnabled(False)
-        self.status_bar.showMessage("Scanning...")
+        self._set_workflow_state("Scanning", "Scanning source folder...")
+        self._log(f"[SCAN] {src}")
 
         enabled_exts = self._get_enabled_extensions()
         if not enabled_exts:
             self._log("[ERROR] No input formats selected in the filter panel.")
             self.scan_btn.setEnabled(True)
-            self.status_bar.showMessage("Ready")
+            self._set_workflow_state("Needs input", "Select at least one available input format.")
             return
 
         self._scanner = ScanWorker(src, self.recursive_chk.isChecked(), enabled_exts)
@@ -3698,11 +3993,17 @@ class MainWindow(QMainWindow):
                     ext_counts["ICO"] = ext_counts.get("ICO", 0) + 1
             breakdown = ", ".join(f"{v} {k}" for k, v in sorted(ext_counts.items(), key=lambda x: -x[1]))
             self._log(f"Breakdown: {breakdown}")
-            self.status_bar.showMessage(
+            self.progress_bar.setFormat("Ready to convert")
+            self._set_workflow_state(
+                "Ready to convert",
                 f"Found {len(result.files)} files ({_fmt_size(result.total_size)}). Ready to convert."
             )
         else:
-            self.status_bar.showMessage("No supported image files found.")
+            self.convert_btn.setEnabled(False)
+            self.progress_bar.setFormat("No files found")
+            self._update_title()
+            self._set_workflow_state("No files", "No supported image files found with the current filters.")
+            self._log("[INFO] No supported image files found. Check the source folder and input format filters.")
 
     # ── Convert ──
     def _convert(self):
@@ -3728,6 +4029,7 @@ class MainWindow(QMainWindow):
             self._log("[ERROR] Output directory is the same as source directory. Use a subfolder or enable in-place mode.")
             self.scan_btn.setEnabled(True)
             self.convert_btn.setEnabled(True)
+            self._set_line_error(self.dst_edit, "Choose a different output folder or enable in-place mode.")
             return
         if not in_place and dst_resolved != src_resolved:
             try:
@@ -3750,6 +4052,7 @@ class MainWindow(QMainWindow):
                 )
                 self.scan_btn.setEnabled(True)
                 self.convert_btn.setEnabled(True)
+                self._set_workflow_state("Blocked", "Not enough disk space for the estimated output.")
                 return
             if estimated > disk.free * 0.8:
                 self._log(
@@ -3772,22 +4075,17 @@ class MainWindow(QMainWindow):
         self.stat_failed._val.setText("0")
         self.stat_saved._val.setText("0 B")
         # Reset stat colors to default green for new batch
-        default_stat_style = f"color: {CAT['green']}; font-size: 22px; font-weight: 700;"
-        self.stat_done._val.setStyleSheet(default_stat_style)
-        self.stat_skipped._val.setStyleSheet(default_stat_style)
-        self.stat_failed._val.setStyleSheet(default_stat_style)
-        self.stat_saved._val.setStyleSheet(default_stat_style)
+        self.stat_done._val.setStyleSheet(STAT_VALUE_STYLE)
+        self.stat_skipped._val.setStyleSheet(STAT_VALUE_STYLE)
+        self.stat_failed._val.setStyleSheet(STAT_VALUE_STYLE)
+        self.stat_saved._val.setStyleSheet(STAT_VALUE_STYLE)
 
         self.scan_btn.setEnabled(False)
         self.convert_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.open_output_btn.setEnabled(False)
-        self.src_edit.setEnabled(False)
-        self.src_btn.setEnabled(False)
-        self.dst_edit.setEnabled(False)
-        self.dst_btn.setEnabled(False)
-        self.fmt_combo.setEnabled(False)
-        self.status_bar.showMessage("Converting...")
+        self._set_conversion_busy(True)
+        self._set_workflow_state("Converting", "Converting batch...")
 
         if in_place:
             self._log("In-place mode: converted files saved next to originals, source files will be deleted")
@@ -3854,7 +4152,8 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Converting... {current}/{total}")
 
     def _on_current_file(self, filename: str):
-        self.progress_bar.setFormat(f"%p% — {filename}")
+        display = filename if len(filename) <= 72 else f"{filename[:34]}...{filename[-34:]}"
+        self.progress_bar.setFormat(f"%p% - {display}")
 
     def _on_file_done(self, result: ConvertResult):
         self._results.append(result)
@@ -3884,7 +4183,7 @@ class MainWindow(QMainWindow):
             self.stat_failed._val.setStyleSheet(f"color: {CAT['red']}; font-size: 22px; font-weight: 700;")
         self.stat_saved._val.setText(_fmt_size(abs(saved)))
         if saved >= 0:
-            self.stat_saved._val.setStyleSheet(f"color: {CAT['green']}; font-size: 22px; font-weight: 700;")
+            self.stat_saved._val.setStyleSheet(STAT_VALUE_STYLE)
         else:
             self.stat_saved._val.setStyleSheet(f"color: {CAT['peach']}; font-size: 22px; font-weight: 700;")
 
@@ -3907,12 +4206,7 @@ class MainWindow(QMainWindow):
         self.convert_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.open_output_btn.setEnabled(True)
-        self.src_edit.setEnabled(True)
-        self.src_btn.setEnabled(True)
-        if not self.inplace_chk.isChecked():
-            self.dst_edit.setEnabled(True)
-            self.dst_btn.setEnabled(True)
-        self.fmt_combo.setEnabled(True)
+        self._set_conversion_busy(False)
         self.progress_bar.setFormat("%p%")
 
         ok = sum(1 for r in results if r.success)
@@ -3938,7 +4232,12 @@ class MainWindow(QMainWindow):
         self._log(f"\n{'='*60}")
         self._log(summary)
         self._log(f"{'='*60}")
-        self.status_bar.showMessage(summary)
+        if fail and ok == 0:
+            self._set_workflow_state("Failed", summary)
+        elif fail:
+            self._set_workflow_state("Review log", summary)
+        else:
+            self._set_workflow_state("Complete", summary)
 
         # Screen reader announcement (Qt 6.8+)
         try:
@@ -3982,7 +4281,7 @@ class MainWindow(QMainWindow):
         if self._worker:
             self._worker.stop()
             self.stop_btn.setEnabled(False)
-            self.status_bar.showMessage("Stopping...")
+            self._set_workflow_state("Stopping", "Stopping after the current file finishes...")
 
     def _open_output(self):
         if self.inplace_chk.isChecked():
@@ -4033,7 +4332,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("only_if_smaller_pct", self.only_if_smaller_spin.value())
         self.settings.setValue("target_kb", self.target_kb_spin.value())
         self.settings.setValue("png_lossy", self.png_lossy_chk.isChecked())
-        self.settings.setValue("adv_expanded", self.adv_group.isChecked())
+        self.settings.setValue("adv_expanded", self.adv_toggle.isChecked())
         self.settings.setValue("geometry", self.saveGeometry())
         # Format filter states
         filter_state = {name: chk.isChecked() for name, chk in self._format_filters.items()}
@@ -4164,7 +4463,9 @@ class MainWindow(QMainWindow):
         if (v := self.settings.value("png_lossy")) is not None:
             self.png_lossy_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("adv_expanded")) is not None:
-            self.adv_group.setChecked(v == "true" or v is True)
+            expanded = v == "true" or v is True
+            self.adv_toggle.setChecked(expanded)
+            self._toggle_advanced(expanded)
         if v := self.settings.value("geometry"):
             self.restoreGeometry(v)
         # Restore format filter states
