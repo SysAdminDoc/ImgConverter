@@ -25,20 +25,20 @@ Most image converters get the details wrong — they strip metadata, mangle colo
 
 ## Supported Input Formats
 
-| Format | Extensions | Decoder | Install |
+| Format | Extensions | Decoder | Availability |
 |---|---|---|---|
-| JPEG | `.jpg` `.jpeg` `.jpe` `.jfif` | Pillow | Auto |
-| PNG | `.png` | Pillow | Auto |
-| HEIC/HEIF | `.heic` `.heif` `.hif` | pillow-heif | Auto |
-| AVIF | `.avif` | pillow-heif | Auto |
-| WebP | `.webp` | Pillow | Auto |
-| TIFF | `.tif` `.tiff` | Pillow | Auto |
-| BMP | `.bmp` | Pillow | Auto |
-| JPEG 2000 | `.jp2` `.j2k` `.jpx` | Pillow | Auto |
-| ICO/CUR | `.ico` `.cur` | Pillow | Auto |
-| JPEG XL | `.jxl` | pillow-jxl-plugin | Auto (optional) |
-| Camera RAW | `.cr2` `.cr3` `.nef` `.arw` `.dng` `.orf` `.rw2` `.raf` | rawpy/libraw | Auto (optional) |
-| QOI | `.qoi` | qoi | Auto (optional) |
+| JPEG | `.jpg` `.jpeg` `.jpe` `.jfif` | Pillow | Required |
+| PNG | `.png` | Pillow | Required |
+| HEIC/HEIF | `.heic` `.heif` `.hif` | pillow-heif | Required |
+| AVIF | `.avif` | pillow-heif | Required |
+| WebP | `.webp` | Pillow | Required |
+| TIFF | `.tif` `.tiff` | Pillow | Required |
+| BMP | `.bmp` | Pillow | Required |
+| JPEG 2000 | `.jp2` `.j2k` `.jpx` | Pillow | Required |
+| ICO/CUR | `.ico` `.cur` | Pillow | Required |
+| JPEG XL | `.jxl` | pillow-jxl-plugin | Optional |
+| Camera RAW | `.cr2` `.cr3` `.nef` `.arw` `.dng` `.orf` `.rw2` `.raf` | rawpy/libraw | Optional |
+| QOI | `.qoi` | qoi | Optional |
 
 **Output formats:** JPEG, PNG, WebP, AVIF, TIFF, JPEG XL
 
@@ -112,10 +112,11 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 ```bash
 git clone https://github.com/SysAdminDoc/ImgConverter.git
 cd ImgConverter
+python -m pip install -r requirements.txt
 python imgconverter.py
 ```
 
-All dependencies install automatically on first launch. No manual setup.
+Dependencies are explicit and are not installed silently at startup. Run `python imgconverter.py --install-deps` if you want ImgConverter to install or upgrade its required and optional Python packages for you.
 
 ## Usage
 
