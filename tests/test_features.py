@@ -258,6 +258,93 @@ class TestShellIntegration:
 # ── 2. Preset loading ────────────────────────────────────────────────────────
 
 
+def _advanced_preset_payload():
+    return {
+        "schema_version": 2,
+        "format": "avif",
+        "quality": 77,
+        "progressive": True,
+        "chroma_420": True,
+        "lossless": True,
+        "srgb": True,
+        "resize": "scale:50",
+        "no_structure": True,
+        "template": "{rel_dir}/{stem}_{seq:###}",
+        "avif_speed": 3,
+        "avif_codec": "svt",
+        "watermark": "Demo|bottom-right|0.6",
+        "canvas": "1920x1080",
+        "canvas_bg": "#101010",
+        "exclude": ["cache/**", "*.tmp"],
+        "max_file_size": "500MB",
+        "target_kb": 200,
+        "target_psnr": 40,
+        "only_if_smaller": 25,
+        "xmp_sidecar": True,
+        "sidecar_history": True,
+        "strip_metadata": True,
+        "dpi": 300,
+        "icc": "sRGB",
+        "recompress": True,
+        "png_lossy": True,
+        "frames": "all",
+        "tone_map": "hable",
+        "tiff_compression": "deflate",
+        "png_level": 9,
+    }
+
+
+class _FakeCheck:
+    def __init__(self):
+        self.checked = None
+
+    def setChecked(self, value):
+        self.checked = bool(value)
+
+
+class _FakeValue:
+    def __init__(self):
+        self.value = None
+
+    def setValue(self, value):
+        self.value = value
+
+    def setCurrentIndex(self, value):
+        self.value = value
+
+
+class _FakeLine:
+    def __init__(self):
+        self.text = None
+
+    def setText(self, value):
+        self.text = value
+
+
+class _FakePresetWindow:
+    def __init__(self):
+        for attr in (
+            "progressive_jpeg_chk", "lossless_webp_chk", "chroma_chk", "srgb_chk",
+            "inplace_chk", "skip_existing_chk", "xmp_sidecar_chk", "recompress_chk",
+            "png_lossy_chk", "strip_meta_chk", "meta_chk", "structure_chk",
+            "recursive_chk", "resize_chk", "only_if_smaller_chk",
+        ):
+            setattr(self, attr, _FakeCheck())
+        for attr in (
+            "fmt_combo", "quality_slider", "workers_spin", "resize_combo",
+            "resize_spin", "tiff_comp_combo", "png_level_spin", "dpi_spin",
+            "avif_speed_spin", "avif_codec_combo", "frames_combo",
+            "tone_map_combo", "only_if_smaller_spin", "target_kb_spin",
+        ):
+            setattr(self, attr, _FakeValue())
+        for attr in (
+            "prefix_edit", "suffix_edit", "template_edit", "icc_edit",
+            "watermark_edit", "canvas_edit", "canvas_bg_edit", "exclude_edit",
+            "max_file_size_edit",
+        ):
+            setattr(self, attr, _FakeLine())
+
+
 class TestPresets:
     """Verify list_presets returns built-in presets and can merge user presets."""
 
@@ -285,6 +372,72 @@ class TestPresets:
         presets = list_presets()
         assert "My Custom" in presets
         assert presets["My Custom"]["quality"] == 70
+
+    def test_advanced_preset_normalizes_cli_and_gui_shapes(self):
+        import imgconverter
+
+        preset = _advanced_preset_payload()
+        norm = imgconverter.normalize_preset(preset)
+
+        assert norm["schema_version"] == 2
+        assert norm["format"] == "avif"
+        assert norm["fmt"] == 4
+        assert norm["resize"] == "scale:50"
+        assert norm["exclude"] == ["cache/**", "*.tmp"]
+        assert norm["max_file_size"] == "500MB"
+        assert norm["target_kb"] == 200.0
+        assert norm["target_psnr"] == 40.0
+        assert norm["xmp_sidecar"] is True
+        assert norm["sidecar_history"] is True
+        assert norm["strip_metadata"] is True
+
+    def test_cli_preset_applies_advanced_options(self):
+        import imgconverter
+
+        args = _build_parser().parse_args(["--input", "/photos"])
+        imgconverter._apply_preset_to_args(args, _advanced_preset_payload())
+
+        assert args.format == "avif"
+        assert args.template == "{rel_dir}/{stem}_{seq:###}"
+        assert args.avif_speed == 3
+        assert args.avif_codec == "svt"
+        assert args.watermark == "Demo|bottom-right|0.6"
+        assert args.canvas == "1920x1080"
+        assert args.canvas_bg == "#101010"
+        assert args.exclude == ["cache/**", "*.tmp"]
+        assert args.max_file_size == "500MB"
+        assert args.target_kb == 200.0
+        assert args.target_psnr == 40.0
+        assert args.xmp_sidecar is True
+        assert args.sidecar_history is True
+        assert args.strip_metadata is True
+        assert args.no_structure is True
+        assert args.resize == "scale:50"
+
+    def test_gui_preset_applies_advanced_controls(self):
+        import imgconverter
+
+        fake = _FakePresetWindow()
+        imgconverter._apply_preset_to_gui_controls(fake, _advanced_preset_payload())
+
+        assert fake.fmt_combo.value == 4
+        assert fake.quality_slider.value == 77
+        assert fake.template_edit.text == "{rel_dir}/{stem}_{seq:###}"
+        assert fake.avif_speed_spin.value == 3
+        assert fake.avif_codec_combo.value == 3
+        assert fake.watermark_edit.text == "Demo|bottom-right|0.6"
+        assert fake.canvas_edit.text == "1920x1080"
+        assert fake.canvas_bg_edit.text == "#101010"
+        assert fake.exclude_edit.text == "cache/**; *.tmp"
+        assert fake.max_file_size_edit.text == "500MB"
+        assert fake.target_kb_spin.value == 200
+        assert fake.xmp_sidecar_chk.checked is True
+        assert fake.strip_meta_chk.checked is True
+        assert fake.meta_chk.checked is False
+        assert fake.structure_chk.checked is False
+        assert fake.resize_chk.checked is True
+        assert fake.resize_combo.value == 1
+        assert fake.resize_spin.value == 50
 
 
 # ── 3. Watermark ──────────────────────────────────────────────────────────────
@@ -654,6 +807,20 @@ class TestScanExclude:
         names = {f.name for f in result.files}
         assert "photo.jpg" in names
         assert "thumb.jpg" not in names
+
+    def test_max_file_size_skips_large_inputs(self, tmp_workdir):
+        scan_root = tmp_workdir / "photos"
+        scan_root.mkdir()
+        small = scan_root / "small.jpg"
+        large = scan_root / "large.jpg"
+        small.write_bytes(b"x" * 12)
+        large.write_bytes(b"x" * 128)
+
+        result = scan_directory(scan_root, recursive=False, max_file_size=64)
+        names = {f.name for f in result.files}
+
+        assert "small.jpg" in names
+        assert "large.jpg" not in names
 
 
 # ── 14. In-place mode ───────────────────────────────────────────────────────

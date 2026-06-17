@@ -2435,16 +2435,21 @@ class ScanWorker(QThread):
     log = pyqtSignal(str)
     scan_progress = pyqtSignal(int, int, str, int)  # total_count, total_bytes, dir_path, dir_file_count
 
-    def __init__(self, directory, recursive, extensions=None):
+    def __init__(self, directory, recursive, extensions=None,
+                 exclude_patterns=None, max_file_size=None):
         super().__init__()
         self.directory = Path(directory)
         self.recursive = recursive
         self.extensions = extensions
+        self.exclude_patterns = exclude_patterns or []
+        self.max_file_size = max_file_size
 
     def run(self):
         self.log.emit(f"Scanning {'recursively' if self.recursive else ''}: {self.directory}")
         result = scan_directory(
             self.directory, self.recursive, self.extensions,
+            exclude_patterns=self.exclude_patterns,
+            max_file_size=self.max_file_size,
             on_progress=lambda count, size, d, dc: self.scan_progress.emit(count, size, d, dc),
         )
         self.log.emit(
@@ -2512,6 +2517,173 @@ USER_LOG_PATH = USER_CACHE_DIR / "imgconverter.log"
 # QSettings shape version — bump when on-disk settings layout changes so the
 # migration in _maybe_migrate_settings() runs once on startup.
 SETTINGS_SCHEMA = 2
+PRESET_SCHEMA_VERSION = 2
+
+FORMAT_CHOICES = ("auto", "jpeg", "png", "webp", "avif", "tiff", "jxl")
+TIFF_COMPRESSION_CHOICES = ("none", "lzw", "deflate")
+RESIZE_MODE_CHOICES = ("max_dim", "scale")
+AVIF_CODEC_CHOICES = ("auto", "aom", "rav1e", "svt")
+FRAMES_CHOICES = ("first", "all", "animate")
+TONE_MAP_CHOICES = ("none", "reinhard", "hable", "clip")
+
+
+def _preset_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _preset_choice(value, choices: tuple[str, ...], default: str | None = None) -> str | None:
+    if value is None:
+        return default
+    if isinstance(value, int) and 0 <= value < len(choices):
+        return choices[value]
+    normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {"jpg": "jpeg", "jpeg_xl": "jxl", "jpegxl": "jxl"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized in choices:
+        return normalized
+    return default
+
+
+def _choice_index(value, choices: tuple[str, ...], default: int = 0) -> int:
+    selected = _preset_choice(value, choices)
+    return choices.index(selected) if selected in choices else default
+
+
+def _split_patterns(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [p.strip() for p in str(value).replace("\n", ";").split(";") if p.strip()]
+
+
+def _resize_from_preset(preset: dict) -> tuple[bool | None, str | None, int | None, str | None]:
+    if "resize" in preset and preset["resize"]:
+        raw = str(preset["resize"]).strip()
+        parts = raw.split(":", 1)
+        if len(parts) == 2:
+            mode = _preset_choice(parts[0], RESIZE_MODE_CHOICES)
+            try:
+                value = int(parts[1])
+            except ValueError:
+                value = None
+            if mode and value:
+                return True, mode, value, f"{mode}:{value}"
+        return True, None, None, raw
+    if "resize_enabled" in preset:
+        enabled = _preset_bool(preset["resize_enabled"])
+        if not enabled:
+            return False, None, None, None
+        mode = _preset_choice(preset.get("resize_mode", 0), RESIZE_MODE_CHOICES, "max_dim")
+        try:
+            value = int(preset.get("resize_value", 1920))
+        except (TypeError, ValueError):
+            value = 1920
+        return True, mode, value, f"{mode}:{value}"
+    return None, None, None, None
+
+
+def normalize_preset(preset: dict) -> dict:
+    """Normalize legacy GUI-shaped and CLI-shaped preset payloads to CLI keys."""
+    norm: dict = {"schema_version": int(preset.get("schema_version", 1) or 1)}
+    if "fmt" in preset or "format" in preset:
+        fmt = _preset_choice(preset.get("format", preset.get("fmt")), FORMAT_CHOICES, "auto")
+        norm["format"] = fmt
+        norm["fmt"] = FORMAT_CHOICES.index(fmt)
+    simple_keys = {
+        "quality": int,
+        "workers": int,
+        "prefix": str,
+        "suffix": str,
+        "template": str,
+        "report": str,
+        "max_file_size": str,
+        "dpi": int,
+        "icc": str,
+        "watermark": str,
+        "canvas": str,
+        "canvas_bg": str,
+        "avif_speed": int,
+        "target_kb": float,
+        "target_psnr": float,
+        "only_if_smaller": float,
+        "watch_interval": float,
+        "backend": str,
+    }
+    for key, caster in simple_keys.items():
+        if key in preset and preset[key] not in (None, ""):
+            try:
+                norm[key] = caster(preset[key])
+            except (TypeError, ValueError):
+                continue
+    bool_aliases = {
+        "progressive": ("progressive_jpeg", "progressive"),
+        "chroma_420": ("chroma_subsampling", "chroma_420"),
+        "lossless": ("lossless_webp", "lossless"),
+        "srgb": ("convert_to_srgb", "srgb"),
+        "in_place": ("in_place", "inplace"),
+        "skip_existing": ("skip_existing",),
+        "strip_metadata": ("strip_metadata",),
+        "no_exiftool": ("no_exiftool",),
+        "xmp_sidecar": ("xmp_sidecar", "emit_xmp_sidecar"),
+        "recompress": ("recompress", "recompress_lossless"),
+        "png_lossy": ("png_lossy",),
+        "recursive": ("recursive",),
+        "dry_run": ("dry_run",),
+        "use_cache": ("use_cache",),
+        "clear_cache": ("clear_cache",),
+        "resume": ("resume",),
+        "watch": ("watch",),
+        "use_processes": ("use_processes",),
+        "sidecar_history": ("sidecar_history",),
+        "verify_quality": ("verify_quality",),
+    }
+    for dest, aliases in bool_aliases.items():
+        for alias in aliases:
+            if alias in preset:
+                norm[dest] = _preset_bool(preset[alias])
+                break
+    if "preserve_metadata" in preset:
+        norm["strip_metadata"] = not _preset_bool(preset["preserve_metadata"])
+    if "metadata" in preset:
+        norm["strip_metadata"] = not _preset_bool(preset["metadata"])
+    if "no_structure" in preset:
+        norm["no_structure"] = _preset_bool(preset["no_structure"])
+    elif "preserve_structure" in preset:
+        norm["no_structure"] = not _preset_bool(preset["preserve_structure"])
+    elif "structure" in preset:
+        norm["no_structure"] = not _preset_bool(preset["structure"])
+    if "png_level" in preset or "png_compress_level" in preset:
+        try:
+            norm["png_level"] = int(preset.get("png_level", preset.get("png_compress_level")))
+        except (TypeError, ValueError):
+            pass
+    if "tiff_compression" in preset:
+        norm["tiff_compression"] = _preset_choice(preset["tiff_compression"], TIFF_COMPRESSION_CHOICES, "none")
+    if "avif_codec" in preset:
+        norm["avif_codec"] = _preset_choice(preset["avif_codec"], AVIF_CODEC_CHOICES, "auto")
+    if "frames" in preset or "frames_mode" in preset:
+        norm["frames"] = _preset_choice(preset.get("frames", preset.get("frames_mode")), FRAMES_CHOICES, "first")
+    if "tone_map" in preset:
+        norm["tone_map"] = _preset_choice(preset["tone_map"], TONE_MAP_CHOICES, "none")
+    enabled, mode, value, resize = _resize_from_preset(preset)
+    if enabled is not None:
+        norm["resize_enabled"] = enabled
+        if resize:
+            norm["resize"] = resize
+        if mode:
+            norm["resize_mode"] = mode
+            norm["resize_mode_index"] = RESIZE_MODE_CHOICES.index(mode)
+        if value is not None:
+            norm["resize_value"] = value
+    if "exclude" in preset:
+        norm["exclude"] = _split_patterns(preset["exclude"])
+    return norm
+
 
 
 def _diag_log(message: str, level: str = "INFO"):
@@ -2621,6 +2793,7 @@ def load_preset(name: str) -> dict | None:
 
 PRESETS = {
     "Web Optimized": {
+        "schema_version": PRESET_SCHEMA_VERSION,
         "fmt": 1,              # JPEG
         "quality": 80,
         "progressive_jpeg": True,
@@ -2631,12 +2804,14 @@ PRESETS = {
         "resize_value": 1920,
     },
     "Archive Quality": {
+        "schema_version": PRESET_SCHEMA_VERSION,
         "fmt": 2,              # PNG
         "quality": 92,
         "png_compress_level": 6,
         "resize_enabled": False,
     },
     "Mobile Friendly": {
+        "schema_version": PRESET_SCHEMA_VERSION,
         "fmt": 3,              # WebP
         "quality": 75,
         "convert_to_srgb": True,
@@ -2645,11 +2820,84 @@ PRESETS = {
         "resize_value": 1080,
     },
     "Print / TIFF": {
+        "schema_version": PRESET_SCHEMA_VERSION,
         "fmt": 5,              # TIFF
         "tiff_compression": 1, # LZW
         "resize_enabled": False,
     },
 }
+
+
+def _apply_preset_to_gui_controls(window, preset: dict):
+    """Apply a normalized or legacy preset to MainWindow-like controls."""
+    norm = normalize_preset(preset)
+    if "format" in norm:
+        window.fmt_combo.setCurrentIndex(FORMAT_CHOICES.index(norm["format"]))
+    if "quality" in norm:
+        window.quality_slider.setValue(norm["quality"])
+    if "workers" in norm:
+        window.workers_spin.setValue(norm["workers"])
+    for key, attr in (
+        ("progressive", "progressive_jpeg_chk"),
+        ("lossless", "lossless_webp_chk"),
+        ("chroma_420", "chroma_chk"),
+        ("srgb", "srgb_chk"),
+        ("in_place", "inplace_chk"),
+        ("skip_existing", "skip_existing_chk"),
+        ("xmp_sidecar", "xmp_sidecar_chk"),
+        ("recompress", "recompress_chk"),
+        ("png_lossy", "png_lossy_chk"),
+    ):
+        if key in norm:
+            getattr(window, attr).setChecked(norm[key])
+    if "strip_metadata" in norm:
+        strip = norm["strip_metadata"]
+        window.strip_meta_chk.setChecked(strip)
+        window.meta_chk.setChecked(not strip)
+    if "no_structure" in norm:
+        window.structure_chk.setChecked(not norm["no_structure"])
+    if "recursive" in norm:
+        window.recursive_chk.setChecked(norm["recursive"])
+    if "resize_enabled" in norm:
+        window.resize_chk.setChecked(norm["resize_enabled"])
+        if norm["resize_enabled"]:
+            if "resize_mode_index" in norm:
+                window.resize_combo.setCurrentIndex(norm["resize_mode_index"])
+            if "resize_value" in norm:
+                window.resize_spin.setValue(norm["resize_value"])
+    if "tiff_compression" in norm:
+        window.tiff_comp_combo.setCurrentIndex(_choice_index(norm["tiff_compression"], TIFF_COMPRESSION_CHOICES))
+    if "png_level" in norm:
+        window.png_level_spin.setValue(norm["png_level"])
+    for key, attr in (
+        ("prefix", "prefix_edit"),
+        ("suffix", "suffix_edit"),
+        ("template", "template_edit"),
+        ("icc", "icc_edit"),
+        ("watermark", "watermark_edit"),
+        ("canvas", "canvas_edit"),
+        ("canvas_bg", "canvas_bg_edit"),
+        ("max_file_size", "max_file_size_edit"),
+    ):
+        if key in norm:
+            getattr(window, attr).setText(norm[key])
+    if "exclude" in norm:
+        window.exclude_edit.setText("; ".join(norm["exclude"]))
+    if "dpi" in norm:
+        window.dpi_spin.setValue(norm["dpi"])
+    if "avif_speed" in norm:
+        window.avif_speed_spin.setValue(norm["avif_speed"])
+    if "avif_codec" in norm:
+        window.avif_codec_combo.setCurrentIndex(_choice_index(norm["avif_codec"], AVIF_CODEC_CHOICES))
+    if "frames" in norm:
+        window.frames_combo.setCurrentIndex(_choice_index(norm["frames"], FRAMES_CHOICES))
+    if "tone_map" in norm:
+        window.tone_map_combo.setCurrentIndex(_choice_index(norm["tone_map"], TONE_MAP_CHOICES))
+    if "only_if_smaller" in norm:
+        window.only_if_smaller_chk.setChecked(True)
+        window.only_if_smaller_spin.setValue(int(norm["only_if_smaller"]))
+    if "target_kb" in norm:
+        window.target_kb_spin.setValue(int(norm["target_kb"]))
 
 
 # ── Disk Space Estimation ─────────────────────────────────────────────────────
@@ -2733,6 +2981,8 @@ class MainWindow(QMainWindow):
             ("watermark_edit",      "Watermark specification",  "Watermark text or image with position and opacity"),
             ("canvas_edit",         "Canvas size",              "Pad output to WxH canvas with background fill"),
             ("canvas_bg_edit",      "Canvas background",        "Canvas background color: transparent, hex, or named color"),
+            ("exclude_edit",        "Exclude patterns",         "Semicolon-separated glob patterns to skip during scan"),
+            ("max_file_size_edit",  "Maximum input file size",  "Skip files larger than this size, such as 500MB or 2GB"),
             ("xmp_sidecar_chk",     "Emit XMP sidecar",         "Write .xmp sidecar alongside output"),
             ("recompress_chk",      "Lossless JPEG recompress", "Pixel-lossless JPEG size reduction via jpegoptim/jpegtran"),
             ("only_if_smaller_chk", "Only if smaller",          "Discard output when not meaningfully smaller than input"),
@@ -3352,6 +3602,26 @@ class MainWindow(QMainWindow):
         )
         adv_grid.addWidget(self.png_lossy_chk, 8, 0, 1, 2)
 
+        exclude_label = QLabel("Exclude")
+        exclude_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(exclude_label, 9, 0)
+        self.exclude_edit = QLineEdit()
+        self.exclude_edit.setPlaceholderText("*.thumb.*; cache/**")
+        self.exclude_edit.setMinimumWidth(100)
+        self.exclude_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.exclude_edit.setToolTip("Semicolon-separated glob patterns to skip during scan")
+        adv_grid.addWidget(self.exclude_edit, 9, 1)
+
+        max_file_size_label = QLabel("Max file")
+        max_file_size_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(max_file_size_label, 9, 2)
+        self.max_file_size_edit = QLineEdit()
+        self.max_file_size_edit.setPlaceholderText("500MB")
+        self.max_file_size_edit.setMinimumWidth(100)
+        self.max_file_size_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.max_file_size_edit.setToolTip("Skip files larger than this size (B, KB, MB, GB, TB)")
+        adv_grid.addWidget(self.max_file_size_edit, 9, 3)
+
         scroll_layout.addWidget(adv_group)
 
         # Show/hide format-specific controls after every dependent widget exists.
@@ -3544,6 +3814,7 @@ class MainWindow(QMainWindow):
             "adv_toggle", "template_edit", "dpi_spin", "avif_speed_spin",
             "avif_codec_combo", "frames_combo", "tone_map_combo", "icc_edit",
             "watermark_edit", "canvas_edit", "canvas_bg_edit",
+            "exclude_edit", "max_file_size_edit",
             "xmp_sidecar_chk", "recompress_chk", "only_if_smaller_chk",
             "only_if_smaller_spin", "target_kb_spin", "png_lossy_chk",
             "paste_btn", "auto_open_chk",
@@ -3696,37 +3967,7 @@ class MainWindow(QMainWindow):
         preset = list_presets().get(name)
         if not preset:
             return
-        if "fmt" in preset:
-            self.fmt_combo.setCurrentIndex(preset["fmt"])
-        if "quality" in preset:
-            self.quality_slider.setValue(preset["quality"])
-        if "progressive_jpeg" in preset:
-            self.progressive_jpeg_chk.setChecked(preset["progressive_jpeg"])
-        else:
-            self.progressive_jpeg_chk.setChecked(False)
-        if "lossless_webp" in preset:
-            self.lossless_webp_chk.setChecked(preset["lossless_webp"])
-        else:
-            self.lossless_webp_chk.setChecked(False)
-        if "chroma_subsampling" in preset:
-            self.chroma_chk.setChecked(preset["chroma_subsampling"])
-        else:
-            self.chroma_chk.setChecked(False)
-        if "convert_to_srgb" in preset:
-            self.srgb_chk.setChecked(preset["convert_to_srgb"])
-        else:
-            self.srgb_chk.setChecked(False)
-        if "resize_enabled" in preset:
-            self.resize_chk.setChecked(preset["resize_enabled"])
-            if preset["resize_enabled"]:
-                if "resize_mode" in preset:
-                    self.resize_combo.setCurrentIndex(preset["resize_mode"])
-                if "resize_value" in preset:
-                    self.resize_spin.setValue(preset["resize_value"])
-        if "tiff_compression" in preset:
-            self.tiff_comp_combo.setCurrentIndex(preset["tiff_compression"])
-        if "png_compress_level" in preset:
-            self.png_level_spin.setValue(preset["png_compress_level"])
+        _apply_preset_to_gui_controls(self, preset)
         self._log(f"Preset applied: {name}")
 
     # ── In-place toggle ──
@@ -3933,7 +4174,26 @@ class MainWindow(QMainWindow):
             self._set_workflow_state("Needs input", "Select at least one available input format.")
             return
 
-        self._scanner = ScanWorker(src, self.recursive_chk.isChecked(), enabled_exts)
+        exclude_patterns = _split_patterns(self.exclude_edit.text())
+        max_file_size_text = self.max_file_size_edit.text().strip()
+        max_file_size = _parse_size_spec(max_file_size_text)
+        if max_file_size_text and max_file_size is None:
+            self.scan_btn.setEnabled(True)
+            self._log(f"[ERROR] Invalid max file size: {max_file_size_text}")
+            self._set_line_error(self.max_file_size_edit, "Use a size like 500MB, 2GB, or leave it blank.")
+            return
+        if exclude_patterns:
+            self._log(f"[FILTER] Excluding: {', '.join(exclude_patterns)}")
+        if max_file_size is not None:
+            self._log(f"[FILTER] Skipping files larger than {_fmt_size(max_file_size)}")
+
+        self._scanner = ScanWorker(
+            src,
+            self.recursive_chk.isChecked(),
+            enabled_exts,
+            exclude_patterns=exclude_patterns,
+            max_file_size=max_file_size,
+        )
         self._scanner.log.connect(self._log)
         self._scanner.scan_progress.connect(self._on_scan_progress)
         self._scanner.finished.connect(self._on_scan_done)
@@ -4329,6 +4589,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("watermark", self.watermark_edit.text())
         self.settings.setValue("canvas", self.canvas_edit.text())
         self.settings.setValue("canvas_bg", self.canvas_bg_edit.text())
+        self.settings.setValue("exclude", self.exclude_edit.text())
+        self.settings.setValue("max_file_size", self.max_file_size_edit.text())
         self.settings.setValue("xmp_sidecar", self.xmp_sidecar_chk.isChecked())
         self.settings.setValue("recompress", self.recompress_chk.isChecked())
         self.settings.setValue("only_if_smaller_enabled", self.only_if_smaller_chk.isChecked())
@@ -4453,6 +4715,10 @@ class MainWindow(QMainWindow):
             self.canvas_edit.setText(v)
         if v := self.settings.value("canvas_bg"):
             self.canvas_bg_edit.setText(v)
+        if v := self.settings.value("exclude"):
+            self.exclude_edit.setText(v)
+        if v := self.settings.value("max_file_size"):
+            self.max_file_size_edit.setText(v)
         if (v := self.settings.value("xmp_sidecar")) is not None:
             self.xmp_sidecar_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("recompress")) is not None:
@@ -4679,7 +4945,7 @@ CLI_FLAG_PARITY = {
     "--png-level": {"surface": "gui", "gui": ("png_level_spin",), "readme": True, "note": "PNG compression"},
     "--png-lossy": {"surface": "gui", "gui": ("png_lossy_chk",), "readme": True, "note": "pngquant toggle"},
     "--no-structure": {"surface": "gui", "gui": ("structure_chk",), "readme": True, "note": "Folder structure inverse"},
-    "--exclude": {"surface": "cli-only", "gui": (), "readme": True, "note": "Scriptable glob exclusion"},
+    "--exclude": {"surface": "gui", "gui": ("exclude_edit",), "readme": True, "note": "Glob exclusion"},
     "--no-exiftool": {"surface": "cli-only", "gui": (), "readme": True, "note": "CLI metadata backend override"},
     "--template": {"surface": "gui", "gui": ("template_edit",), "readme": True, "note": "Filename template"},
     "--report": {"surface": "cli-only", "gui": ("export_csv_btn",), "readme": True, "note": "CLI JSON report; GUI has CSV export"},
@@ -4700,7 +4966,7 @@ CLI_FLAG_PARITY = {
     "--canvas-bg": {"surface": "gui", "gui": ("canvas_bg_edit",), "readme": True, "note": "Canvas fill"},
     "--avif-speed": {"surface": "gui", "gui": ("avif_speed_spin",), "readme": True, "note": "AVIF speed"},
     "--avif-codec": {"surface": "gui", "gui": ("avif_codec_combo",), "readme": True, "note": "AVIF codec"},
-    "--max-file-size": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless OOM guard"},
+    "--max-file-size": {"surface": "gui", "gui": ("max_file_size_edit",), "readme": True, "note": "Large input guard"},
     "--register-shell": {"surface": "admin-only", "gui": (), "readme": True, "note": "Install shell integration"},
     "--unregister-shell": {"surface": "admin-only", "gui": (), "readme": True, "note": "Remove shell integration"},
     "--use-cache": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless repeat-run cache"},
@@ -4780,38 +5046,25 @@ _PRESET_ARG_KEYS = (
     "format", "quality", "progressive", "chroma_420", "lossless", "srgb",
     "tiff_compression", "png_level", "prefix", "suffix", "template",
     "strip_metadata", "in_place", "skip_existing", "resize",
-    "no_structure", "workers", "no_exiftool",
+    "no_structure", "workers", "no_exiftool", "exclude", "report",
+    "only_if_smaller", "dpi", "icc", "xmp_sidecar", "recompress",
+    "target_kb", "target_psnr", "watermark", "canvas", "canvas_bg",
+    "avif_speed", "avif_codec", "max_file_size", "recursive", "dry_run",
+    "use_cache", "clear_cache", "resume", "frames", "watch",
+    "watch_interval", "tone_map", "use_processes", "sidecar_history",
+    "backend", "verify_quality", "png_lossy",
 )
 
 
 def _apply_preset_to_args(args, preset: dict):
-    """Overlay a preset dict onto argparse Namespace; CLI args still win for non-defaults."""
-    # Map preset GUI-shaped keys to CLI flag keys when needed.
-    fmt_map = {0: "auto", 1: "jpeg", 2: "png", 3: "webp", 4: "avif", 5: "tiff", 6: "jxl"}
-    for k, v in preset.items():
-        if k == "fmt" and isinstance(v, int):
-            args.format = fmt_map.get(v, args.format)
-        elif k == "progressive_jpeg":
-            args.progressive = v
-        elif k == "chroma_subsampling":
-            args.chroma_420 = v
-        elif k == "lossless_webp":
-            args.lossless = v
-        elif k == "convert_to_srgb":
-            args.srgb = v
-        elif k == "png_compress_level":
-            args.png_level = v
-        elif k == "resize_enabled" and not v:
-            args.resize = None
-        elif k == "resize_mode":
-            mode_map = {0: "max_dim", 1: "scale"}
-            mode = mode_map.get(v, v)
-            if args.resize is None and "resize_value" in preset:
-                args.resize = f"{mode}:{preset['resize_value']}"
-        elif k == "tiff_compression" and isinstance(v, int):
-            args.tiff_compression = ("none", "lzw", "deflate")[v] if 0 <= v < 3 else "none"
-        elif k in _PRESET_ARG_KEYS and hasattr(args, k):
-            setattr(args, k, v)
+    """Overlay normalized preset values onto argparse Namespace."""
+    norm = normalize_preset(preset)
+    for key in _PRESET_ARG_KEYS:
+        if key not in norm or not hasattr(args, key):
+            continue
+        setattr(args, key, norm[key])
+    if norm.get("resize_enabled") is False and hasattr(args, "resize"):
+        args.resize = None
 
 
 HASH_CACHE_PATH = USER_CACHE_DIR / "seen.sqlite"

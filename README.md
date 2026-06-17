@@ -241,6 +241,31 @@ python imgconverter.py --version
 
 Parser, GUI, and README parity is guarded by `build_cli_parity_matrix()` and the test suite: every long CLI flag must be classified as GUI-backed, CLI-only, admin-only, or internal-only, and every user-facing flag must remain documented here.
 
+**Preset JSON:**
+
+User presets live in `~/.imgconverter/presets/*.json`. Presets should include `schema_version: 2`; legacy GUI keys such as `fmt`, `progressive_jpeg`, and `png_compress_level` still load, while CLI-shaped keys such as `format`, `template`, `exclude`, `max_file_size`, `target_kb`, and `sidecar_history` now apply through the same normalized preset path in GUI and CLI.
+
+```json
+{
+  "name": "AVIF Proof",
+  "schema_version": 2,
+  "format": "avif",
+  "quality": 77,
+  "template": "{rel_dir}/{stem}_{seq:###}",
+  "avif_speed": 3,
+  "avif_codec": "svt",
+  "watermark": "Demo|bottom-right|0.6",
+  "canvas": "1920x1080",
+  "canvas_bg": "#101010",
+  "exclude": ["cache/**", "*.tmp"],
+  "max_file_size": "500MB",
+  "target_kb": 200,
+  "xmp_sidecar": true,
+  "sidecar_history": true,
+  "strip_metadata": true
+}
+```
+
 **Exit codes:**
 
 | Code | Meaning |
