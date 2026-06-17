@@ -526,7 +526,7 @@ def _run_exiftool_copy(src: Path, dst: Path) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
-_CLI_ONLY = any(a in sys.argv for a in ("--input", "-i", "--install-deps", "--version",
+_CLI_ONLY = any(a in sys.argv for a in ("--input", "-i", "--files", "--install-deps", "--version",
                                          "--list-presets", "--list-plugins", "--help", "-h"))
 try:
     from PyQt6.QtCore import (
@@ -1046,6 +1046,23 @@ def _parse_size_spec(spec: str) -> int | None:
 
 # ── Conversion Engine ─────────────────────────────────────────────────────────
 
+def _path_matches_exclude(rel: Path, exclude_patterns: list[str] | None = None) -> bool:
+    """Return True when a relative path matches any CLI/GUI exclude glob."""
+    import fnmatch
+    s = rel.as_posix()
+    for pat in exclude_patterns or []:
+        norm = pat.replace("\\", "/")
+        if fnmatch.fnmatchcase(s, norm) or fnmatch.fnmatchcase(rel.name, norm):
+            return True
+        if norm.endswith("/**"):
+            prefix = norm[:-3].rstrip("/")
+            if s == prefix or s.startswith(prefix + "/"):
+                return True
+        if rel.match(norm) or Path(s).match(norm):
+            return True
+    return False
+
+
 def scan_directory(
     root: Path,
     recursive: bool = True,
@@ -1068,21 +1085,6 @@ def scan_directory(
     visited_dirs: set[str] = set()
     exclude_patterns = exclude_patterns or []
 
-    def _excluded(rel: Path) -> bool:
-        import fnmatch
-        s = rel.as_posix()
-        for pat in exclude_patterns:
-            norm = pat.replace("\\", "/")
-            if fnmatch.fnmatchcase(s, norm) or fnmatch.fnmatchcase(rel.name, norm):
-                return True
-            if norm.endswith("/**"):
-                prefix = norm[:-3].rstrip("/")
-                if s == prefix or s.startswith(prefix + "/"):
-                    return True
-            if rel.match(norm) or Path(s).match(norm):
-                return True
-        return False
-
     def _walk(d: Path):
         # Resolve to catch loops via symlink-to-ancestor; skip on permission errors.
         try:
@@ -1103,7 +1105,7 @@ def scan_directory(
                         rel_dir = p.relative_to(root)
                     except ValueError:
                         rel_dir = p
-                    if _excluded(rel_dir):
+                    if _path_matches_exclude(rel_dir, exclude_patterns):
                         continue
                     if recursive:
                         _walk(p)
@@ -1118,7 +1120,7 @@ def scan_directory(
                 rel = p.relative_to(root)
             except ValueError:
                 rel = p
-            if _excluded(rel):
+            if _path_matches_exclude(rel, exclude_patterns):
                 continue
             try:
                 st = p.stat()
@@ -4498,7 +4500,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"ImgConverter v{APP_VERSION}")
     p.add_argument("--install-deps", action="store_true",
                    help="Install/upgrade required + optional Python dependencies, then exit")
-    p.add_argument("-i", "--input", type=str, help="Source directory to scan")
+    p.add_argument("-i", "--input", type=str, help="Source file or directory to scan")
+    p.add_argument("--files", nargs="+", metavar="PATH",
+                   help="One or more selected image files/directories to convert (used by shell integration)")
     p.add_argument("-o", "--output", type=str, help="Output directory (default: <input>/converted)")
     p.add_argument("-f", "--format", type=str, default="auto",
                    choices=["auto", "jpeg", "png", "webp", "avif", "tiff", "jxl"],
@@ -4915,7 +4919,8 @@ def _install_shell_integration(uninstall: bool = False) -> int:
     system = platform.system()
     exe = sys.executable
     script = str(Path(__file__).resolve())
-    cmd_args = f'"{exe}" "{script}" --input "%1"'
+    file_cmd_args = f'"{exe}" "{script}" --files %*'
+    dir_cmd_args = f'"{exe}" "{script}" --input "%1"'
 
     if system == "Windows":
         try:
@@ -4924,26 +4929,35 @@ def _install_shell_integration(uninstall: bool = False) -> int:
             print("[shell-integration] winreg unavailable.", file=sys.stderr)
             return EXIT_DEP_MISSING
         root = winreg.HKEY_CURRENT_USER
-        base = r"Software\Classes\*\shell\ImgConverter"
-        cmd_key = base + r"\command"
+        file_base = r"Software\Classes\*\shell\ImgConverter"
+        file_cmd_key = file_base + r"\command"
+        dir_base = r"Software\Classes\Directory\shell\ImgConverter"
+        dir_cmd_key = dir_base + r"\command"
         if uninstall:
-            try:
-                winreg.DeleteKey(root, cmd_key)
-            except FileNotFoundError:
-                pass
-            try:
-                winreg.DeleteKey(root, base)
-                print("[shell-integration] removed.")
-            except FileNotFoundError:
-                pass
+            for cmd_key, base in ((file_cmd_key, file_base), (dir_cmd_key, dir_base)):
+                try:
+                    winreg.DeleteKey(root, cmd_key)
+                except FileNotFoundError:
+                    pass
+                try:
+                    winreg.DeleteKey(root, base)
+                except FileNotFoundError:
+                    pass
+            print("[shell-integration] removed.")
             return EXIT_OK
         try:
-            with winreg.CreateKeyEx(root, base, 0, winreg.KEY_SET_VALUE) as k:
+            with winreg.CreateKeyEx(root, file_base, 0, winreg.KEY_SET_VALUE) as k:
                 winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Convert with ImgConverter")
                 winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ, exe)
-            with winreg.CreateKeyEx(root, cmd_key, 0, winreg.KEY_SET_VALUE) as k:
-                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, cmd_args)
-            print(f"[shell-integration] installed: HKCU\\{base}")
+                winreg.SetValueEx(k, "MultiSelectModel", 0, winreg.REG_SZ, "Player")
+            with winreg.CreateKeyEx(root, file_cmd_key, 0, winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, file_cmd_args)
+            with winreg.CreateKeyEx(root, dir_base, 0, winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Convert folder with ImgConverter")
+                winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ, exe)
+            with winreg.CreateKeyEx(root, dir_cmd_key, 0, winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, dir_cmd_args)
+            print(f"[shell-integration] installed: HKCU\\{file_base} and HKCU\\{dir_base}")
             return EXIT_OK
         except OSError as e:
             print(f"[shell-integration] failed: {e}", file=sys.stderr)
@@ -4968,7 +4982,7 @@ def _install_shell_integration(uninstall: bool = False) -> int:
             "[Desktop Entry]\n"
             "Type=Application\n"
             "Name=Convert with ImgConverter\n"
-            f"Exec={exe} {script} --input %f\n"
+            f"Exec={exe} {script} --files %F\n"
             "MimeType=image/heic;image/heif;image/avif;image/jpeg;image/png;image/webp;image/tiff;\n"
             "Terminal=false\n"
             "Categories=Graphics;\n"
@@ -4984,7 +4998,7 @@ def _install_shell_integration(uninstall: bool = False) -> int:
             "  1. Open Automator -> New -> Quick Action\n"
             "  2. Workflow receives: image files in Finder\n"
             "  3. Add 'Run Shell Script' action:\n"
-            f"      {exe} {script} --input \"$@\"\n"
+            f"      {exe} {script} --files \"$@\"\n"
             "  4. Save as 'Convert with ImgConverter'\n"
             "  Auto-install into ~/Library/Services is intentionally skipped\n"
             "  because Automator workflows are signed bundles."
@@ -5018,6 +5032,94 @@ def _build_quality_mode(args) -> tuple[str, float] | None:
     return None
 
 
+def _collect_cli_input_refs(args) -> tuple[Path, list[Path], list[Path]]:
+    """Resolve CLI file/directory selections into a common base, dirs, and files."""
+    refs: list[Path] = []
+    if getattr(args, "input", None):
+        refs.append(Path(args.input).expanduser().resolve())
+    refs.extend(Path(p).expanduser().resolve() for p in (getattr(args, "files", None) or []))
+    if not refs:
+        print("[ERROR] Provide --input or --files.", file=sys.stderr)
+        sys.exit(EXIT_INPUT_ERROR)
+
+    dirs: list[Path] = []
+    files: list[Path] = []
+    missing: list[Path] = []
+    for ref in refs:
+        if ref.is_dir():
+            dirs.append(ref)
+        elif ref.is_file():
+            files.append(ref)
+        else:
+            missing.append(ref)
+    if missing:
+        print(f"[ERROR] Path not found: {missing[0]}", file=sys.stderr)
+        sys.exit(EXIT_INPUT_ERROR)
+
+    common_inputs = dirs + [f.parent for f in files]
+    try:
+        base_dir = Path(os.path.commonpath([str(p) for p in common_inputs])).resolve()
+    except (ValueError, OSError):
+        base_dir = Path.cwd().resolve()
+    return base_dir, dirs, files
+
+
+def _scan_cli_inputs(
+    args,
+    base_dir: Path,
+    input_dirs: list[Path],
+    input_files: list[Path],
+    max_bytes: int | None,
+) -> ScanResult:
+    """Scan selected CLI directories and files into a single ScanResult."""
+    t0 = time.perf_counter()
+    supported = get_supported_extensions()
+    scan = ScanResult()
+    seen: set[str] = set()
+    exclude_patterns = getattr(args, "exclude", None) or []
+
+    def _add_file(path: Path):
+        if path.suffix.lower() not in supported:
+            return
+        try:
+            rel = path.relative_to(base_dir)
+        except ValueError:
+            rel = Path(path.name)
+        if _path_matches_exclude(rel, exclude_patterns):
+            return
+        try:
+            st = path.stat()
+        except OSError:
+            return
+        if max_bytes is not None and st.st_size > max_bytes:
+            return
+        try:
+            key = str(path.resolve(strict=False))
+        except OSError:
+            key = str(path)
+        if key in seen:
+            return
+        seen.add(key)
+        scan.files.append(path)
+        scan.total_size += st.st_size
+
+    for directory in input_dirs:
+        sub = scan_directory(
+            directory,
+            recursive=args.recursive,
+            exclude_patterns=exclude_patterns,
+            max_file_size=max_bytes,
+        )
+        for path in sub.files:
+            _add_file(path)
+    for path in input_files:
+        _add_file(path)
+
+    scan.files.sort()
+    scan.elapsed = time.perf_counter() - t0
+    return scan
+
+
 def _run_cli(args):
     """Run headless CLI conversion."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -5034,10 +5136,7 @@ def _run_cli(args):
         _apply_preset_to_args(args, preset)
         print(f"[preset] applied: {args.preset}")
 
-    input_dir = Path(args.input).resolve()
-    if not input_dir.is_dir():
-        print(f"[ERROR] Not a directory: {input_dir}", file=sys.stderr)
-        sys.exit(EXIT_INPUT_ERROR)
+    input_dir, input_dirs, input_files = _collect_cli_input_refs(args)
 
     if args.in_place:
         output_dir = input_dir
@@ -5057,7 +5156,11 @@ def _run_cli(args):
               "  watermark, canvas, tone-map, ICC override, and ExifTool passes are\n"
               "  not yet implemented — output will be quality-only conversion.",
               file=sys.stderr)
-    print(f"Input:  {input_dir}")
+    if len(input_dirs) == 1 and not input_files:
+        print(f"Input:  {input_dirs[0]}")
+    else:
+        print(f"Input:  {len(input_dirs) + len(input_files)} selected path(s)")
+        print(f"Base:   {input_dir}")
     print(f"Output: {output_dir}")
     print(f"Format: {args.format}  Quality: {args.quality}  Workers: {args.workers}")
     flags = []
@@ -5116,19 +5219,17 @@ def _run_cli(args):
 
     # Watch mode short-circuits the scan/convert pipeline.
     if getattr(args, "watch", False):
+        if len(input_dirs) != 1 or input_files:
+            print("[ERROR] --watch requires exactly one input directory.", file=sys.stderr)
+            sys.exit(EXIT_INPUT_ERROR)
         sys.exit(_watch_directory(args, input_dir, output_dir, resize_mode, resize_value))
 
     # Scan
-    print(f"\nScanning{'  recursively' if args.recursive else ''}...")
+    print(f"\nScanning{' recursively' if args.recursive else ''}...")
     max_bytes = _parse_size_spec(getattr(args, "max_file_size", None) or "")
     if max_bytes:
         print(f"[filter] skipping files larger than {_fmt_size(max_bytes)}")
-    scan = scan_directory(
-        input_dir,
-        recursive=args.recursive,
-        exclude_patterns=getattr(args, "exclude", None) or [],
-        max_file_size=max_bytes,
-    )
+    scan = _scan_cli_inputs(args, input_dir, input_dirs, input_files, max_bytes)
     print(f"Found {len(scan.files)} files ({_fmt_size(scan.total_size)}) in {scan.elapsed:.2f}s")
 
     # --resume: drop files that the previous run already converted.
@@ -5507,7 +5608,7 @@ def main():
     if plugins:
         print(f"[plugins] loaded: {', '.join(plugins)}")
 
-    if args.input:
+    if args.input or getattr(args, "files", None):
         _run_cli(args)
         return
 

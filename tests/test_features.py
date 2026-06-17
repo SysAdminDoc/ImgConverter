@@ -2,6 +2,7 @@
 mapping, quality targeting, only-if-smaller, DPI, ICC, recompress, BigTIFF,
 multi-frame, and scan exclude patterns."""
 import json
+import sys
 import tomllib
 import types
 
@@ -15,13 +16,16 @@ from imgconverter import (
     _build_quality_mode,
     _convert_animated_or_sequence,
     _load_queue_state,
+    _install_shell_integration,
     _parse_canvas,
+    _run_cli,
     _save_queue_state,
     convert_file,
     count_frames,
     list_presets,
     scan_directory,
     ConvertResult,
+    EXIT_OK,
     PRESETS,
     QUEUE_STATE_PATH,
     HAS_JPEG_RECOMPRESS,
@@ -88,6 +92,13 @@ class TestCLIParsing:
         ])
         assert args.exclude == ["*.thumb.*", "cache/**"]
 
+    def test_files_flag_accepts_multiple_paths(self):
+        parser = _build_parser()
+        args = parser.parse_args(["--files", "a.png", "b.jpg", "-f", "webp"])
+        assert args.input is None
+        assert args.files == ["a.png", "b.jpg"]
+        assert args.format == "webp"
+
 
 class TestDependencyFloors:
     """Verify documented dependency floors stay synced across install paths."""
@@ -102,6 +113,93 @@ class TestDependencyFloors:
 
         pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         assert f"Pillow>={floor}" in pyproject["project"]["dependencies"]
+
+
+class TestSelectedFileCLI:
+    """Verify shell-integration style selected files are valid CLI inputs."""
+
+    def test_input_can_be_single_file(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "single.bmp"
+        rgb_image.save(src)
+        out = tmp_workdir / "out"
+
+        args = _build_parser().parse_args([
+            "--input", str(src), "--output", str(out), "--format", "png",
+        ])
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        assert exc.value.code == EXIT_OK
+        assert (out / "single.png").exists()
+
+    def test_files_converts_multiple_selected_files(self, rgb_image, tmp_workdir):
+        first = tmp_workdir / "first.bmp"
+        second = tmp_workdir / "second.bmp"
+        rgb_image.save(first)
+        rgb_image.save(second)
+        out = tmp_workdir / "out"
+
+        args = _build_parser().parse_args([
+            "--files", str(first), str(second),
+            "--output", str(out),
+            "--format", "png",
+        ])
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        assert exc.value.code == EXIT_OK
+        assert (out / "first.png").exists()
+        assert (out / "second.png").exists()
+
+
+class TestShellIntegration:
+    """Verify generated shell entries route files through --files."""
+
+    def test_linux_desktop_entry_uses_file_selection(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(imgconverter.Path, "home", classmethod(lambda cls: tmp_workdir))
+
+        assert _install_shell_integration(False) == EXIT_OK
+        desktop = tmp_workdir / ".local" / "share" / "applications" / "imgconverter.desktop"
+        assert "--files %F" in desktop.read_text(encoding="utf-8")
+
+    def test_windows_registry_commands_use_files_and_directory_paths(self, monkeypatch):
+        import imgconverter
+
+        values = {}
+
+        class Key:
+            def __init__(self, name):
+                self.name = name
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeWinreg:
+            HKEY_CURRENT_USER = object()
+            REG_SZ = 1
+            KEY_SET_VALUE = 2
+
+            @staticmethod
+            def CreateKeyEx(root, key, reserved, access):
+                return Key(key)
+
+            @staticmethod
+            def SetValueEx(key, name, reserved, typ, value):
+                values[(key.name, name)] = value
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Windows")
+        monkeypatch.setitem(sys.modules, "winreg", FakeWinreg)
+
+        assert _install_shell_integration(False) == EXIT_OK
+        assert "--files %*" in values[(r"Software\Classes\*\shell\ImgConverter\command", "")]
+        assert values[(r"Software\Classes\*\shell\ImgConverter", "MultiSelectModel")] == "Player"
+        assert '--input "%1"' in values[(r"Software\Classes\Directory\shell\ImgConverter\command", "")]
 
 
 # ── 2. Preset loading ────────────────────────────────────────────────────────

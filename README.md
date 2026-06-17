@@ -142,6 +142,9 @@ python imgconverter.py --input ./photos --format jpeg --quality 85
 # Convert to WebP with 4 workers, output to specific folder
 python imgconverter.py -i ./photos -o ./output -f webp -w 4
 
+# Convert selected files directly
+python imgconverter.py --files ./IMG_001.heic ./render.png -o ./output -f webp
+
 # Dry run — list files that would be converted
 python imgconverter.py --input ./photos --dry-run
 
@@ -174,7 +177,8 @@ python imgconverter.py --version
 
 | Flag | Description |
 |---|---|
-| `-i`, `--input` | Source directory (enables CLI mode) |
+| `-i`, `--input` | Source file or directory (enables CLI mode) |
+| `--files PATH...` | One or more selected files/directories, used by shell integration |
 | `-o`, `--output` | Output directory (default: `<input>/converted`) |
 | `-f`, `--format` | Output format: `auto`, `jpeg`, `png`, `webp`, `avif`, `tiff`, `jxl` |
 | `-q`, `--quality` | JPEG/WebP quality 50–100 (default: 92) |
@@ -216,6 +220,8 @@ python imgconverter.py --version
 | `--target-kb N` | Binary-search quality to hit target output size (KB) |
 | `--only-if-smaller PCT` | Discard output if not PCT% smaller than input |
 | `--frames MODE` | Multi-frame: `first`, `all`, `animate` (default: first) |
+| `--register-shell` | Install OS shell integration for selected files/folders |
+| `--unregister-shell` | Remove shell integration |
 | `--version` | Print version and exit |
 
 **Exit codes:**
