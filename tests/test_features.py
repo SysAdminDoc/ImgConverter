@@ -2,6 +2,7 @@
 mapping, quality targeting, only-if-smaller, DPI, ICC, recompress, BigTIFF,
 multi-frame, and scan exclude patterns."""
 import json
+import inspect
 import sys
 import tomllib
 import types
@@ -19,6 +20,8 @@ from imgconverter import (
     _install_shell_integration,
     _parse_canvas,
     _run_cli,
+    build_cli_parity_matrix,
+    CLI_FLAG_PARITY,
     _save_queue_state,
     convert_file,
     count_frames,
@@ -98,6 +101,56 @@ class TestCLIParsing:
         assert args.input is None
         assert args.files == ["a.png", "b.jpg"]
         assert args.format == "webp"
+
+
+class TestCLIGUIPParity:
+
+    def test_every_parser_flag_has_parity_mapping(self):
+        matrix = build_cli_parity_matrix()
+        missing = [row["flag"] for row in matrix if row["surface"] == "unmapped"]
+        valid_surfaces = {"gui", "cli-only", "admin-only", "internal-only"}
+        invalid = [
+            (row["flag"], row["surface"])
+            for row in matrix
+            if row["surface"] not in valid_surfaces
+        ]
+        parser_flags = {row["flag"] for row in matrix}
+        stale = sorted(set(CLI_FLAG_PARITY) - parser_flags)
+
+        assert missing == []
+        assert invalid == []
+        assert stale == []
+
+    def test_readme_documents_required_cli_flags(self):
+        readme = Path("README.md").read_text(encoding="utf-8")
+        matrix = build_cli_parity_matrix(readme)
+        missing = [
+            row["flag"]
+            for row in matrix
+            if row["readme_required"] and not row["in_readme"]
+        ]
+
+        assert missing == []
+
+    def test_gui_mapped_flags_point_at_existing_mainwindow_controls(self):
+        import imgconverter
+
+        source = (
+            inspect.getsource(imgconverter.MainWindow._build_ui)
+            + inspect.getsource(imgconverter.MainWindow._apply_accessibility_labels)
+        )
+        missing = []
+        for row in build_cli_parity_matrix():
+            if row["surface"] != "gui":
+                continue
+            if not row["gui"]:
+                missing.append((row["flag"], "<no widgets>"))
+                continue
+            for widget in row["gui"]:
+                if widget not in source:
+                    missing.append((row["flag"], widget))
+
+        assert missing == []
 
 
 class TestDependencyFloors:

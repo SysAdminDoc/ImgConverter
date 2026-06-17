@@ -4653,6 +4653,103 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+CLI_FLAG_PARITY = {
+    "--version": {"surface": "cli-only", "gui": (), "readme": True, "note": "Version command"},
+    "--install-deps": {"surface": "admin-only", "gui": (), "readme": True, "note": "Dependency installer"},
+    "--input": {"surface": "gui", "gui": ("src_edit", "src_btn"), "readme": True, "note": "Source picker"},
+    "--files": {"surface": "cli-only", "gui": (), "readme": True, "note": "Shell integration and direct file selection"},
+    "--output": {"surface": "gui", "gui": ("dst_edit", "dst_btn"), "readme": True, "note": "Output picker"},
+    "--format": {"surface": "gui", "gui": ("fmt_combo",), "readme": True, "note": "Output format selector"},
+    "--quality": {"surface": "gui", "gui": ("quality_slider",), "readme": True, "note": "Quality slider"},
+    "--workers": {"surface": "gui", "gui": ("workers_spin",), "readme": True, "note": "Worker count"},
+    "--in-place": {"surface": "gui", "gui": ("inplace_chk",), "readme": True, "note": "Verified in-place conversion"},
+    "--recursive": {"surface": "gui", "gui": ("recursive_chk",), "readme": True, "note": "Recursive scan toggle"},
+    "--no-recursive": {"surface": "gui", "gui": ("recursive_chk",), "readme": True, "note": "Recursive scan toggle inverse"},
+    "--dry-run": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless preview"},
+    "--strip-metadata": {"surface": "gui", "gui": ("strip_meta_chk",), "readme": True, "note": "Metadata removal"},
+    "--resize": {"surface": "gui", "gui": ("resize_chk", "resize_combo", "resize_spin"), "readme": True, "note": "Resize controls"},
+    "--skip-existing": {"surface": "gui", "gui": ("skip_existing_chk",), "readme": True, "note": "Resume by output existence"},
+    "--progressive": {"surface": "gui", "gui": ("progressive_jpeg_chk",), "readme": True, "note": "Progressive JPEG toggle"},
+    "--chroma-420": {"surface": "gui", "gui": ("chroma_chk",), "readme": True, "note": "JPEG chroma toggle"},
+    "--lossless": {"surface": "gui", "gui": ("lossless_webp_chk",), "readme": True, "note": "Lossless WebP toggle"},
+    "--srgb": {"surface": "gui", "gui": ("srgb_chk",), "readme": True, "note": "sRGB conversion"},
+    "--prefix": {"surface": "gui", "gui": ("prefix_edit",), "readme": True, "note": "Filename prefix"},
+    "--suffix": {"surface": "gui", "gui": ("suffix_edit",), "readme": True, "note": "Filename suffix"},
+    "--tiff-compression": {"surface": "gui", "gui": ("tiff_comp_combo",), "readme": True, "note": "TIFF compression"},
+    "--png-level": {"surface": "gui", "gui": ("png_level_spin",), "readme": True, "note": "PNG compression"},
+    "--png-lossy": {"surface": "gui", "gui": ("png_lossy_chk",), "readme": True, "note": "pngquant toggle"},
+    "--no-structure": {"surface": "gui", "gui": ("structure_chk",), "readme": True, "note": "Folder structure inverse"},
+    "--exclude": {"surface": "cli-only", "gui": (), "readme": True, "note": "Scriptable glob exclusion"},
+    "--no-exiftool": {"surface": "cli-only", "gui": (), "readme": True, "note": "CLI metadata backend override"},
+    "--template": {"surface": "gui", "gui": ("template_edit",), "readme": True, "note": "Filename template"},
+    "--report": {"surface": "cli-only", "gui": ("export_csv_btn",), "readme": True, "note": "CLI JSON report; GUI has CSV export"},
+    "--preset": {"surface": "gui", "gui": ("_preset_btn",), "readme": True, "note": "Preset loader"},
+    "--list-presets": {"surface": "cli-only", "gui": ("_preset_btn",), "readme": True, "note": "CLI preset inventory; GUI preset menu"},
+    "--list-plugins": {"surface": "admin-only", "gui": (), "readme": True, "note": "Trust-safe plugin inventory"},
+    "--trust-plugin": {"surface": "admin-only", "gui": (), "readme": True, "note": "Plugin trust manifest write"},
+    "--untrust-plugin": {"surface": "admin-only", "gui": (), "readme": True, "note": "Plugin trust manifest removal"},
+    "--only-if-smaller": {"surface": "gui", "gui": ("only_if_smaller_chk", "only_if_smaller_spin"), "readme": True, "note": "Keep smaller outputs only"},
+    "--dpi": {"surface": "gui", "gui": ("dpi_spin",), "readme": True, "note": "DPI override"},
+    "--icc": {"surface": "gui", "gui": ("icc_edit",), "readme": True, "note": "ICC override"},
+    "--xmp-sidecar": {"surface": "gui", "gui": ("xmp_sidecar_chk",), "readme": True, "note": "XMP sidecar"},
+    "--recompress": {"surface": "gui", "gui": ("recompress_chk",), "readme": True, "note": "Lossless JPEG recompress"},
+    "--target-kb": {"surface": "gui", "gui": ("target_kb_spin",), "readme": True, "note": "Target file size"},
+    "--target-psnr": {"surface": "cli-only", "gui": (), "readme": True, "note": "Quality metric automation"},
+    "--watermark": {"surface": "gui", "gui": ("watermark_edit",), "readme": True, "note": "Watermark spec"},
+    "--canvas": {"surface": "gui", "gui": ("canvas_edit",), "readme": True, "note": "Canvas size"},
+    "--canvas-bg": {"surface": "gui", "gui": ("canvas_bg_edit",), "readme": True, "note": "Canvas fill"},
+    "--avif-speed": {"surface": "gui", "gui": ("avif_speed_spin",), "readme": True, "note": "AVIF speed"},
+    "--avif-codec": {"surface": "gui", "gui": ("avif_codec_combo",), "readme": True, "note": "AVIF codec"},
+    "--max-file-size": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless OOM guard"},
+    "--register-shell": {"surface": "admin-only", "gui": (), "readme": True, "note": "Install shell integration"},
+    "--unregister-shell": {"surface": "admin-only", "gui": (), "readme": True, "note": "Remove shell integration"},
+    "--use-cache": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless repeat-run cache"},
+    "--clear-cache": {"surface": "admin-only", "gui": (), "readme": True, "note": "Cache maintenance"},
+    "--resume": {"surface": "cli-only", "gui": (), "readme": True, "note": "Interrupted CLI queue resume"},
+    "--frames": {"surface": "gui", "gui": ("frames_combo",), "readme": True, "note": "Multi-frame handling"},
+    "--watch": {"surface": "cli-only", "gui": (), "readme": True, "note": "Directory watch mode"},
+    "--watch-interval": {"surface": "cli-only", "gui": (), "readme": True, "note": "Directory watch cadence"},
+    "--tone-map": {"surface": "gui", "gui": ("tone_map_combo",), "readme": True, "note": "HDR tone mapping"},
+    "--use-processes": {"surface": "cli-only", "gui": (), "readme": True, "note": "Executor selection"},
+    "--sidecar-history": {"surface": "cli-only", "gui": (), "readme": True, "note": "Per-file reproducibility JSON"},
+    "--backend": {"surface": "cli-only", "gui": (), "readme": True, "note": "Experimental backend selection"},
+    "--verify-quality": {"surface": "cli-only", "gui": (), "readme": True, "note": "External quality metric checks"},
+    "--help": {"surface": "cli-only", "gui": (), "readme": False, "note": "argparse built-in help"},
+}
+
+
+def _parser_long_flags(parser: argparse.ArgumentParser | None = None) -> list[str]:
+    """Return every long option exposed by argparse, including --help."""
+    parser = parser or _build_parser()
+    flags: set[str] = set()
+    for action in parser._actions:
+        flags.update(opt for opt in action.option_strings if opt.startswith("--"))
+    return sorted(flags)
+
+
+def build_cli_parity_matrix(readme_text: str | None = None) -> list[dict]:
+    """Generate parser / GUI / README parity rows for tests and audits."""
+    rows = []
+    for flag in _parser_long_flags():
+        entry = CLI_FLAG_PARITY.get(flag)
+        row = {
+            "flag": flag,
+            "surface": "unmapped",
+            "gui": (),
+            "readme_required": True,
+            "in_readme": None,
+            "note": "",
+        }
+        if entry:
+            row.update(entry)
+            row["gui"] = tuple(entry.get("gui", ()))
+            row["readme_required"] = bool(entry.get("readme", True))
+            if readme_text is not None:
+                row["in_readme"] = f"`{flag}" in readme_text
+        rows.append(row)
+    return rows
+
+
 def _gil_status() -> str:
     """Return 'no-gil', 'gil', or 'unknown' based on the running interpreter."""
     is_gil = getattr(sys, "_is_gil_enabled", None)

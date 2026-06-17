@@ -198,6 +198,9 @@ python imgconverter.py --version
 | `--prefix` | Prepend text to output filenames |
 | `--suffix` | Append text to output filenames |
 | `--template STR` | Output filename template with tokens (overrides prefix/suffix). Tokens: `{stem}` `{ext}` `{fmt}` `{src_dir}` `{rel_dir}` `{width}` `{height}` `{date[:FMT]}` `{seq[:###]}`. Example: `--template '{rel_dir}/{stem}_{width}x{height}'` |
+| `--report PATH` | Write structured per-file JSON report after conversion |
+| `--preset NAME` | Load a built-in or `~/.imgconverter/presets/NAME.json` preset before applying other flags |
+| `--list-presets` | List built-in and user presets, then exit |
 | `--exclude PATTERN` | Glob pattern to exclude from scan (repeatable) |
 | `--no-exiftool` | Skip the ExifTool tag-copy pass (use Pillow's EXIF/ICC/XMP only) |
 | `--install-deps` | Install/upgrade all required + optional Python deps, then exit |
@@ -213,17 +216,30 @@ python imgconverter.py --version
 | `--max-file-size SIZE` | Skip files larger than SIZE (e.g. `500MB`, `2GB`) |
 | `--watermark SPEC` | Text or PNG watermark. Spec: `TEXT\|position\|opacity` |
 | `--canvas WxH` | Pad output to canvas size with `--canvas-bg` fill |
+| `--canvas-bg COLOR` | Canvas fill: `transparent`, hex color, or named color |
 | `--dpi N` | Set output DPI tag for JPEG/PNG/TIFF |
 | `--icc PROFILE` | Embed ICC profile (`sRGB` or path to `.icc` file) |
 | `--tone-map CURVE` | HDR tone mapping: `none`, `reinhard`, `hable`, `clip` |
 | `--xmp-sidecar` | Emit `.xmp` sidecar alongside output |
 | `--recompress` | Lossless JPEG→JPEG via jpegoptim/jpegtran |
 | `--target-kb N` | Binary-search quality to hit target output size (KB) |
+| `--target-psnr DB` | Binary-search quality to hit a minimum PSNR score |
 | `--only-if-smaller PCT` | Discard output if not PCT% smaller than input |
 | `--frames MODE` | Multi-frame: `first`, `all`, `animate` (default: first) |
 | `--register-shell` | Install OS shell integration for selected files/folders |
 | `--unregister-shell` | Remove shell integration |
+| `--use-cache` | Skip source/preset pairs that already converted successfully |
+| `--clear-cache` | Delete the conversion hash cache and exit |
+| `--resume` | Resume an interrupted CLI batch from the saved queue |
+| `--watch` | Watch the input directory and convert new files as they arrive |
+| `--watch-interval SEC` | Polling interval for `--watch` mode |
+| `--use-processes` | Use process workers instead of threads for conversion |
+| `--sidecar-history` | Write per-output `.imgconverter.json` reproducibility sidecars |
+| `--backend BACKEND` | Select `pillow` or experimental `vips` backend |
+| `--verify-quality` | Run optional external quality metrics after conversion |
 | `--version` | Print version and exit |
+
+Parser, GUI, and README parity is guarded by `build_cli_parity_matrix()` and the test suite: every long CLI flag must be classified as GUI-backed, CLI-only, admin-only, or internal-only, and every user-facing flag must remain documented here.
 
 **Exit codes:**
 
