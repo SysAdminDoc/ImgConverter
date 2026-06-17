@@ -2,6 +2,7 @@
 mapping, quality targeting, only-if-smaller, DPI, ICC, recompress, BigTIFF,
 multi-frame, and scan exclude patterns."""
 import json
+import tomllib
 import types
 
 import pytest
@@ -86,6 +87,21 @@ class TestCLIParsing:
             "--exclude", "cache/**",
         ])
         assert args.exclude == ["*.thumb.*", "cache/**"]
+
+
+class TestDependencyFloors:
+    """Verify documented dependency floors stay synced across install paths."""
+
+    def test_pillow_floor_synced(self):
+        import imgconverter
+
+        root = Path(__file__).resolve().parents[1]
+        floor = imgconverter.DEP_FLOORS["PIL"][1]
+        assert floor == "12.2.0"
+        assert f"Pillow>={floor}" in (root / "requirements.txt").read_text(encoding="utf-8")
+
+        pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        assert f"Pillow>={floor}" in pyproject["project"]["dependencies"]
 
 
 # ── 2. Preset loading ────────────────────────────────────────────────────────

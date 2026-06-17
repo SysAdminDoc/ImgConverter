@@ -3,7 +3,7 @@
 # Appendix A6. Newer versions are fine; *older* versions of these are not.
 #
 # Required:
-Pillow>=12.1.1
+Pillow>=12.2.0
 pillow-heif>=1.4.0
 PyQt6>=6.8
 

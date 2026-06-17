@@ -43,7 +43,7 @@ EXIT_TOTAL_FAILURE   = 6   # every file in batch failed
 # Dependency floors — see requirements.txt / ROADMAP Appendix A6 for CVE rationale.
 # Older versions of these expose users to known libheif / libjxl / Pillow RCEs.
 DEP_FLOORS = {
-    "PIL":          ("Pillow",             "12.1.1"),
+    "PIL":          ("Pillow",             "12.2.0"),
     "pillow_heif":  ("pillow-heif",        "1.4.0"),
     "PyQt6":        ("PyQt6",              "6.8"),
     "rawpy":        ("rawpy",              "0.27.0"),    # optional
