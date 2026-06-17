@@ -319,6 +319,30 @@ class TestToneMapping:
         assert not any("hdr" in w for w in result.warnings)
 
 
+# ── 5b. High bit-depth output caveats ───────────────────────────────────────
+
+
+class TestHighBitDepthOutput:
+
+    def test_avif_warns_instead_of_claiming_high_bit_depth(self, tmp_workdir, monkeypatch):
+        import imgconverter
+        if not imgconverter.HAS_AVIF:
+            pytest.skip("AVIF unavailable")
+
+        src = tmp_workdir / "src.heic"
+        src.write_bytes(b"placeholder")
+
+        def fake_open_image(path):
+            return Image.new("RGB", (16, 16), (120, 40, 20)), {"bit_depth": 10}
+
+        monkeypatch.setattr(imgconverter, "_open_image", fake_open_image)
+        result = convert_file(src, tmp_workdir / "out", fmt="avif")
+
+        assert result.success
+        assert any("8-bit" in w and "JPEG XL" in w for w in result.warnings)
+        assert not any("avif:" in w and "preserving" in w for w in result.warnings)
+
+
 # ── 6. Quality targeting ─────────────────────────────────────────────────────
 
 

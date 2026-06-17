@@ -2061,12 +2061,13 @@ def convert_file(
             save_kwargs["speed"] = avif_speed
             if avif_codec and avif_codec != "auto":
                 save_kwargs["codec"] = avif_codec
-            # Wide-gamut / 10-bit preservation when source is HEIC at >8 bpp.
+            # Pillow's AVIF encoder is 8-bit; warn instead of implying high
+            # bit-depth preservation for 10/12-bit HEIC sources.
             bit_depth = meta.get("bit_depth")
             if bit_depth and bit_depth > 8:
-                save_kwargs["bits"] = bit_depth
                 result.warnings.append(
-                    f"avif: preserving {bit_depth}-bit depth from source HEIC"
+                    f"avif: Pillow AVIF output is 8-bit; source is {bit_depth}-bit. "
+                    "Use JPEG XL to preserve high bit depth."
                 )
         elif out_fmt == "JXL":
             save_kwargs["quality"] = jpeg_quality
