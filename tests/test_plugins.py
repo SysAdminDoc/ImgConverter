@@ -77,6 +77,28 @@ def test_untrust_plugin_removes_manifest_entry(tmp_workdir, monkeypatch):
         pass
 
 
+def test_plugin_trust_rows_do_not_execute_plugin_code(tmp_workdir, monkeypatch):
+    import imgconverter
+
+    plugin_dir = tmp_workdir / "plugins"
+    plugin_dir.mkdir()
+    marker = tmp_workdir / "executed.txt"
+    plugin = plugin_dir / "03-danger.py"
+    plugin.write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(imgconverter, "_plugin_dir", lambda: plugin_dir)
+    rows = imgconverter.get_plugin_trust_rows()
+
+    assert not marker.exists()
+    assert rows[0]["name"] == "03-danger.py"
+    assert rows[0]["status"] == "untrusted"
+    assert rows[0]["hash_prefix"]
+    assert "trust-plugin" in rows[0]["reason"]
+
+
 def test_trusted_plugin_registers_decoder_encoder_and_storage(tmp_workdir, monkeypatch):
     import imgconverter
 

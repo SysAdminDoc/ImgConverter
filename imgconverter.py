@@ -511,6 +511,40 @@ def _list_plugins() -> int:
     return EXIT_OK
 
 
+def get_plugin_trust_rows() -> list[dict]:
+    """Return plugin trust inventory without importing or executing plugins."""
+    plugin_dir = _plugin_dir()
+    records = _load_plugin_trust()
+    rows: list[dict] = []
+    seen = set()
+    if plugin_dir.is_dir():
+        for py in sorted(plugin_dir.glob("*.py")):
+            seen.add(py.name)
+            status, detail = _plugin_trust_status(py, records)
+            digest = ""
+            if py.is_file() and not py.is_symlink():
+                try:
+                    digest = _file_sha256(py)
+                except OSError:
+                    digest = ""
+            rows.append({
+                "name": py.name,
+                "path": str(py),
+                "status": status,
+                "hash_prefix": digest[:12],
+                "reason": "trusted file matches manifest" if status == "trusted" else detail,
+            })
+    for name in sorted(set(records) - seen):
+        rows.append({
+            "name": name,
+            "path": str(plugin_dir / name),
+            "status": "missing",
+            "hash_prefix": str(records[name].get("sha256", ""))[:12],
+            "reason": "trusted manifest entry has no file on disk",
+        })
+    return rows
+
+
 def _load_plugins() -> list[str]:
     """Discover and import trusted user plugins. Returns loaded module names."""
     _reset_plugin_registry()
@@ -631,6 +665,7 @@ try:
         QProgressBar, QPlainTextEdit, QCheckBox, QGroupBox, QGridLayout,
         QFrame, QSplitter, QStatusBar, QMessageBox, QLineEdit, QStyle,
         QSystemTrayIcon, QMenu, QToolButton, QScrollArea, QSizePolicy,
+        QDialog, QTableWidget, QTableWidgetItem,
     )
     HAS_PYQT6 = True
 except ImportError:
@@ -658,6 +693,7 @@ except ImportError:
     QProgressBar = QPlainTextEdit = QCheckBox = QGroupBox = QGridLayout = _Stub
     QFrame = QSplitter = QStatusBar = QMessageBox = QLineEdit = QStyle = _Stub
     QSystemTrayIcon = QMenu = QToolButton = QScrollArea = QSizePolicy = _Stub
+    QDialog = QTableWidget = QTableWidgetItem = _Stub
     QTimer = _Stub
 
 # ── Catppuccin Mocha Palette ──────────────────────────────────────────────────
@@ -3143,6 +3179,71 @@ def _estimate_output_size(total_input_bytes: int, fmt: str) -> int:
     return int(total_input_bytes * factor)
 
 
+class PluginTrustDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Plugin Trust")
+        self.resize(820, 420)
+        self._rows: list[dict] = []
+
+        layout = QVBoxLayout(self)
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Plugin", "Path", "Status", "Hash", "Reason"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.table)
+
+        buttons = QHBoxLayout()
+        self.refresh_btn = QPushButton("Refresh")
+        self.trust_btn = QPushButton("Trust Selected")
+        self.untrust_btn = QPushButton("Untrust Selected")
+        self.close_btn = QPushButton("Close")
+        buttons.addWidget(self.refresh_btn)
+        buttons.addStretch()
+        buttons.addWidget(self.trust_btn)
+        buttons.addWidget(self.untrust_btn)
+        buttons.addWidget(self.close_btn)
+        layout.addLayout(buttons)
+
+        self.refresh_btn.clicked.connect(self._refresh)
+        self.trust_btn.clicked.connect(self._trust_selected)
+        self.untrust_btn.clicked.connect(self._untrust_selected)
+        self.close_btn.clicked.connect(self.accept)
+        self._refresh()
+
+    def _refresh(self):
+        self._rows = get_plugin_trust_rows()
+        self.table.setRowCount(len(self._rows))
+        for row_idx, row in enumerate(self._rows):
+            for col_idx, key in enumerate(("name", "path", "status", "hash_prefix", "reason")):
+                self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(row.get(key, ""))))
+        self.table.resizeColumnsToContents()
+
+    def _selected_row(self) -> dict | None:
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._rows):
+            return None
+        return self._rows[row]
+
+    def _trust_selected(self):
+        row = self._selected_row()
+        if not row or row.get("status") == "missing":
+            QMessageBox.information(self, "Plugin Trust", "Select a plugin file to trust.")
+            return
+        ok, msg = _trust_plugin(row["path"])
+        (QMessageBox.information if ok else QMessageBox.warning)(self, "Plugin Trust", msg)
+        self._refresh()
+
+    def _untrust_selected(self):
+        row = self._selected_row()
+        if not row:
+            QMessageBox.information(self, "Plugin Trust", "Select a plugin entry to untrust.")
+            return
+        ok, msg = _untrust_plugin(row["name"])
+        (QMessageBox.information if ok else QMessageBox.warning)(self, "Plugin Trust", msg)
+        self._refresh()
+
+
 # ── Main Window ───────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -3233,6 +3334,7 @@ class MainWindow(QMainWindow):
             ("convert_btn",         "Convert batch",            "Start converting the scanned batch"),
             ("stop_btn",            "Cancel conversion",        "Stop the current conversion batch"),
             ("paste_btn",           "Paste clipboard",          "Paste an image from clipboard as input"),
+            ("manage_plugins_btn",  "Plugin trust",             "Review plugin trust status and trust or untrust plugin files"),
             ("auto_open_chk",       "Auto-open output",         "Automatically open the output folder when conversion finishes"),
             ("open_output_btn",     "Open output folder",       "Open the most recent output folder"),
             ("export_log_btn",      "Export log",               "Save the conversion log as a text file"),
@@ -3909,6 +4011,11 @@ class MainWindow(QMainWindow):
 
         primary_actions.addStretch()
 
+        self.manage_plugins_btn = QPushButton("Plugins")
+        self.manage_plugins_btn.setToolTip("Review plugin trust status")
+        self.manage_plugins_btn.clicked.connect(self._open_plugin_trust)
+        secondary_actions.addWidget(self.manage_plugins_btn)
+
         self.auto_open_chk = QCheckBox("Auto-open output")
         self.auto_open_chk.setChecked(False)
         self.auto_open_chk.setToolTip("Automatically open the output folder when conversion finishes")
@@ -4061,7 +4168,7 @@ class MainWindow(QMainWindow):
             "exclude_edit", "max_file_size_edit",
             "xmp_sidecar_chk", "recompress_chk", "only_if_smaller_chk",
             "only_if_smaller_spin", "target_kb_spin", "png_lossy_chk",
-            "paste_btn", "auto_open_chk",
+            "paste_btn", "manage_plugins_btn", "auto_open_chk",
         ]:
             w = getattr(self, attr, None)
             if w is not None:
@@ -4078,6 +4185,12 @@ class MainWindow(QMainWindow):
 
     def _log(self, msg: str):
         self.log_view.appendPlainText(msg)
+
+    def _open_plugin_trust(self):
+        dialog = PluginTrustDialog(self)
+        dialog.exec()
+        rows = get_plugin_trust_rows()
+        self._log(f"Plugin trust inventory: {len(rows)} entr{'y' if len(rows) == 1 else 'ies'}")
 
     # ── Drag & Drop ──
     def dragEnterEvent(self, event: QDragEnterEvent):

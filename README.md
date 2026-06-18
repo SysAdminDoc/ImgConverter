@@ -62,6 +62,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **JPEG XL output** — next-gen JPEG replacement via pillow-jxl-plugin (quality + effort tuning)
 - **CSV export** — structured conversion report with per-file status, sizes, timing, and warnings
 - **CLI mode** — headless conversion via `--input` flag with full feature parity (all GUI options exposed as flags)
+- **Plugin trust manager** — GUI inventory for trusted, changed, missing, and untrusted plugin files without executing them
 - **In-place conversion** — convert next to the original and delete the source file
 - **Atomic writes** — in-place mode uses temp file + atomic rename for crash-safe conversion
 - **Output validation** — verifies file exists, size > 0, and passes integrity check before accepting
