@@ -795,7 +795,7 @@ QPushButton:pressed {{
 }}
 QPushButton:disabled {{
     background-color: {CAT['crust']};
-    color: {CAT['overlay0']};
+    color: {CAT['overlay2']};
     border-color: {CAT['surface0']};
 }}
 QPushButton#primaryBtn {{
@@ -812,7 +812,7 @@ QPushButton#primaryBtn:hover {{
 }}
 QPushButton#primaryBtn:disabled {{
     background-color: {CAT['surface1']};
-    color: {CAT['overlay0']};
+    color: {CAT['subtext1']};
     border-color: {CAT['surface1']};
 }}
 QPushButton#stopBtn {{
@@ -830,8 +830,8 @@ QPushButton#stopBtn:pressed {{
 }}
 QPushButton#stopBtn:disabled {{
     background-color: {CAT['surface1']};
-    color: {CAT['overlay0']};
-    border: none;
+    color: {CAT['subtext1']};
+    border: 1px solid {CAT['surface1']};
 }}
 QPushButton#miniBtn {{
     font-size: 11px;
@@ -884,6 +884,11 @@ QSpinBox {{
 QSpinBox:focus {{
     border: 1px solid {CAT['blue']};
 }}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
+    background-color: {CAT['crust']};
+    color: {CAT['overlay2']};
+    border-color: {CAT['surface0']};
+}}
 QSlider::groove:horizontal {{
     background: {CAT['surface0']};
     height: 6px;
@@ -895,6 +900,10 @@ QSlider::handle:horizontal {{
     height: 18px;
     margin: -6px 0;
     border-radius: 8px;
+}}
+QSlider::handle:horizontal:focus {{
+    background: {CAT['blue']};
+    border: 1px solid {CAT['text']};
 }}
 QSlider::sub-page:horizontal {{
     background: {CAT['blue']};
@@ -923,12 +932,18 @@ QPlainTextEdit {{
     font-size: 12px;
     selection-background-color: {CAT['surface1']};
 }}
+QPlainTextEdit:focus {{
+    border: 1px solid {CAT['blue']};
+}}
 QCheckBox {{
     spacing: 8px;
     color: {CAT['text']};
 }}
 QCheckBox:hover {{
     color: {CAT['lavender']};
+}}
+QCheckBox:disabled {{
+    color: {CAT['subtext1']};
 }}
 QCheckBox::indicator {{
     width: 18px;
@@ -940,6 +955,9 @@ QCheckBox::indicator {{
 QCheckBox::indicator:checked {{
     background-color: {CAT['blue']};
     border-color: {CAT['blue']};
+}}
+QCheckBox::indicator:focus {{
+    border: 2px solid {CAT['blue']};
 }}
 QCheckBox::indicator:disabled {{
     background-color: {CAT['crust']};
@@ -1035,6 +1053,11 @@ QToolButton:hover {{
 QToolButton:focus {{
     border: 1px solid {CAT['blue']};
 }}
+QToolButton:disabled {{
+    background-color: {CAT['crust']};
+    color: {CAT['overlay2']};
+    border-color: {CAT['surface0']};
+}}
 QToolButton#advancedToggle {{
     background-color: {CAT['mantle']};
     border: 1px solid {CAT['surface0']};
@@ -1066,6 +1089,50 @@ QMenu::item:selected {{
     color: {CAT['lavender']};
 }}
 """
+
+WCAG_AA_NORMAL_TEXT_CONTRAST = 4.5
+STYLESHEET_READABLE_PAIRS = (
+    ("QWidget", "text", "base"),
+    ("QLabel#appTitle", "text", "mantle"),
+    ("QLabel#appVersion", "overlay2", "mantle"),
+    ("QLabel#appSubtitle", "subtext0", "mantle"),
+    ("QLabel#workflowState", "lavender", "surface0"),
+    ("QLabel#fieldLabel", "subtext1", "base"),
+    ("QGroupBox", "lavender", "mantle"),
+    ("QPushButton", "text", "surface0"),
+    ("QPushButton:disabled", "overlay2", "crust"),
+    ("QPushButton#primaryBtn", "crust", "blue"),
+    ("QPushButton#primaryBtn:disabled", "subtext1", "surface1"),
+    ("QPushButton#stopBtn", "crust", "red"),
+    ("QPushButton#stopBtn:disabled", "subtext1", "surface1"),
+    ("QLineEdit", "text", "surface0"),
+    ("QComboBox", "text", "surface0"),
+    ("QSpinBox", "text", "surface0"),
+    ("QLineEdit/QComboBox/QSpinBox:disabled", "overlay2", "crust"),
+    ("QProgressBar", "text", "surface0"),
+    ("QPlainTextEdit", "subtext0", "crust"),
+    ("QCheckBox", "text", "base"),
+    ("QCheckBox:disabled", "subtext1", "base"),
+    ("QLabel#dimLabel", "overlay2", "base"),
+    ("QLabel#statValue", "green", "base"),
+    ("QLabel#statLabel", "overlay2", "base"),
+    ("QStatusBar", "subtext0", "mantle"),
+    ("QToolButton", "text", "surface0"),
+    ("QToolButton:disabled", "overlay2", "crust"),
+    ("QToolButton#advancedToggle", "subtext1", "mantle"),
+    ("QMenu", "text", "surface0"),
+    ("QMenu::item:selected", "lavender", "surface1"),
+)
+STYLESHEET_FOCUS_SELECTORS = (
+    "QPushButton:focus",
+    "QLineEdit:focus",
+    "QComboBox:focus",
+    "QSpinBox:focus",
+    "QSlider::handle:horizontal:focus",
+    "QPlainTextEdit:focus",
+    "QCheckBox::indicator:focus",
+    "QToolButton:focus",
+)
 
 
 # ── Supported Input Formats ───────────────────────────────────────────────────
@@ -3191,6 +3258,8 @@ class PluginTrustDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["Plugin", "Path", "Status", "Hash", "Reason"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAccessibleName("Plugin trust inventory")
+        self.table.setAccessibleDescription("Installed plugin files with trust status and hash prefix")
         layout.addWidget(self.table)
 
         buttons = QHBoxLayout()
@@ -3209,6 +3278,15 @@ class PluginTrustDialog(QDialog):
         self.trust_btn.clicked.connect(self._trust_selected)
         self.untrust_btn.clicked.connect(self._untrust_selected)
         self.close_btn.clicked.connect(self.accept)
+        for button, name, desc in (
+            (self.refresh_btn, "Refresh plugin trust inventory", "Reload plugin trust status from disk"),
+            (self.trust_btn, "Trust selected plugin", "Record the selected plugin file hash as trusted"),
+            (self.untrust_btn, "Untrust selected plugin", "Remove the selected plugin from the local trust manifest"),
+            (self.close_btn, "Close plugin trust", "Close the plugin trust dialog"),
+        ):
+            button.setAccessibleName(name)
+            button.setAccessibleDescription(desc)
+            button.setStatusTip(desc)
         self._refresh()
 
     def _refresh(self):
@@ -3242,6 +3320,64 @@ class PluginTrustDialog(QDialog):
         ok, msg = _untrust_plugin(row["name"])
         (QMessageBox.information if ok else QMessageBox.warning)(self, "Plugin Trust", msg)
         self._refresh()
+
+
+MAIN_WINDOW_ACCESSIBILITY_LABELS = (
+    ("workflow_state",     "Workflow status",          "Current batch workflow state"),
+    ("src_edit",            "Source directory",         "Directory to scan for input images"),
+    ("src_btn",             "Choose source folder",     "Open a folder picker for the source directory"),
+    ("recent_btn",          "Recent source folders",    "Open recently used source directories"),
+    ("dst_edit",            "Output directory",         "Where converted files go (blank = source/converted)"),
+    ("dst_btn",             "Choose output folder",     "Open a folder picker for the output directory"),
+    ("fmt_combo",           "Output format",            "Target image format (auto/jpeg/png/webp/avif/tiff/jxl)"),
+    ("_preset_btn",         "Conversion presets",       "Apply a saved conversion preset"),
+    ("quality_slider",      "Quality",                  "Encoder quality 50-100 for JPEG/WebP/AVIF/JXL"),
+    ("workers_spin",        "Worker thread count",      "Number of parallel conversion threads"),
+    ("recursive_chk",       "Recursive scan",           "Walk subdirectories under the source directory"),
+    ("inplace_chk",         "Convert in place",         "Save output next to each source and delete the source after output validation"),
+    ("skip_existing_chk",   "Skip existing outputs",    "Skip files whose output already exists"),
+    ("meta_chk",            "Preserve metadata",        "Keep EXIF, ICC, and XMP through conversion"),
+    ("progressive_jpeg_chk","Progressive JPEG",         "Encode JPEGs as progressive for web delivery"),
+    ("lossless_webp_chk",   "Lossless WebP",            "Save WebP in lossless mode"),
+    ("resize_chk",          "Enable resize",            "Resize images during conversion"),
+    ("resize_combo",        "Resize mode",              "Max dimension in pixels, or percent scale"),
+    ("resize_spin",         "Resize value",             "Numeric value for the chosen resize mode"),
+    ("template_edit",       "Filename template",        "Output filename template with tokens like {stem} {width} {height}"),
+    ("dpi_spin",            "DPI override",             "Set output DPI for JPEG/PNG/TIFF, 0 keeps original"),
+    ("avif_speed_spin",     "AVIF speed",               "AVIF encoding speed 0-10, lower is slower but smaller"),
+    ("frames_combo",        "Multi-frame mode",         "How to handle animated or multi-frame source images"),
+    ("tone_map_combo",      "Tone mapping curve",       "HDR tone mapping for PQ/HLG/wide-gamut sources"),
+    ("icc_edit",            "ICC profile override",     "Embed a specific ICC profile or leave blank to keep source"),
+    ("watermark_edit",      "Watermark specification",  "Watermark text or image with position and opacity"),
+    ("canvas_edit",         "Canvas size",              "Pad output to WxH canvas with background fill"),
+    ("canvas_bg_edit",      "Canvas background",        "Canvas background color: transparent, hex, or named color"),
+    ("exclude_edit",        "Exclude patterns",         "Semicolon-separated glob patterns to skip during scan"),
+    ("max_file_size_edit",  "Maximum input file size",  "Skip files larger than this size, such as 500MB or 2GB"),
+    ("xmp_sidecar_chk",     "Emit XMP sidecar",         "Write .xmp sidecar alongside output"),
+    ("recompress_chk",      "Lossless JPEG recompress", "Pixel-lossless JPEG size reduction via jpegoptim/jpegtran"),
+    ("only_if_smaller_chk", "Only if smaller",          "Discard output when not meaningfully smaller than input"),
+    ("target_kb_spin",      "Target file size KB",      "Binary-search quality to hit a target output size in KB"),
+    ("avif_codec_combo",    "AVIF codec",               "AVIF encoder: auto, aom, rav1e, or svt"),
+    ("png_lossy_chk",       "Lossy PNG",                "Run pngquant for lossy PNG size reduction"),
+    ("chroma_chk",          "Chroma subsampling",       "Use 4:2:0 chroma for smaller JPEG files"),
+    ("srgb_chk",            "Convert to sRGB",          "Convert embedded ICC profiles to sRGB"),
+    ("strip_meta_chk",      "Strip metadata",           "Remove all EXIF, ICC, and XMP from output"),
+    ("structure_chk",       "Preserve folder structure", "Mirror source directory layout in output"),
+    ("only_if_smaller_spin","Only-if-smaller threshold", "Percentage by which output must be smaller"),
+    ("png_level_spin",      "PNG compression level",    "PNG compression 1 (fast) to 9 (smallest)"),
+    ("tiff_comp_combo",     "TIFF compression",         "TIFF compression: None, LZW, or Deflate"),
+    ("adv_toggle",          "Advanced output controls", "Show or hide advanced output controls"),
+    ("scan_btn",            "Scan source",              "Scan the selected source for supported images"),
+    ("convert_btn",         "Convert batch",            "Start converting the scanned batch"),
+    ("stop_btn",            "Cancel conversion",        "Stop the current conversion batch"),
+    ("paste_btn",           "Paste clipboard",          "Paste an image from clipboard as input"),
+    ("manage_plugins_btn",  "Plugin trust",             "Review plugin trust status and trust or untrust plugin files"),
+    ("auto_open_chk",       "Auto-open output",         "Automatically open the output folder when conversion finishes"),
+    ("open_output_btn",     "Open output folder",       "Open the most recent output folder"),
+    ("export_log_btn",      "Export log",               "Save the conversion log as a text file"),
+    ("export_csv_btn",      "Export CSV",               "Export conversion results as a CSV report"),
+    ("clear_log_btn",       "Clear log",                "Clear the activity log"),
+)
 
 
 # ── Main Window ───────────────────────────────────────────────────────────────
@@ -3285,63 +3421,7 @@ class MainWindow(QMainWindow):
         VoiceOver / Orca announce something meaningful instead of the
         default Qt class name.
         """
-        labels = [
-            ("workflow_state",     "Workflow status",          "Current batch workflow state"),
-            ("src_edit",            "Source directory",         "Directory to scan for input images"),
-            ("src_btn",             "Choose source folder",     "Open a folder picker for the source directory"),
-            ("recent_btn",          "Recent source folders",    "Open recently used source directories"),
-            ("dst_edit",            "Output directory",         "Where converted files go (blank = source/converted)"),
-            ("dst_btn",             "Choose output folder",     "Open a folder picker for the output directory"),
-            ("fmt_combo",           "Output format",            "Target image format (auto/jpeg/png/webp/avif/tiff/jxl)"),
-            ("_preset_btn",         "Conversion presets",       "Apply a saved conversion preset"),
-            ("quality_slider",      "Quality",                  "Encoder quality 50-100 for JPEG/WebP/AVIF/JXL"),
-            ("workers_spin",        "Worker thread count",      "Number of parallel conversion threads"),
-            ("recursive_chk",       "Recursive scan",           "Walk subdirectories under the source directory"),
-            ("inplace_chk",         "Convert in place",         "Save output next to each source and delete the source after output validation"),
-            ("skip_existing_chk",   "Skip existing outputs",    "Skip files whose output already exists"),
-            ("meta_chk",            "Preserve metadata",        "Keep EXIF, ICC, and XMP through conversion"),
-            ("progressive_jpeg_chk","Progressive JPEG",         "Encode JPEGs as progressive for web delivery"),
-            ("lossless_webp_chk",   "Lossless WebP",            "Save WebP in lossless mode"),
-            ("resize_chk",          "Enable resize",            "Resize images during conversion"),
-            ("resize_combo",        "Resize mode",              "Max dimension in pixels, or percent scale"),
-            ("resize_spin",         "Resize value",             "Numeric value for the chosen resize mode"),
-            ("template_edit",       "Filename template",        "Output filename template with tokens like {stem} {width} {height}"),
-            ("dpi_spin",            "DPI override",             "Set output DPI for JPEG/PNG/TIFF, 0 keeps original"),
-            ("avif_speed_spin",     "AVIF speed",               "AVIF encoding speed 0-10, lower is slower but smaller"),
-            ("frames_combo",        "Multi-frame mode",         "How to handle animated or multi-frame source images"),
-            ("tone_map_combo",      "Tone mapping curve",       "HDR tone mapping for PQ/HLG/wide-gamut sources"),
-            ("icc_edit",            "ICC profile override",     "Embed a specific ICC profile or leave blank to keep source"),
-            ("watermark_edit",      "Watermark specification",  "Watermark text or image with position and opacity"),
-            ("canvas_edit",         "Canvas size",              "Pad output to WxH canvas with background fill"),
-            ("canvas_bg_edit",      "Canvas background",        "Canvas background color: transparent, hex, or named color"),
-            ("exclude_edit",        "Exclude patterns",         "Semicolon-separated glob patterns to skip during scan"),
-            ("max_file_size_edit",  "Maximum input file size",  "Skip files larger than this size, such as 500MB or 2GB"),
-            ("xmp_sidecar_chk",     "Emit XMP sidecar",         "Write .xmp sidecar alongside output"),
-            ("recompress_chk",      "Lossless JPEG recompress", "Pixel-lossless JPEG size reduction via jpegoptim/jpegtran"),
-            ("only_if_smaller_chk", "Only if smaller",          "Discard output when not meaningfully smaller than input"),
-            ("target_kb_spin",      "Target file size KB",      "Binary-search quality to hit a target output size in KB"),
-            ("avif_codec_combo",    "AVIF codec",               "AVIF encoder: auto, aom, rav1e, or svt"),
-            ("png_lossy_chk",       "Lossy PNG",                "Run pngquant for lossy PNG size reduction"),
-            ("chroma_chk",          "Chroma subsampling",       "Use 4:2:0 chroma for smaller JPEG files"),
-            ("srgb_chk",            "Convert to sRGB",          "Convert embedded ICC profiles to sRGB"),
-            ("strip_meta_chk",      "Strip metadata",           "Remove all EXIF, ICC, and XMP from output"),
-            ("structure_chk",       "Preserve folder structure", "Mirror source directory layout in output"),
-            ("only_if_smaller_spin","Only-if-smaller threshold", "Percentage by which output must be smaller"),
-            ("png_level_spin",      "PNG compression level",    "PNG compression 1 (fast) to 9 (smallest)"),
-            ("tiff_comp_combo",     "TIFF compression",         "TIFF compression: None, LZW, or Deflate"),
-            ("adv_toggle",          "Advanced output controls", "Show or hide advanced output controls"),
-            ("scan_btn",            "Scan source",              "Scan the selected source for supported images"),
-            ("convert_btn",         "Convert batch",            "Start converting the scanned batch"),
-            ("stop_btn",            "Cancel conversion",        "Stop the current conversion batch"),
-            ("paste_btn",           "Paste clipboard",          "Paste an image from clipboard as input"),
-            ("manage_plugins_btn",  "Plugin trust",             "Review plugin trust status and trust or untrust plugin files"),
-            ("auto_open_chk",       "Auto-open output",         "Automatically open the output folder when conversion finishes"),
-            ("open_output_btn",     "Open output folder",       "Open the most recent output folder"),
-            ("export_log_btn",      "Export log",               "Save the conversion log as a text file"),
-            ("export_csv_btn",      "Export CSV",               "Export conversion results as a CSV report"),
-            ("clear_log_btn",       "Clear log",                "Clear the activity log"),
-        ]
-        for attr, name, desc in labels:
+        for attr, name, desc in MAIN_WINDOW_ACCESSIBILITY_LABELS:
             w = getattr(self, attr, None)
             if w is None:
                 continue

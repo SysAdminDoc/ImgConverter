@@ -3,6 +3,7 @@ mapping, quality targeting, only-if-smaller, DPI, ICC, recompress, BigTIFF,
 multi-frame, and scan exclude patterns."""
 import json
 import inspect
+import re
 import sys
 import tomllib
 import types
@@ -151,6 +152,93 @@ class TestCLIGUIPParity:
                     missing.append((row["flag"], widget))
 
         assert missing == []
+
+
+def _relative_luminance(hex_color: str) -> float:
+    raw = hex_color.lstrip("#")
+    channels = [int(raw[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+
+    def linearize(channel: float) -> float:
+        if channel <= 0.03928:
+            return channel / 12.92
+        return ((channel + 0.055) / 1.055) ** 2.4
+
+    r, g, b = [linearize(channel) for channel in channels]
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast_ratio(foreground: str, background: str) -> float:
+    fg = _relative_luminance(foreground)
+    bg = _relative_luminance(background)
+    light, dark = max(fg, bg), min(fg, bg)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def _style_block(stylesheet: str, selector: str) -> str:
+    match = re.search(rf"{re.escape(selector)}\s*\{{(?P<body>.*?)\}}", stylesheet, re.S)
+    return "" if match is None else match.group("body")
+
+
+class TestStylesheetAccessibility:
+
+    def test_readable_stylesheet_pairs_meet_wcag_aa(self):
+        import imgconverter
+
+        failures = []
+        for selector, foreground, background in imgconverter.STYLESHEET_READABLE_PAIRS:
+            ratio = _contrast_ratio(imgconverter.CAT[foreground], imgconverter.CAT[background])
+            if ratio < imgconverter.WCAG_AA_NORMAL_TEXT_CONTRAST:
+                failures.append((selector, foreground, background, round(ratio, 2)))
+
+        assert failures == []
+
+    def test_focus_styles_exist_for_interactive_controls(self):
+        import imgconverter
+
+        missing = []
+        weak = []
+        for selector in imgconverter.STYLESHEET_FOCUS_SELECTORS:
+            body = _style_block(imgconverter.STYLESHEET, selector)
+            if not body:
+                missing.append(selector)
+            elif not any(prop in body for prop in ("border", "background", "color")):
+                weak.append(selector)
+
+        assert missing == []
+        assert weak == []
+
+    def test_main_window_controls_have_accessible_names(self, monkeypatch):
+        import imgconverter
+
+        if not imgconverter.HAS_PYQT6:
+            pytest.skip("PyQt6 not available")
+
+        monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+        monkeypatch.setattr(imgconverter.MainWindow, "_apply_dark_titlebar", lambda self: None)
+        monkeypatch.setattr(imgconverter.MainWindow, "_restore_state", lambda self: None)
+        monkeypatch.setattr(imgconverter.MainWindow, "_log_startup", lambda self: None)
+        monkeypatch.setattr(imgconverter, "_diag_log", lambda *_args, **_kwargs: None)
+
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        window = imgconverter.MainWindow()
+        try:
+            missing = []
+            wrong = []
+            for attr, name, desc in imgconverter.MAIN_WINDOW_ACCESSIBILITY_LABELS:
+                widget = getattr(window, attr, None)
+                if widget is None:
+                    missing.append(attr)
+                elif widget.accessibleName() != name or widget.accessibleDescription() != desc:
+                    wrong.append((attr, widget.accessibleName(), widget.accessibleDescription()))
+
+            assert missing == []
+            assert wrong == []
+        finally:
+            window.close()
+            window.deleteLater()
+            app.processEvents()
 
 
 class TestDependencyFloors:
