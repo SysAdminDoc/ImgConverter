@@ -148,6 +148,14 @@ class TestCLIValidation:
         ])
         assert _validate_cli_args(args) == []
 
+    def test_process_workers_reject_loaded_plugins(self, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setitem(imgconverter.PLUGIN_ENCODERS, "demo", object())
+        args = _build_parser().parse_args(["--input", "photos", "--use-processes"])
+
+        assert any("--use-processes" in error for error in _validate_cli_args(args))
+
 
 class TestCLIGUIPParity:
 
@@ -299,6 +307,32 @@ class TestDependencyFloors:
 
         pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         assert f"Pillow>={floor}" in pyproject["project"]["dependencies"]
+
+
+class TestPyInstallerGuards:
+
+    def test_freeze_support_runs_before_heavy_imports(self):
+        source = Path("imgconverter.py").read_text(encoding="utf-8")
+
+        freeze_idx = source.index("multiprocessing.freeze_support()")
+        deps_idx = source.index("_check_required_deps_or_exit()")
+        pillow_idx = source.index("from PIL import Image")
+
+        assert freeze_idx < deps_idx < pillow_idx
+
+    def test_install_deps_refuses_frozen_executable(self, monkeypatch, capsys):
+        import imgconverter
+
+        def fail_check_call(*_args, **_kwargs):
+            raise AssertionError("pip subprocess should not run from a frozen executable")
+
+        monkeypatch.setattr(imgconverter.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(imgconverter.subprocess, "check_call", fail_check_call)
+
+        code = imgconverter._install_deps(include_optional=True)
+
+        assert code == imgconverter.EXIT_INPUT_ERROR
+        assert "packaged executable" in capsys.readouterr().err
 
 
 class TestSelectedFileCLI:

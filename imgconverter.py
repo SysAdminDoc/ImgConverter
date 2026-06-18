@@ -8,6 +8,9 @@ images with transparency, JPEG for photos. Preserves EXIF, ICC, and
 XMP. CLI + GUI parity. See ROADMAP.md for in-flight work.
 """
 
+import multiprocessing
+multiprocessing.freeze_support()
+
 import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil, tempfile
 from pathlib import Path
 
@@ -54,8 +57,20 @@ REQUIRED_DEPS = ("PIL", "pillow_heif", "PyQt6")
 OPTIONAL_DEPS = ("rawpy", "pillow_jxl", "qoi")
 
 
+def _is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"))
+
+
 def _install_deps(include_optional: bool = False) -> int:
     """Install required (and optionally optional) deps via pip. Returns exit code."""
+    if _is_frozen():
+        print(
+            "[install-deps] Refusing to run pip from a packaged executable.\n"
+            "  Install dependencies from a Python source checkout instead:\n"
+            "      python -m pip install -r requirements.txt",
+            file=sys.stderr,
+        )
+        return EXIT_INPUT_ERROR
     targets = REQUIRED_DEPS + (OPTIONAL_DEPS if include_optional else ())
     failed = []
     for module in targets:
@@ -5838,6 +5853,8 @@ def _validate_cli_args(args) -> list[str]:
     errors: list[str] = []
     if getattr(args, "workers", 1) < 1 or getattr(args, "workers", 1) > 32:
         errors.append("--workers must be between 1 and 32")
+    if getattr(args, "use_processes", False) and (PLUGIN_DECODERS or PLUGIN_ENCODERS or PLUGIN_STORAGE):
+        errors.append("--use-processes is incompatible with loaded plugins; use thread workers")
     if getattr(args, "quality", 92) < 50 or getattr(args, "quality", 92) > 100:
         errors.append("--quality must be between 50 and 100")
     if getattr(args, "png_level", 6) < 1 or getattr(args, "png_level", 6) > 9:
@@ -6500,6 +6517,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import multiprocessing
-    multiprocessing.freeze_support()
     main()
