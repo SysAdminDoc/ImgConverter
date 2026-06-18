@@ -31,6 +31,7 @@ from imgconverter import (
     scan_directory,
     ConvertResult,
     EXIT_OK,
+    EXIT_PARTIAL_FAILURE,
     PRESETS,
     QUEUE_STATE_PATH,
     HAS_JPEG_RECOMPRESS,
@@ -124,6 +125,8 @@ class TestCLIValidation:
             (["--input", "photos", "--resize", "bad"], "--resize"),
             (["--input", "photos", "--canvas", "0x500"], "--canvas"),
             (["--input", "photos", "--max-file-size", "huge"], "--max-file-size"),
+            (["--input", "photos", "--max-file-size", "0"], "--max-file-size"),
+            (["--input", "photos", "--max-file-size", "-1"], "--max-file-size"),
         ],
     )
     def test_invalid_numeric_cli_values_report_errors(self, argv, message):
@@ -307,6 +310,8 @@ class TestDependencyFloors:
 
         pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         assert f"Pillow>={floor}" in pyproject["project"]["dependencies"]
+        conda_recipe = root / "packaging" / "conda-forge" / "meta.yaml"
+        assert f"pillow >={floor}" in conda_recipe.read_text(encoding="utf-8")
 
 
 class TestPyInstallerGuards:
@@ -1138,6 +1143,29 @@ class TestQueuePersistence:
         qpath.write_text("{bad json!!!")
         monkeypatch.setattr("imgconverter.QUEUE_STATE_PATH", qpath)
         assert _load_queue_state() is None
+
+    def test_cli_queue_marks_skipped_files_done(self, rgb_image, tmp_workdir, monkeypatch):
+        good = tmp_workdir / "already.jpg"
+        bad = tmp_workdir / "bad.bmp"
+        rgb_image.save(good, "JPEG", quality=90)
+        bad.write_bytes(b"not an image")
+        queue_path = tmp_workdir / "queue.json"
+        monkeypatch.setattr("imgconverter.QUEUE_STATE_PATH", queue_path)
+
+        args = _build_parser().parse_args([
+            "--input", str(tmp_workdir),
+            "--output", str(tmp_workdir / "out"),
+            "--format", "jpeg",
+            "--no-recursive",
+        ])
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        assert exc.value.code == EXIT_PARTIAL_FAILURE
+        state = json.loads(queue_path.read_text(encoding="utf-8"))
+        assert str(good) in state["done"]
+        assert str(bad) in state["failed"]
+        assert str(good) not in state["pending"]
 
 
 # ── 19. Multi-frame export ─────────────────────────────────────────────────

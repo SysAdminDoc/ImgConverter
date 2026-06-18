@@ -1261,11 +1261,13 @@ def _parse_size_spec(spec: str) -> int | None:
     for suffix, mult in sorted(multipliers.items(), key=lambda x: -len(x[0])):
         if spec.endswith(suffix):
             try:
-                return int(float(spec[:-len(suffix)].strip()) * mult)
+                value = int(float(spec[:-len(suffix)].strip()) * mult)
+                return value if value > 0 else None
             except ValueError:
                 return None
     try:
-        return int(spec)
+        value = int(spec)
+        return value if value > 0 else None
     except ValueError:
         return None
 
@@ -6268,6 +6270,7 @@ def _run_cli(args):
             done_count += 1
             if result.skipped:
                 skip_count += 1
+                done_paths.append(str(result.src))
                 print(f"[SKIP] ({done_count}/{total}) {result.src.name}")
             elif result.success:
                 ok_count += 1
