@@ -243,12 +243,16 @@ python imgconverter.py --support-bundle ./imgconverter_support.zip
 | `--use-processes` | Use process workers instead of threads for conversion |
 | `--sidecar-history` | Write per-output `.imgconverter.json` reproducibility sidecars |
 | `--backend BACKEND` | Select `pillow` or experimental `vips` backend |
+| `--backend-info` | Print backend capability JSON, then exit |
+| `--backend-benchmark PATH` | With `--backend-info`, benchmark each available backend against one image |
 | `--verify-quality` | Run optional external quality metrics after conversion |
 | `--version` | Print version and exit |
 
 Parser, GUI, and README parity is guarded by `build_cli_parity_matrix()` and the test suite: every long CLI flag must be classified as GUI-backed, CLI-only, admin-only, or internal-only, and every user-facing flag must remain documented here.
 
 Trusted plugins may register decoder, encoder, and storage shapes from `PLUGINS.md`. Registered decoders are included in scans, registered encoders can be selected with `--format <fmt>` or from the GUI format menu, and registered storage schemes appear in the startup support summary.
+
+`--backend pillow` is the default fidelity path. `--backend vips` is an experimental quality-only fast path for huge images; it requires explicit `--format` and `--strip-metadata`, and rejects Pillow-only transforms such as resize, watermark, canvas, tone-map, ICC override, quality targets, and XMP sidecars. Run `python imgconverter.py --backend-info` for the current capability matrix, or add `--backend-benchmark ./image.jpg` for an opt-in single-image timing report.
 
 **Preset JSON:**
 

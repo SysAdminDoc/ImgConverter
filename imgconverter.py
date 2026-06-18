@@ -237,6 +237,28 @@ try:
 except (ImportError, OSError):
     pyvips = None
 
+VIPS_OUTPUT_EXTS = {
+    "jpeg": ".jpg",
+    "png": ".png",
+    "webp": ".webp",
+    "avif": ".avif",
+    "tiff": ".tiff",
+    "jxl": ".jxl",
+}
+
+
+def _vips_format_available(fmt: str) -> bool:
+    """Return whether the installed libvips build advertises a saver for fmt."""
+    if not HAS_VIPS:
+        return False
+    suffix = VIPS_OUTPUT_EXTS.get(fmt)
+    if not suffix:
+        return False
+    try:
+        return bool(pyvips.foreign_find_save(f"imgconverter-probe{suffix}"))
+    except Exception:
+        return False
+
 
 def _vips_convert(src: Path, dst: Path, fmt: str, quality: int) -> tuple[bool, str]:
     """Fast-path conversion through libvips. Returns (ok, msg)."""
@@ -295,6 +317,104 @@ def _verify_quality(src: Path, dst: Path) -> str | None:
         except Exception:
             pass
     return None
+
+
+def build_backend_info(benchmark_path: Path | None = None) -> dict[str, object]:
+    """Return a structured capability report for conversion backends."""
+    backends: dict[str, dict[str, object]] = {
+        "pillow": {
+            "available": True,
+            "default": True,
+            "status": "stable",
+            "memory_behavior": "Whole-image decode/process/write; safest fidelity path.",
+            "features": {
+                "metadata": {"supported": True, "note": "EXIF/ICC/XMP via Pillow; fuller tag copy when ExifTool is available"},
+                "resize": {"supported": True, "note": "Lanczos resize and scale modes"},
+                "watermark": {"supported": True, "note": "Text or PNG overlay"},
+                "canvas": {"supported": True, "note": "Padding with transparent, hex, or named color"},
+                "tone_map": {"supported": True, "note": "numpy-backed HDR tone mapping"},
+                "icc": {"supported": True, "note": "ICC passthrough, sRGB conversion, and override"},
+                "avif": {"supported": HAS_AVIF, "note": "Pillow native AVIF encoder"},
+                "jxl": {"supported": HAS_JXL, "note": "Requires pillow-jxl-plugin"},
+            },
+            "formats": {
+                "jpeg": True,
+                "png": True,
+                "webp": True,
+                "avif": HAS_AVIF,
+                "tiff": True,
+                "jxl": HAS_JXL,
+            },
+        },
+        "vips": {
+            "available": HAS_VIPS,
+            "default": False,
+            "status": "experimental",
+            "memory_behavior": "Tile/stream oriented; intended for huge images when fidelity extras are not needed.",
+            "features": {
+                "metadata": {"supported": False, "note": "Current integration requires --strip-metadata to acknowledge loss"},
+                "resize": {"supported": False, "note": "Not wired through ImgConverter's resize pipeline"},
+                "watermark": {"supported": False, "note": "Not wired through ImgConverter's watermark pipeline"},
+                "canvas": {"supported": False, "note": "Not wired through ImgConverter's canvas pipeline"},
+                "tone_map": {"supported": False, "note": "Not wired through ImgConverter's HDR tone-map pipeline"},
+                "icc": {"supported": False, "note": "No ICC override or sRGB conversion in the vips fast path"},
+                "avif": {"supported": _vips_format_available("avif"), "note": "Depends on the installed libvips/libheif build"},
+                "jxl": {"supported": _vips_format_available("jxl"), "note": "Depends on the installed libvips/libjxl build"},
+            },
+            "formats": {
+                fmt: _vips_format_available(fmt)
+                for fmt in VIPS_OUTPUT_EXTS
+            },
+        },
+    }
+    report: dict[str, object] = {
+        "version": APP_VERSION,
+        "backends": backends,
+        "benchmark": None,
+    }
+    if benchmark_path is not None:
+        report["benchmark"] = _benchmark_backends(Path(benchmark_path))
+    return report
+
+
+def _benchmark_backends(src: Path) -> dict[str, object]:
+    src = Path(src).expanduser().resolve()
+    if not src.is_file():
+        raise OSError(f"benchmark input is not a file: {src}")
+    results: dict[str, object] = {}
+    for backend in ("pillow", "vips"):
+        if backend == "vips" and not HAS_VIPS:
+            results[backend] = {"available": False, "status": "unavailable"}
+            continue
+        if backend == "vips" and not _vips_format_available("jpeg"):
+            results[backend] = {"available": False, "status": "jpeg saver unavailable"}
+            continue
+        with tempfile.TemporaryDirectory(prefix=f"imgconverter-{backend}-bench-") as td:
+            out_dir = Path(td)
+            t0 = time.perf_counter()
+            result = convert_file(
+                src,
+                out_dir,
+                fmt="jpeg",
+                jpeg_quality=90,
+                preserve_metadata=False,
+                backend=backend,
+            )
+            elapsed = time.perf_counter() - t0
+            results[backend] = {
+                "available": True,
+                "status": "ok" if result.success else ("skipped" if result.skipped else "failed"),
+                "elapsed_seconds": round(elapsed, 4),
+                "output_bytes": result.size_after,
+                "error": result.error,
+                "warnings": result.warnings,
+            }
+    return {
+        "input": _redact_text(str(src)),
+        "format": "jpeg",
+        "quality": 90,
+        "backends": results,
+    }
 
 
 # Plugin system — drop trusted .py files into ~/.imgconverter/plugins/ defining
@@ -666,6 +786,7 @@ def _run_exiftool_copy(src: Path, dst: Path) -> tuple[bool, str]:
         return False, str(e)
 
 _CLI_ONLY = any(a in sys.argv for a in ("--input", "-i", "--files", "--support-bundle",
+                                         "--backend-info", "--backend-benchmark",
                                          "--install-deps", "--version", "--list-presets",
                                          "--list-plugins", "--help", "-h"))
 try:
@@ -2007,6 +2128,117 @@ def _run_sidecar_hooks(
             result.warnings.append(f"hdr-gainmap: detection failed ({e})")
 
 
+def _convert_file_vips(
+    src: Path,
+    output_dir: Path,
+    fmt: str,
+    jpeg_quality: int,
+    preserve_structure: bool,
+    base_dir: Path | None,
+    in_place: bool,
+    skip_existing: bool,
+    prefix: str,
+    suffix: str,
+) -> ConvertResult:
+    """Quality-only libvips fast path. Feature validation happens before use."""
+    t0 = time.perf_counter()
+    try:
+        size_before = src.stat().st_size
+    except OSError:
+        size_before = 0
+    result = ConvertResult(src=src, size_before=size_before)
+    temp_path: Path | None = None
+    try:
+        fmt_key = str(fmt).lower()
+        ext = VIPS_OUTPUT_EXTS.get(fmt_key)
+        if not ext:
+            raise RuntimeError(f"vips backend requires an explicit format, got {fmt}")
+        if not _vips_format_available(fmt_key):
+            raise RuntimeError(f"vips backend cannot save {fmt_key} with this libvips build")
+
+        if in_place:
+            dest_dir = src.parent
+        elif preserve_structure and base_dir:
+            try:
+                rel = src.parent.relative_to(base_dir)
+            except ValueError:
+                rel = Path()
+            dest_dir = output_dir / rel
+        else:
+            dest_dir = output_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        stem = prefix + src.stem + suffix
+        out_path = dest_dir / (stem + ext)
+
+        same_output_as_source = in_place and _same_resolved_path(out_path, src)
+        if skip_existing and out_path.exists() and not same_output_as_source:
+            result.skipped = True
+            result.dst = out_path
+            result.size_after = out_path.stat().st_size
+            result.elapsed = time.perf_counter() - t0
+            return result
+
+        counter = 1
+        while out_path.exists() and not same_output_as_source:
+            out_path = dest_dir / f"{stem}_{counter}{ext}"
+            counter += 1
+
+        write_path = out_path
+        if in_place:
+            fd, tmp_str = tempfile.mkstemp(
+                suffix=f".imgconverter.tmp{ext}", dir=str(out_path.parent),
+            )
+            os.close(fd)
+            temp_path = Path(tmp_str)
+            write_path = temp_path
+
+        ok, msg = _vips_convert(src, write_path, fmt_key, jpeg_quality)
+        if not ok:
+            raise RuntimeError(msg)
+        if not write_path.exists() or write_path.stat().st_size == 0:
+            raise RuntimeError(f"Output file missing or empty: {write_path.name}")
+        try:
+            with Image.open(str(write_path)) as verify_img:
+                verify_img.verify()
+            with Image.open(str(write_path)) as verify_img:
+                verify_img.load()
+        except Exception as e:
+            raise RuntimeError(f"Output validation failed: {e}")
+
+        if in_place and temp_path is not None:
+            os.replace(str(temp_path), str(out_path))
+            temp_path = None
+            if not _same_resolved_path(out_path, src) and src.exists():
+                try:
+                    src.unlink()
+                    result.src_deleted = True
+                except OSError as e:
+                    result.warnings.append(f"source delete failed after vips conversion: {e}")
+
+        result.dst = out_path
+        result.success = True
+        result.size_after = out_path.stat().st_size
+        result.elapsed = time.perf_counter() - t0
+        result.metadata_report = {
+            "before": {kind: False for kind in METADATA_KINDS},
+            "after": {kind: False for kind in METADATA_KINDS},
+            "dropped": [],
+            "preserve_requested": False,
+        }
+        result.warnings.append("backend: vips quality-only conversion; metadata and advanced transforms not applied")
+        return result
+    except Exception as e:
+        result.error = str(e)
+        result.elapsed = time.perf_counter() - t0
+        return result
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def convert_file(
     src: Path,
     output_dir: Path,
@@ -2043,6 +2275,7 @@ def convert_file(
     avif_speed: int = 6,
     avif_codec: str = "auto",
     png_lossy: bool = False,
+    backend: str = "pillow",
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
@@ -2052,6 +2285,20 @@ def convert_file(
     silently. Falls back to Pillow's EXIF / ICC / XMP keys when ExifTool
     is unavailable.
     """
+    if backend == "vips":
+        return _convert_file_vips(
+            src=src,
+            output_dir=output_dir,
+            fmt=fmt,
+            jpeg_quality=jpeg_quality,
+            preserve_structure=preserve_structure,
+            base_dir=base_dir,
+            in_place=in_place,
+            skip_existing=skip_existing,
+            prefix=prefix,
+            suffix=suffix,
+        )
+
     t0 = time.perf_counter()
     try:
         size_before = src.stat().st_size
@@ -3233,6 +3480,7 @@ def _build_support_bundle_payload(settings_snapshot: dict | None = None) -> dict
         },
         "dependencies": _dependency_versions(),
         "optional_tools": _optional_tool_status(),
+        "backends": build_backend_info(),
         "formats": _format_support_payload(),
         "plugins": {
             "trust_rows": _plugin_trust_payload(),
@@ -5652,6 +5900,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    choices=["pillow", "vips"],
                    help="Encoder/decoder backend. 'pillow' (default) or 'vips' (requires "
                         "pyvips; tile-streams for huge images).")
+    p.add_argument("--backend-info", action="store_true",
+                   help="Print backend capability JSON for Pillow and vips, then exit")
+    p.add_argument("--backend-benchmark", type=str, default=None, metavar="PATH",
+                   help="With --backend-info, benchmark each available backend against one image")
     p.add_argument("--verify-quality", action="store_true",
                    help="After each conversion, run butteraugli (preferred) or "
                         "ffmpeg-quality-metrics if available, logging PSNR/SSIM "
@@ -5720,6 +5972,8 @@ CLI_FLAG_PARITY = {
     "--use-processes": {"surface": "cli-only", "gui": (), "readme": True, "note": "Executor selection"},
     "--sidecar-history": {"surface": "cli-only", "gui": (), "readme": True, "note": "Per-file reproducibility JSON"},
     "--backend": {"surface": "cli-only", "gui": (), "readme": True, "note": "Experimental backend selection"},
+    "--backend-info": {"surface": "admin-only", "gui": (), "readme": True, "note": "Backend capability report"},
+    "--backend-benchmark": {"surface": "admin-only", "gui": (), "readme": True, "note": "Optional backend benchmark input"},
     "--verify-quality": {"surface": "cli-only", "gui": (), "readme": True, "note": "External quality metric checks"},
     "--help": {"surface": "cli-only", "gui": (), "readme": False, "note": "argparse built-in help"},
 }
@@ -5980,6 +6234,7 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                         avif_speed=getattr(args, "avif_speed", 6),
                         avif_codec=getattr(args, "avif_codec", "auto"),
                         png_lossy=getattr(args, "png_lossy", False),
+                        backend=getattr(args, "backend", "pillow"),
                     )
                     if r.success:
                         print(f"[watch] OK  {f.name} -> {r.dst.name}")
@@ -6161,6 +6416,36 @@ def _validate_cli_args(args) -> list[str]:
     if getattr(args, "max_file_size", None):
         if _parse_size_spec(args.max_file_size) is None:
             errors.append("--max-file-size must be a size like 500MB, 2GB, or 100KB")
+    if getattr(args, "backend", "pillow") == "vips":
+        if getattr(args, "format", "auto") == "auto":
+            errors.append("--backend vips requires an explicit --format")
+        if not getattr(args, "strip_metadata", False):
+            errors.append("--backend vips does not preserve metadata; add --strip-metadata to acknowledge")
+        unsupported = []
+        if getattr(args, "resize", None):
+            unsupported.append("--resize")
+        if getattr(args, "watermark", None):
+            unsupported.append("--watermark")
+        if getattr(args, "canvas", None):
+            unsupported.append("--canvas")
+        if getattr(args, "tone_map", "none") != "none":
+            unsupported.append("--tone-map")
+        if getattr(args, "dpi", None):
+            unsupported.append("--dpi")
+        if getattr(args, "icc", None):
+            unsupported.append("--icc")
+        if getattr(args, "xmp_sidecar", False):
+            unsupported.append("--xmp-sidecar")
+        if getattr(args, "recompress", False):
+            unsupported.append("--recompress")
+        if getattr(args, "target_kb", None) is not None:
+            unsupported.append("--target-kb")
+        if getattr(args, "target_psnr", None) is not None:
+            unsupported.append("--target-psnr")
+        if getattr(args, "png_lossy", False):
+            unsupported.append("--png-lossy")
+        if unsupported:
+            errors.append("--backend vips does not support: " + ", ".join(unsupported))
     return errors
 
 
@@ -6530,6 +6815,7 @@ def _run_cli(args):
                 getattr(args, "avif_speed", 6),                # avif_speed
                 getattr(args, "avif_codec", "auto"),           # avif_codec
                 getattr(args, "png_lossy", False),             # png_lossy
+                getattr(args, "backend", "pillow"),             # backend
             )
             futures[fut] = f
 
@@ -6741,6 +7027,15 @@ def main():
             sys.exit(EXIT_OK)
         except OSError as e:
             print(f"[support] failed to write bundle: {e}", file=sys.stderr)
+            sys.exit(EXIT_INPUT_ERROR)
+
+    if getattr(args, "backend_info", False) or getattr(args, "backend_benchmark", None):
+        try:
+            benchmark = Path(args.backend_benchmark) if getattr(args, "backend_benchmark", None) else None
+            print(json.dumps(build_backend_info(benchmark), indent=2, sort_keys=True))
+            sys.exit(EXIT_OK)
+        except OSError as e:
+            print(f"[backend-info] failed: {e}", file=sys.stderr)
             sys.exit(EXIT_INPUT_ERROR)
 
     if getattr(args, "register_shell", False):

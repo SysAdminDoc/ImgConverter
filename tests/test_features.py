@@ -26,6 +26,7 @@ from imgconverter import (
     CLI_FLAG_PARITY,
     _validate_cli_args,
     _save_queue_state,
+    build_backend_info,
     convert_file,
     count_frames,
     list_presets,
@@ -208,6 +209,78 @@ class TestSupportBundle:
         assert str(home) not in gui_log
         assert "~" in recent_log
         assert "~" in gui_log
+
+
+class TestBackendInfo:
+
+    def test_parser_accepts_backend_info_flags(self):
+        args = _build_parser().parse_args([
+            "--backend-info",
+            "--backend-benchmark", "sample.png",
+        ])
+
+        assert args.backend_info is True
+        assert args.backend_benchmark == "sample.png"
+
+    def test_backend_info_reports_required_capability_boundaries(self):
+        report = build_backend_info()
+        required_features = {"metadata", "resize", "watermark", "tone_map", "icc", "avif", "jxl"}
+
+        assert {"pillow", "vips"} <= set(report["backends"])
+        for backend in ("pillow", "vips"):
+            features = report["backends"][backend]["features"]
+            assert required_features <= set(features)
+            assert isinstance(report["backends"][backend]["memory_behavior"], str)
+
+        assert report["backends"]["pillow"]["features"]["metadata"]["supported"] is True
+        assert report["backends"]["vips"]["features"]["metadata"]["supported"] is False
+
+    def test_vips_backend_rejects_unacknowledged_or_unsupported_options(self):
+        args = _build_parser().parse_args(["--input", "photos", "--backend", "vips", "--format", "jpeg"])
+        errors = _validate_cli_args(args)
+        assert any("--strip-metadata" in error for error in errors)
+
+        args = _build_parser().parse_args([
+            "--input", "photos",
+            "--backend", "vips",
+            "--format", "jpeg",
+            "--strip-metadata",
+            "--resize", "max_dim:1920",
+            "--watermark", "Demo|center|0.5",
+        ])
+        errors = _validate_cli_args(args)
+        assert any("--resize" in error and "--watermark" in error for error in errors)
+
+    def test_vips_backend_path_is_used_when_selected(self, rgb_image, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        src = tmp_workdir / "source.png"
+        rgb_image.save(src)
+        out = tmp_workdir / "out"
+        calls = []
+
+        def fake_vips_convert(src_path, dst_path, fmt, quality):
+            calls.append((src_path, dst_path, fmt, quality))
+            Image.open(src_path).convert("RGB").save(dst_path, "JPEG", quality=quality)
+            return True, "fake-vips"
+
+        monkeypatch.setattr(imgconverter, "HAS_VIPS", True)
+        monkeypatch.setattr(imgconverter, "_vips_format_available", lambda fmt: fmt == "jpeg")
+        monkeypatch.setattr(imgconverter, "_vips_convert", fake_vips_convert)
+
+        result = imgconverter.convert_file(
+            src,
+            out,
+            fmt="jpeg",
+            jpeg_quality=77,
+            preserve_metadata=False,
+            backend="vips",
+        )
+
+        assert result.success is True
+        assert result.dst == out / "source.jpg"
+        assert calls and calls[0][2:] == ("jpeg", 77)
+        assert any("backend: vips" in warning for warning in result.warnings)
 
 
 class TestCLIGUIPParity:
