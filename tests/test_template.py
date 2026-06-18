@@ -72,3 +72,21 @@ def test_convert_file_with_template(rgb_image, tmp_workdir):
     )
     assert result.success
     assert result.dst.name == "src_200x150.png"
+
+
+def test_template_collision_stays_in_template_subdirectory(rgb_image, tmp_workdir):
+    src = tmp_workdir / "src.bmp"
+    rgb_image.save(src)
+    out_dir = tmp_workdir / "out"
+    existing_dir = out_dir / "nested"
+    existing_dir.mkdir(parents=True)
+    (existing_dir / "src.png").write_bytes(b"existing")
+
+    result = convert_file(
+        src, out_dir, fmt="png",
+        name_template="nested/{stem}",
+    )
+
+    assert result.success
+    assert result.dst == existing_dir / "src_1.png"
+    assert result.dst.exists()

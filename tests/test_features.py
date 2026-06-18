@@ -23,6 +23,7 @@ from imgconverter import (
     _run_cli,
     build_cli_parity_matrix,
     CLI_FLAG_PARITY,
+    _validate_cli_args,
     _save_queue_state,
     convert_file,
     count_frames,
@@ -102,6 +103,50 @@ class TestCLIParsing:
         assert args.input is None
         assert args.files == ["a.png", "b.jpg"]
         assert args.format == "webp"
+
+
+class TestCLIValidation:
+
+    @pytest.mark.parametrize(
+        ("argv", "message"),
+        [
+            (["--input", "photos", "--workers", "0"], "--workers"),
+            (["--input", "photos", "--workers", "33"], "--workers"),
+            (["--input", "photos", "--quality", "49"], "--quality"),
+            (["--input", "photos", "--quality", "101"], "--quality"),
+            (["--input", "photos", "--png-level", "0"], "--png-level"),
+            (["--input", "photos", "--avif-speed", "11"], "--avif-speed"),
+            (["--input", "photos", "--target-kb", "0"], "--target-kb"),
+            (["--input", "photos", "--target-psnr", "-1"], "--target-psnr"),
+            (["--input", "photos", "--only-if-smaller", "100"], "--only-if-smaller"),
+            (["--input", "photos", "--dpi", "0"], "--dpi"),
+            (["--input", "photos", "--resize", "scale:0"], "--resize value"),
+            (["--input", "photos", "--resize", "bad"], "--resize"),
+            (["--input", "photos", "--canvas", "0x500"], "--canvas"),
+            (["--input", "photos", "--max-file-size", "huge"], "--max-file-size"),
+        ],
+    )
+    def test_invalid_numeric_cli_values_report_errors(self, argv, message):
+        args = _build_parser().parse_args(argv)
+        errors = _validate_cli_args(args)
+        assert any(message in error for error in errors)
+
+    def test_valid_numeric_cli_values_pass(self):
+        args = _build_parser().parse_args([
+            "--input", "photos",
+            "--workers", "4",
+            "--quality", "80",
+            "--png-level", "6",
+            "--avif-speed", "4",
+            "--target-kb", "200",
+            "--target-psnr", "40",
+            "--only-if-smaller", "25",
+            "--dpi", "300",
+            "--resize", "max_dim:1920",
+            "--canvas", "1920x1080",
+            "--max-file-size", "500MB",
+        ])
+        assert _validate_cli_args(args) == []
 
 
 class TestCLIGUIPParity:
@@ -942,7 +987,23 @@ class TestInPlace:
             convert_to_srgb=True,
         )
         assert result.success
+        assert not result.src_deleted
+        assert result.dst == src
+        assert src.exists()
         assert result.dst.exists()
+
+    def test_in_place_same_ext_skip_existing_does_not_skip_source(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=90)
+        result = convert_file(
+            src, tmp_workdir, fmt="jpeg", in_place=True,
+            preserve_metadata=False,
+            skip_existing=True,
+        )
+        assert result.success
+        assert not result.skipped
+        assert result.dst == src
+        assert src.exists()
 
 
 # ── 15. Same-format skip guard completeness ─────────────────────────────────

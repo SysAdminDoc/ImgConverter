@@ -1229,6 +1229,14 @@ class ScanResult:
     elapsed: float = 0.0
 
 
+def _same_resolved_path(left: Path, right: Path) -> bool:
+    """Best-effort equality for paths that may not exist yet."""
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return left.absolute() == right.absolute()
+
+
 def _parse_size_spec(spec: str) -> int | None:
     """Parse a human-readable size like '500MB' or '2GB' to bytes."""
     if not spec:
@@ -2230,19 +2238,23 @@ def convert_file(
             dest_dir.mkdir(parents=True, exist_ok=True)
             stem_short = prefix + src.stem + suffix
             out_path = dest_dir / (stem_short + ext)
-            if skip_existing and out_path.exists():
+            same_output_as_source = in_place and _same_resolved_path(out_path, src)
+            if skip_existing and out_path.exists() and not same_output_as_source:
                 result.skipped = True
                 result.dst = out_path
                 result.size_after = out_path.stat().st_size
                 result.elapsed = time.perf_counter() - t0
                 return result
-            ok, tool = _recompress_jpeg_lossless(src, out_path, not preserve_metadata)
+            if same_output_as_source:
+                ok, tool = False, "same-path in-place recompress uses standard re-encode"
+            else:
+                ok, tool = _recompress_jpeg_lossless(src, out_path, not preserve_metadata)
             if ok:
                 result.dst = out_path
                 result.size_after = out_path.stat().st_size
                 result.success = True
                 result.warnings.append(f"recompress: pixel-lossless via {tool}")
-                if in_place and result.success and out_path.resolve() != src.resolve():
+                if in_place and result.success and not _same_resolved_path(out_path, src):
                     src.unlink()
                     result.src_deleted = True
                 result.elapsed = time.perf_counter() - t0
@@ -2290,7 +2302,8 @@ def convert_file(
             out_path = dest_dir / (stem + ext)
 
         # Skip if output already exists
-        if skip_existing and out_path.exists():
+        same_output_as_source = in_place and _same_resolved_path(out_path, src)
+        if skip_existing and out_path.exists() and not same_output_as_source:
             result.skipped = True
             result.dst = out_path
             result.size_after = out_path.stat().st_size
@@ -2299,8 +2312,9 @@ def convert_file(
 
         # Handle name collisions
         counter = 1
-        while out_path.exists():
-            out_path = dest_dir / f"{stem}_{counter}{ext}"
+        collision_dir = out_path.parent
+        while out_path.exists() and not same_output_as_source:
+            out_path = collision_dir / f"{stem}_{counter}{ext}"
             counter += 1
 
         # Gather metadata
@@ -2559,7 +2573,7 @@ def convert_file(
         _run_sidecar_hooks(src, out_path, meta, result, emit_xmp_sidecar, in_place)
 
         # In-place mode: delete the original after successful conversion
-        if in_place and result.success:
+        if in_place and result.success and not _same_resolved_path(out_path, src):
             src.unlink()
             result.src_deleted = True
 
@@ -5819,6 +5833,44 @@ def _build_quality_mode(args) -> tuple[str, float] | None:
     return None
 
 
+def _validate_cli_args(args) -> list[str]:
+    """Return user-facing validation errors for argparse values."""
+    errors: list[str] = []
+    if getattr(args, "workers", 1) < 1 or getattr(args, "workers", 1) > 32:
+        errors.append("--workers must be between 1 and 32")
+    if getattr(args, "quality", 92) < 50 or getattr(args, "quality", 92) > 100:
+        errors.append("--quality must be between 50 and 100")
+    if getattr(args, "png_level", 6) < 1 or getattr(args, "png_level", 6) > 9:
+        errors.append("--png-level must be between 1 and 9")
+    if getattr(args, "avif_speed", 6) < 0 or getattr(args, "avif_speed", 6) > 10:
+        errors.append("--avif-speed must be between 0 and 10")
+    if getattr(args, "target_kb", None) is not None and args.target_kb <= 0:
+        errors.append("--target-kb must be greater than 0")
+    if getattr(args, "target_psnr", None) is not None and args.target_psnr <= 0:
+        errors.append("--target-psnr must be greater than 0")
+    if getattr(args, "only_if_smaller", None) is not None:
+        if args.only_if_smaller <= 0 or args.only_if_smaller >= 100:
+            errors.append("--only-if-smaller must be greater than 0 and less than 100")
+    if getattr(args, "dpi", None) is not None and args.dpi <= 0:
+        errors.append("--dpi must be greater than 0")
+    if getattr(args, "resize", None):
+        parts = str(args.resize).split(":")
+        if len(parts) != 2 or parts[0] not in {"max_dim", "scale"}:
+            errors.append("--resize must be max_dim:VALUE or scale:VALUE")
+        else:
+            try:
+                if int(parts[1]) <= 0:
+                    errors.append("--resize value must be greater than 0")
+            except ValueError:
+                errors.append("--resize value must be an integer")
+    if getattr(args, "canvas", None) and _parse_canvas(args.canvas) is None:
+        errors.append("--canvas must be WIDTHxHEIGHT with positive integers")
+    if getattr(args, "max_file_size", None):
+        if _parse_size_spec(args.max_file_size) is None:
+            errors.append("--max-file-size must be a size like 500MB, 2GB, or 100KB")
+    return errors
+
+
 def _collect_cli_input_refs(args) -> tuple[Path, list[Path], list[Path]]:
     """Resolve CLI file/directory selections into a common base, dirs, and files."""
     refs: list[Path] = []
@@ -5923,6 +5975,12 @@ def _run_cli(args):
         _apply_preset_to_args(args, preset)
         print(f"[preset] applied: {args.preset}")
     args.format = str(args.format).lower()
+
+    validation_errors = _validate_cli_args(args)
+    if validation_errors:
+        for error in validation_errors:
+            print(f"[ERROR] {error}", file=sys.stderr)
+        sys.exit(EXIT_INPUT_ERROR)
 
     input_dir, input_dirs, input_files = _collect_cli_input_refs(args)
 
