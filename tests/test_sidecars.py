@@ -1,7 +1,9 @@
 """Tests for sidecar companion outputs (Live Photo, depth map, HDR gain map)."""
+import json
+
 import pytest
 
-from imgconverter import convert_file
+from imgconverter import _build_parser, _run_cli, convert_file, EXIT_OK, METADATA_KINDS
 
 
 def test_live_photo_mov_paired_through_conversion(rgb_image, tmp_workdir):
@@ -35,3 +37,31 @@ def test_no_mov_no_sidecar(rgb_image, tmp_workdir):
     result = convert_file(src, out_dir, fmt="png")
     assert result.success
     assert not any("live-photo" in w for w in result.warnings)
+
+
+def test_metadata_report_records_provenance_drop(rgb_image, tmp_workdir):
+    src = tmp_workdir / "signed.bmp"
+    rgb_image.save(src)
+    with src.open("ab") as fp:
+        fp.write(b"\nimgconverter-test-c2pa-marker\n")
+
+    out_dir = tmp_workdir / "out"
+    report = tmp_workdir / "report.json"
+    args = _build_parser().parse_args([
+        "--input", str(src),
+        "--output", str(out_dir),
+        "--format", "png",
+        "--report", str(report),
+    ])
+
+    with pytest.raises(SystemExit) as exc:
+        _run_cli(args)
+
+    assert exc.value.code == EXIT_OK
+    data = json.loads(report.read_text(encoding="utf-8"))
+    metadata = data["files"][0]["metadata"]
+    assert set(METADATA_KINDS).issubset(metadata["before"])
+    assert metadata["before"]["c2pa"] is True
+    assert metadata["after"]["c2pa"] is False
+    assert "c2pa" in metadata["dropped"]
+    assert any("metadata dropped: c2pa" in w for w in data["files"][0]["warnings"])

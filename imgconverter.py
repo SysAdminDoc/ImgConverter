@@ -1117,6 +1117,7 @@ class ConvertResult:
     elapsed: float = 0.0
     src_deleted: bool = False
     warnings: list[str] = field(default_factory=list)
+    metadata_report: dict = field(default_factory=dict)
 
 @dataclass
 class ScanResult:
@@ -1577,6 +1578,75 @@ def count_frames(src: Path) -> int:
         return 1
 
 
+METADATA_KINDS = ("exif", "icc", "xmp", "iptc", "makernotes", "c2pa")
+
+
+def _file_contains_marker(path: Path | None, marker: bytes, limit: int = 2 * 1024 * 1024) -> bool:
+    if path is None:
+        return False
+    try:
+        with path.open("rb") as fp:
+            return marker.lower() in fp.read(limit).lower()
+    except OSError:
+        return False
+
+
+def _metadata_presence_from_image(
+    img: Image.Image | None,
+    meta: dict | None = None,
+    path: Path | None = None,
+) -> dict[str, bool]:
+    meta = meta or {}
+    info = getattr(img, "info", {}) if img is not None else {}
+    presence = {kind: False for kind in METADATA_KINDS}
+    exif_obj = None
+    try:
+        exif_obj = img.getexif() if img is not None else None
+    except Exception:
+        exif_obj = None
+    presence["exif"] = bool(meta.get("exif") or info.get("exif") or exif_obj)
+    presence["icc"] = bool(meta.get("icc_profile") or info.get("icc_profile"))
+    presence["xmp"] = bool(
+        meta.get("xmp") or info.get("xmp") or info.get("XML:com.adobe.xmp")
+    )
+    presence["iptc"] = bool(meta.get("iptc") or info.get("iptc") or info.get("photoshop"))
+    maker = meta.get("makernotes")
+    if not maker and exif_obj:
+        try:
+            maker = exif_obj.get(0x927C)  # MakerNote
+        except Exception:
+            maker = None
+    presence["makernotes"] = bool(maker)
+    presence["c2pa"] = bool(meta.get("c2pa")) or _file_contains_marker(path, b"c2pa")
+    return presence
+
+
+def _metadata_presence_from_path(path: Path | None) -> dict[str, bool]:
+    if path is None or not path.exists():
+        return {kind: False for kind in METADATA_KINDS}
+    try:
+        with Image.open(str(path)) as img:
+            return _metadata_presence_from_image(img, path=path)
+    except Exception:
+        return {
+            **{kind: False for kind in METADATA_KINDS},
+            "c2pa": _file_contains_marker(path, b"c2pa"),
+        }
+
+
+def _finalize_metadata_report(result: ConvertResult, after: dict[str, bool], preserve_metadata: bool):
+    before = result.metadata_report.get("before") or {kind: False for kind in METADATA_KINDS}
+    dropped = [kind for kind in METADATA_KINDS if before.get(kind) and not after.get(kind)]
+    result.metadata_report = {
+        "before": before,
+        "after": after,
+        "dropped": dropped,
+        "preserve_requested": bool(preserve_metadata),
+    }
+    if preserve_metadata and dropped:
+        result.warnings.append("metadata dropped: " + ", ".join(dropped))
+
+
 def _open_image(src: Path) -> tuple[Image.Image, dict]:
     """Open an image file, routing to the correct decoder.
 
@@ -1616,6 +1686,16 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
         meta["icc_profile"] = icc
     if xmp := img.info.get("xmp"):
         meta["xmp"] = xmp
+    if iptc := img.info.get("iptc") or img.info.get("photoshop"):
+        meta["iptc"] = iptc
+    try:
+        maker = img.getexif().get(0x927C)
+        if maker:
+            meta["makernotes"] = maker
+    except Exception:
+        pass
+    if _file_contains_marker(src, b"c2pa"):
+        meta["c2pa"] = True
 
     if suffix in HEIC_EXTS and HAS_HEIF:
         try:
@@ -1854,6 +1934,12 @@ def convert_file(
 
     try:
         img, meta = _open_image(src)
+        result.metadata_report = {
+            "before": _metadata_presence_from_image(img, meta, src),
+            "after": {kind: False for kind in METADATA_KINDS},
+            "dropped": [],
+            "preserve_requested": bool(preserve_metadata),
+        }
 
         # Warn when RAW files have no metadata to preserve
         if src.suffix.lower() in RAW_EXTS and not meta:
@@ -2354,6 +2440,12 @@ def convert_file(
                 # Don't run the rest of the post-save hooks if we discarded.
                 result.elapsed = time.perf_counter() - t0
                 return result
+
+        _finalize_metadata_report(
+            result,
+            _metadata_presence_from_path(out_path),
+            preserve_metadata,
+        )
 
         # Optional quality verification — butteraugli / ffmpeg-quality-metrics.
         # Cheap shell-out; only runs when caller asked for it.
@@ -4289,7 +4381,7 @@ class MainWindow(QMainWindow):
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow(["Source", "Output", "Status", "Size Before", "Size After",
-                                 "Delta", "Elapsed (s)", "Warnings"])
+                                 "Delta", "Elapsed (s)", "Metadata", "Warnings"])
                 for r in self._results:
                     status = "OK" if r.success else ("SKIP" if r.skipped else "FAIL")
                     delta = r.size_before - r.size_after if r.success else 0
@@ -4297,6 +4389,7 @@ class MainWindow(QMainWindow):
                         str(r.src), str(r.dst or ""), status,
                         r.size_before, r.size_after, delta,
                         f"{r.elapsed:.3f}",
+                        json.dumps(r.metadata_report, sort_keys=True),
                         "; ".join(r.warnings) if r.warnings else "",
                     ])
             self._log(f"CSV report exported to {path}")
@@ -6045,6 +6138,7 @@ def _run_cli(args):
                     "size_out": r.size_after,
                     "elapsed": r.elapsed,
                     "src_deleted": r.src_deleted,
+                    "metadata": r.metadata_report,
                     "error": r.error or None,
                     "warnings": list(r.warnings),
                 }

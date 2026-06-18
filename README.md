@@ -130,7 +130,7 @@ Toggle **"Convert in place after verified output"** to save output next to each 
 
 Enable **"Skip files that already have output"** to resume interrupted batches without re-converting.
 
-The log panel shows per-file results with size before/after and conversion time. Logs can be exported to a text file or CSV report.
+The log panel shows per-file results with size before/after and conversion time. Logs can be exported to a text file or CSV report. CSV and JSON reports include metadata/provenance presence checks for EXIF, ICC, XMP, IPTC, MakerNotes, and C2PA; warnings call out fields that were detected before conversion but missing afterward.
 
 ## CLI Usage
 
@@ -198,7 +198,7 @@ python imgconverter.py --version
 | `--prefix` | Prepend text to output filenames |
 | `--suffix` | Append text to output filenames |
 | `--template STR` | Output filename template with tokens (overrides prefix/suffix). Tokens: `{stem}` `{ext}` `{fmt}` `{src_dir}` `{rel_dir}` `{width}` `{height}` `{date[:FMT]}` `{seq[:###]}`. Example: `--template '{rel_dir}/{stem}_{width}x{height}'` |
-| `--report PATH` | Write structured per-file JSON report after conversion |
+| `--report PATH` | Write structured per-file JSON report after conversion, including metadata/provenance before/after flags |
 | `--preset NAME` | Load a built-in or `~/.imgconverter/presets/NAME.json` preset before applying other flags |
 | `--list-presets` | List built-in and user presets, then exit |
 | `--exclude PATTERN` | Glob pattern to exclude from scan (repeatable) |
