@@ -118,6 +118,8 @@ python imgconverter.py
 
 Dependencies are explicit and are not installed silently at startup. Run `python imgconverter.py --install-deps` if you want ImgConverter to install or upgrade its required and optional Python packages for you.
 
+GitHub release binaries are unsigned until platform signing infrastructure is available. Each release includes `SHA256SUMS`, per-binary `.sha256`, `.dependencies.txt`, `.sbom.json`, and `.provenance.json` files so downloads can be verified before use.
+
 ## Usage
 
 1. **Choose** or **drag & drop** a directory containing image files

@@ -107,21 +107,82 @@ jobs:
         if: runner.os == 'Windows'
         run: mv dist/ImgConverter.exe dist/${{ matrix.artifact }}
 
+      - name: Generate trust artifacts
+        shell: pwsh
+        run: |
+          $artifact = "${{ matrix.artifact }}"
+          $path = Join-Path "dist" $artifact
+          $hash = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant()
+          "$hash  $artifact" | Set-Content -Encoding utf8 "dist/$artifact.sha256"
+
+          $deps = @(python -m pip freeze --all | Sort-Object)
+          $deps | Set-Content -Encoding utf8 "dist/$artifact.dependencies.txt"
+          $packages = @()
+          foreach ($dep in $deps) {
+            if ($dep -match '^([^=<>!~]+)==(.+)$') {
+              $name = $matches[1]
+              $version = $matches[2]
+              $packages += [ordered]@{
+                name = $name
+                version = $version
+                purl = "pkg:pypi/$($name.ToLowerInvariant())@$version"
+              }
+            } elseif ($dep.Trim()) {
+              $packages += [ordered]@{ name = $dep; version = $null; purl = $null }
+            }
+          }
+          [ordered]@{
+            schema = "imgconverter.dependency-sbom.v1"
+            artifact = $artifact
+            sha256 = $hash
+            packages = $packages
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "dist/$artifact.sbom.json"
+
+          [ordered]@{
+            schema = "imgconverter.provenance.v1"
+            artifact = $artifact
+            sha256 = $hash
+            unsigned = $true
+            repository = "${{ github.repository }}"
+            ref = "${{ github.ref }}"
+            commit = "${{ github.sha }}"
+            run_id = "${{ github.run_id }}"
+            run_attempt = "${{ github.run_attempt }}"
+            runner_os = "${{ runner.os }}"
+            python = "3.12"
+            pyinstaller_args = "${{ matrix.pyinstaller_args }}"
+            generated_at = (Get-Date).ToUniversalTime().ToString("o")
+          } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 "dist/$artifact.provenance.json"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}
+            dist/${{ matrix.artifact }}.sha256
+            dist/${{ matrix.artifact }}.dependencies.txt
+            dist/${{ matrix.artifact }}.sbom.json
+            dist/${{ matrix.artifact }}.provenance.json
 
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event.inputs.version != ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.version != ''
 
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Generate release checksum manifest
+        run: |
+          find artifacts -maxdepth 1 -type f \
+            ! -name '*.sha256' \
+            ! -name '*.dependencies.txt' \
+            ! -name '*.sbom.json' \
+            ! -name '*.provenance.json' \
+            -print0 | sort -z | xargs -0 sha256sum > artifacts/SHA256SUMS
 
       - name: Create or update release
         env:

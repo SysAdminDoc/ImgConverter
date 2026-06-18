@@ -33,6 +33,25 @@ Until the signing infrastructure is in place, the unsigned PyInstaller
 binary from `gh release download` is the supported install path. The
 recipe stubs here are scaffolding for the day signing is wired up.
 
+## Unsigned release trust artifacts
+
+Every PyInstaller release asset is accompanied by:
+
+- `<artifact>.sha256` — per-binary SHA-256 line.
+- `<artifact>.dependencies.txt` — sorted `pip freeze --all` for the build.
+- `<artifact>.sbom.json` — minimal dependency SBOM with package names,
+  versions, and PyPI purl values where available.
+- `<artifact>.provenance.json` — repository, commit, Actions run, runner OS,
+  PyInstaller args, unsigned flag, and binary hash.
+- `SHA256SUMS` — release-level checksum manifest for all uploaded binaries.
+
+Verification before wrapping an installer:
+
+```bash
+sha256sum -c SHA256SUMS
+jq '.unsigned == true and .sha256' ImgConverter-Linux.provenance.json
+```
+
 ## conda-forge
 
 `packaging/conda-forge/meta.yaml` is the conda-forge recipe template.
