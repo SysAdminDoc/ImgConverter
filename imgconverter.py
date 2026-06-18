@@ -157,6 +157,7 @@ _check_required_deps_or_exit()
 import io
 import time
 import json
+import zipfile
 import threading
 import traceback
 from pathlib import Path
@@ -664,8 +665,9 @@ def _run_exiftool_copy(src: Path, dst: Path) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
-_CLI_ONLY = any(a in sys.argv for a in ("--input", "-i", "--files", "--install-deps", "--version",
-                                         "--list-presets", "--list-plugins", "--help", "-h"))
+_CLI_ONLY = any(a in sys.argv for a in ("--input", "-i", "--files", "--support-bundle",
+                                         "--install-deps", "--version", "--list-presets",
+                                         "--list-plugins", "--help", "-h"))
 try:
     from PyQt6.QtCore import (
         Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QUrl,
@@ -3074,6 +3076,210 @@ def _diag_log(message: str, level: str = "INFO"):
         pass
 
 
+def _redaction_replacements() -> dict[str, str]:
+    replacements: dict[str, str] = {}
+    try:
+        home = Path.home()
+        for token in {str(home), home.as_posix()}:
+            if token and len(token) > 2:
+                replacements[token] = "~"
+    except Exception:
+        pass
+    for var, label in (
+        ("USERPROFILE", "~"),
+        ("HOME", "~"),
+        ("LOCALAPPDATA", "<localappdata>"),
+        ("APPDATA", "<appdata>"),
+        ("TEMP", "<temp>"),
+        ("TMP", "<temp>"),
+    ):
+        token = os.environ.get(var)
+        if not token or len(token) <= 2:
+            continue
+        replacements[token] = label
+        replacements[token.replace("\\", "/")] = label
+    return dict(sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True))
+
+
+def _redact_text(value: str) -> str:
+    """Redact local user paths from support diagnostics."""
+    text = str(value)
+    for token, replacement in _redaction_replacements().items():
+        text = text.replace(token, replacement)
+    return text
+
+
+def _tail_text(path: Path, max_lines: int = 200, max_bytes: int = 128_000) -> str:
+    """Read the tail of a UTF-8-ish text file without loading large logs."""
+    try:
+        with path.open("rb") as fp:
+            fp.seek(0, os.SEEK_END)
+            size = fp.tell()
+            fp.seek(max(0, size - max_bytes), os.SEEK_SET)
+            raw = fp.read(max_bytes)
+        text = raw.decode("utf-8", errors="replace")
+        return "\n".join(text.splitlines()[-max_lines:])
+    except OSError:
+        return ""
+
+
+def _module_version(module_name: str, package_name: str) -> tuple[bool, str | None]:
+    try:
+        if module_name == "PyQt6":
+            from PyQt6.QtCore import PYQT_VERSION_STR
+            return True, PYQT_VERSION_STR
+        module = importlib.import_module(module_name)
+        version = getattr(module, "__version__", None)
+        if version:
+            return True, str(version)
+        try:
+            from importlib.metadata import version as package_version
+            return True, package_version(package_name)
+        except Exception:
+            return True, None
+    except Exception:
+        try:
+            from importlib.metadata import version as package_version
+            return False, package_version(package_name)
+        except Exception:
+            return False, None
+
+
+def _dependency_versions() -> dict[str, dict[str, object]]:
+    deps: dict[str, dict[str, object]] = {}
+    for module_name, (package_name, floor) in DEP_FLOORS.items():
+        available, version = _module_version(module_name, package_name)
+        deps[package_name] = {
+            "module": module_name,
+            "available": available,
+            "version": version,
+            "minimum": floor,
+            "required": module_name in REQUIRED_DEPS,
+        }
+    return deps
+
+
+def _optional_tool_status() -> dict[str, dict[str, object]]:
+    tools = ("exiftool", "ffprobe", "jpegoptim", "jpegtran", "pngquant",
+             "butteraugli", "ffmpeg-quality-metrics")
+    status: dict[str, dict[str, object]] = {}
+    for tool in tools:
+        path = shutil.which(tool)
+        status[tool] = {
+            "available": path is not None,
+            "path": _redact_text(path) if path else None,
+        }
+    return status
+
+
+def _format_support_payload() -> list[dict[str, object]]:
+    return [
+        {
+            "name": name,
+            "available": bool(available),
+            "extensions": sorted(exts),
+        }
+        for name, (exts, available) in sorted(get_format_families().items())
+    ]
+
+
+def _plugin_trust_payload() -> list[dict[str, object]]:
+    rows = []
+    for row in get_plugin_trust_rows():
+        safe = dict(row)
+        if "path" in safe:
+            safe["path"] = _redact_text(str(safe["path"]))
+        rows.append(safe)
+    return rows
+
+
+def _build_support_bundle_payload(settings_snapshot: dict | None = None) -> dict:
+    from datetime import datetime, timezone
+
+    return {
+        "app": {
+            "name": "ImgConverter",
+            "version": APP_VERSION,
+            "frozen": _is_frozen(),
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "privacy": {
+            "redacted": True,
+            "source_images_included": False,
+            "notes": [
+                "Local user paths are redacted.",
+                "No source images or converted outputs are included.",
+                "Recent logs may include redacted filenames from prior app activity.",
+            ],
+        },
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "machine": platform.machine(),
+            "python": sys.version,
+            "python_executable": _redact_text(sys.executable),
+            "gil": _gil_status(),
+        },
+        "paths": {
+            "config_dir": _redact_text(str(USER_CONFIG_DIR)),
+            "cache_dir": _redact_text(str(USER_CACHE_DIR)),
+            "log_path": _redact_text(str(USER_LOG_PATH)),
+        },
+        "schemas": {
+            "settings": SETTINGS_SCHEMA,
+            "presets": PRESET_SCHEMA_VERSION,
+            "plugin_trust": PLUGIN_TRUST_SCHEMA,
+        },
+        "dependencies": _dependency_versions(),
+        "optional_tools": _optional_tool_status(),
+        "formats": _format_support_payload(),
+        "plugins": {
+            "trust_rows": _plugin_trust_payload(),
+            "loaded_capabilities": PLUGIN_CAPABILITIES,
+        },
+        "settings": settings_snapshot or {},
+    }
+
+
+def export_support_bundle(
+    path: Path,
+    *,
+    settings_snapshot: dict | None = None,
+    recent_log: str | None = None,
+) -> Path:
+    """Write a redacted diagnostic zip for support without source images."""
+    bundle_path = Path(path).expanduser()
+    if bundle_path.exists() and bundle_path.is_dir():
+        raise OSError(f"support bundle path is a directory: {bundle_path}")
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = _build_support_bundle_payload(settings_snapshot=settings_snapshot)
+    disk_log = _redact_text(_tail_text(USER_LOG_PATH))
+    gui_log = _redact_text(recent_log or "")
+
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{bundle_path.name}.",
+        suffix=".tmp",
+        dir=str(bundle_path.parent),
+    )
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("support.json", json.dumps(payload, indent=2, sort_keys=True))
+            zf.writestr("recent-log.txt", disk_log)
+            if gui_log:
+                zf.writestr("gui-log.txt", gui_log)
+        os.replace(tmp_path, bundle_path)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return bundle_path
+
+
 def _check_for_update(current_version: str, timeout: float = 3.0) -> str | None:
     """Return the latest GitHub release tag if newer than ``current_version``, else None.
 
@@ -3407,6 +3613,7 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("open_output_btn",     "Open output folder",       "Open the most recent output folder"),
     ("export_log_btn",      "Export log",               "Save the conversion log as a text file"),
     ("export_csv_btn",      "Export CSV",               "Export conversion results as a CSV report"),
+    ("export_support_btn",  "Export support bundle",    "Save redacted diagnostics for support"),
     ("clear_log_btn",       "Clear log",                "Clear the activity log"),
 )
 
@@ -4190,6 +4397,12 @@ class MainWindow(QMainWindow):
         self.export_csv_btn.clicked.connect(self._export_csv)
         log_header.addWidget(self.export_csv_btn)
 
+        self.export_support_btn = QPushButton("Support Bundle")
+        self.export_support_btn.setObjectName("miniBtn")
+        self.export_support_btn.setToolTip("Save redacted diagnostics for support")
+        self.export_support_btn.clicked.connect(self._export_support_bundle)
+        log_header.addWidget(self.export_support_btn)
+
         self.clear_log_btn = QPushButton("Clear")
         self.clear_log_btn.setObjectName("miniBtn")
         self.clear_log_btn.setToolTip("Clear the log output")
@@ -4280,6 +4493,7 @@ class MainWindow(QMainWindow):
             "xmp_sidecar_chk", "recompress_chk", "only_if_smaller_chk",
             "only_if_smaller_spin", "target_kb_spin", "png_lossy_chk",
             "paste_btn", "manage_plugins_btn", "auto_open_chk",
+            "export_support_btn",
         ]:
             w = getattr(self, attr, None)
             if w is not None:
@@ -4617,6 +4831,62 @@ class MainWindow(QMainWindow):
                         "; ".join(r.warnings) if r.warnings else "",
                     ])
             self._log(f"CSV report exported to {path}")
+
+    def _support_settings_snapshot(self) -> dict[str, object]:
+        fmt = self._fmt_values[self.fmt_combo.currentIndex()] if hasattr(self, "_fmt_values") else "auto"
+        return {
+            "format": fmt,
+            "quality": self.quality_slider.value(),
+            "workers": self.workers_spin.value(),
+            "recursive": self.recursive_chk.isChecked(),
+            "preserve_structure": self.structure_chk.isChecked(),
+            "in_place": self.inplace_chk.isChecked(),
+            "skip_existing": self.skip_existing_chk.isChecked(),
+            "preserve_metadata": self.meta_chk.isChecked(),
+            "strip_metadata": self.strip_meta_chk.isChecked(),
+            "advanced_expanded": self.adv_toggle.isChecked(),
+            "resize_enabled": self.resize_chk.isChecked(),
+            "resize_mode": "max_dim" if self.resize_combo.currentIndex() == 0 else "scale",
+            "resize_value": self.resize_spin.value(),
+            "frames": ["first", "all", "animate"][self.frames_combo.currentIndex()],
+            "tone_map": ["none", "reinhard", "hable", "clip"][self.tone_map_combo.currentIndex()],
+            "avif_codec": ["auto", "aom", "rav1e", "svt"][self.avif_codec_combo.currentIndex()],
+            "avif_speed": self.avif_speed_spin.value(),
+            "png_level": self.png_level_spin.value(),
+            "tiff_compression": ["none", "lzw", "deflate"][self.tiff_comp_combo.currentIndex()],
+            "xmp_sidecar": self.xmp_sidecar_chk.isChecked(),
+            "recompress": self.recompress_chk.isChecked(),
+            "png_lossy": self.png_lossy_chk.isChecked(),
+            "only_if_smaller": (
+                float(self.only_if_smaller_spin.value())
+                if self.only_if_smaller_chk.isChecked()
+                else None
+            ),
+            "target_kb": float(self.target_kb_spin.value()) if self.target_kb_spin.value() > 0 else None,
+            "filters": {
+                ext: chk.isChecked()
+                for ext, chk in sorted(getattr(self, "_format_filters", {}).items())
+            },
+        }
+
+    def _export_support_bundle(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Support Bundle", str(Path.home() / "imgconverter_support.zip"),
+            "Zip Files (*.zip);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            written = export_support_bundle(
+                Path(path),
+                settings_snapshot=self._support_settings_snapshot(),
+                recent_log=self.log_view.toPlainText(),
+            )
+            self._log(f"Support bundle exported to {written}")
+            self._set_workflow_state("Support bundle exported", "Redacted diagnostics were saved.")
+        except OSError as e:
+            self._log(f"[ERROR] Support bundle export failed: {e}")
+            self._set_workflow_state("Export failed", "Support bundle could not be written.")
 
     def _clear_log(self):
         self.log_view.clear()
@@ -5289,6 +5559,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--report", type=str, default=None, metavar="PATH",
                    help="Write structured per-file JSON report to PATH after conversion. "
                         "Top-level object: {summary: {...}, files: [...]}")
+    p.add_argument("--support-bundle", type=str, default=None, metavar="PATH",
+                   help="Write a redacted diagnostic zip with app, platform, dependency, "
+                        "optional-tool, plugin trust, settings schema, and recent log data, then exit")
     p.add_argument("--preset", type=str, default=None, metavar="NAME",
                    help="Load preset from ~/.imgconverter/presets/NAME.json before applying other flags")
     p.add_argument("--list-presets", action="store_true",
@@ -5416,6 +5689,7 @@ CLI_FLAG_PARITY = {
     "--no-exiftool": {"surface": "cli-only", "gui": (), "readme": True, "note": "CLI metadata backend override"},
     "--template": {"surface": "gui", "gui": ("template_edit",), "readme": True, "note": "Filename template"},
     "--report": {"surface": "cli-only", "gui": ("export_csv_btn",), "readme": True, "note": "CLI JSON report; GUI has CSV export"},
+    "--support-bundle": {"surface": "admin-only", "gui": ("export_support_btn",), "readme": True, "note": "Redacted diagnostics export"},
     "--preset": {"surface": "gui", "gui": ("_preset_btn",), "readme": True, "note": "Preset loader"},
     "--list-presets": {"surface": "cli-only", "gui": ("_preset_btn",), "readme": True, "note": "CLI preset inventory; GUI preset menu"},
     "--list-plugins": {"surface": "admin-only", "gui": (), "readme": True, "note": "Trust-safe plugin inventory"},
@@ -6459,6 +6733,15 @@ def main():
         ok, msg = _untrust_plugin(args.untrust_plugin)
         print(msg, file=sys.stderr if not ok else sys.stdout)
         sys.exit(EXIT_OK if ok else EXIT_INPUT_ERROR)
+
+    if getattr(args, "support_bundle", None):
+        try:
+            written = export_support_bundle(Path(args.support_bundle))
+            print(f"[support] wrote {written}")
+            sys.exit(EXIT_OK)
+        except OSError as e:
+            print(f"[support] failed to write bundle: {e}", file=sys.stderr)
+            sys.exit(EXIT_INPUT_ERROR)
 
     if getattr(args, "register_shell", False):
         sys.exit(_install_shell_integration(uninstall=False))

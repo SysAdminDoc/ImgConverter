@@ -7,6 +7,7 @@ import re
 import sys
 import tomllib
 import types
+import zipfile
 
 import pytest
 from pathlib import Path
@@ -36,6 +37,7 @@ from imgconverter import (
     QUEUE_STATE_PATH,
     HAS_JPEG_RECOMPRESS,
     HAS_JXL,
+    export_support_bundle,
 )
 
 
@@ -158,6 +160,54 @@ class TestCLIValidation:
         args = _build_parser().parse_args(["--input", "photos", "--use-processes"])
 
         assert any("--use-processes" in error for error in _validate_cli_args(args))
+
+
+class TestSupportBundle:
+
+    def test_parser_accepts_support_bundle_without_input(self):
+        args = _build_parser().parse_args(["--support-bundle", "support.zip"])
+
+        assert args.support_bundle == "support.zip"
+
+    def test_support_bundle_redacts_paths_and_contains_diagnostics(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        home = Path.home()
+        log_path = tmp_workdir / "imgconverter.log"
+        log_path.write_text(
+            f"[INFO] opened {home / 'Pictures' / 'private.heic'}\n"
+            "[INFO] conversion finished\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(imgconverter, "USER_LOG_PATH", log_path)
+
+        bundle = tmp_workdir / "support.zip"
+        written = export_support_bundle(
+            bundle,
+            settings_snapshot={"format": "webp", "quality": 82},
+            recent_log=f"GUI log path {home / 'Pictures' / 'private.heic'}",
+        )
+
+        assert written == bundle
+        with zipfile.ZipFile(bundle) as zf:
+            names = set(zf.namelist())
+            assert {"support.json", "recent-log.txt", "gui-log.txt"} <= names
+            support_text = zf.read("support.json").decode("utf-8")
+            support = json.loads(support_text)
+            recent_log = zf.read("recent-log.txt").decode("utf-8")
+            gui_log = zf.read("gui-log.txt").decode("utf-8")
+
+        assert support["app"]["version"] == imgconverter.APP_VERSION
+        assert support["privacy"]["source_images_included"] is False
+        assert support["settings"] == {"format": "webp", "quality": 82}
+        assert "dependencies" in support
+        assert "optional_tools" in support
+        assert "plugin_trust" in support["schemas"]
+        assert any(row["name"] == "JPEG" for row in support["formats"])
+        assert str(home) not in recent_log
+        assert str(home) not in gui_log
+        assert "~" in recent_log
+        assert "~" in gui_log
 
 
 class TestCLIGUIPParity:
