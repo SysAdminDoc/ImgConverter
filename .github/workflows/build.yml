@@ -57,6 +57,11 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install exiftool -y
 
+      - name: Audit Python dependencies for known vulnerabilities
+        run: |
+          pip install pip-audit
+          pip-audit --strict --desc || echo "::warning::pip-audit found vulnerabilities — review before release"
+
       - name: Run pytest
         env:
           PYTEST_QT_API: pyqt6
@@ -131,11 +136,33 @@ jobs:
               $packages += [ordered]@{ name = $dep; version = $null; purl = $null }
             }
           }
+          # Enumerate native binaries collected by PyInstaller
+          $nativeBins = @()
+          $distDir = "dist"
+          $collectDirs = @(
+            (Join-Path $distDir "ImgConverter" "_internal"),
+            (Join-Path $distDir "ImgConverter")
+          )
+          foreach ($dir in $collectDirs) {
+            if (Test-Path $dir) {
+              Get-ChildItem -Path $dir -Recurse -File -Include "*.dll","*.so","*.dylib","*.pyd" -ErrorAction SilentlyContinue | ForEach-Object {
+                $binHash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
+                $nativeBins += [ordered]@{
+                  name = $_.Name
+                  relative_path = $_.FullName.Replace((Resolve-Path $distDir).Path, "").TrimStart("\", "/")
+                  size_bytes = $_.Length
+                  sha256 = $binHash
+                }
+              }
+            }
+          }
+
           [ordered]@{
-            schema = "imgconverter.dependency-sbom.v1"
+            schema = "imgconverter.dependency-sbom.v2"
             artifact = $artifact
             sha256 = $hash
             packages = $packages
+            native_binaries = $nativeBins
           } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "dist/$artifact.sbom.json"
 
           [ordered]@{

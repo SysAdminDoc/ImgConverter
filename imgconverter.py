@@ -187,11 +187,8 @@ except ImportError:
 HEIF_MAX_DECODE_BYTES = 4 * 1024 * 1024 * 1024
 try:
     _opts = pillow_heif.options
-    # API surface differs across pillow_heif versions; tolerate missing keys.
-    for _attr, _val in (("DECODE_THREADS", max(1, os.cpu_count() or 1)),
-                        ("ALLOW_INCORRECT_HEADERS", False)):
-        if hasattr(_opts, _attr):
-            setattr(_opts, _attr, _val)
+    if hasattr(_opts, "DECODE_THREADS"):
+        _opts.DECODE_THREADS = max(1, os.cpu_count() or 1)
     set_limits = getattr(pillow_heif, "set_security_limits", None)
     if callable(set_limits):
         set_limits(max_image_size_pixels=8000 * 8000)  # 64 MP guard; raise via env if needed
@@ -370,6 +367,7 @@ def build_backend_info(benchmark_path: Path | None = None) -> dict[str, object]:
     report: dict[str, object] = {
         "version": APP_VERSION,
         "backends": backends,
+        "native_codecs": _native_codec_versions(),
         "benchmark": None,
     }
     if benchmark_path is not None:
@@ -3406,6 +3404,72 @@ def _dependency_versions() -> dict[str, dict[str, object]]:
     return deps
 
 
+def _native_codec_versions() -> dict[str, dict[str, object]]:
+    """Detect versions of bundled native codec libraries where possible.
+
+    These are the C/C++ libraries that actually decode untrusted image data.
+    Python package versions alone don't capture the native binary that shipped.
+    """
+    codecs: dict[str, dict[str, object]] = {}
+
+    try:
+        info = pillow_heif.libheif_info()
+        codecs["libheif"] = {
+            "version": info.get("libheif"),
+            "decoders": sorted(info.get("decoders", {}).keys()) if isinstance(info.get("decoders"), dict) else [],
+            "encoders": sorted(info.get("encoders", {}).keys()) if isinstance(info.get("encoders"), dict) else [],
+        }
+        for codec_name in ("libde265", "x265", "dav1d", "aom"):
+            dec = info.get("decoders", {})
+            enc = info.get("encoders", {})
+            if codec_name in dec or codec_name in enc:
+                codecs[codec_name] = {"available": True}
+    except Exception:
+        codecs["libheif"] = {"version": None, "error": "libheif_info() unavailable"}
+
+    try:
+        from PIL import __version__ as pil_ver
+        codecs["pillow"] = {"version": pil_ver}
+        features = {}
+        try:
+            from PIL import features as pil_features
+            for feat in ("libjpeg", "libjpeg_turbo", "zlib", "libtiff",
+                         "freetype2", "littlecms2", "webp", "webp_anim",
+                         "webp_mux", "xcb", "avif"):
+                ver = pil_features.version(feat)
+                if ver:
+                    features[feat] = ver
+        except Exception:
+            pass
+        if features:
+            codecs["pillow_native"] = features
+    except Exception:
+        pass
+
+    if HAS_RAWPY:
+        try:
+            codecs["libraw"] = {"version": getattr(rawpy, "libraw_version", None) or getattr(rawpy, "__version__", None)}
+        except Exception:
+            codecs["libraw"] = {"version": None}
+
+    if HAS_JXL:
+        try:
+            codecs["libjxl"] = {"version": getattr(pillow_jxl, "__version__", None)}
+        except Exception:
+            codecs["libjxl"] = {"version": None}
+
+    if HAS_VIPS:
+        try:
+            codecs["libvips"] = {"version": pyvips.version(0) * 10000 + pyvips.version(1) * 100 + pyvips.version(2)}
+        except Exception:
+            try:
+                codecs["libvips"] = {"version": str(getattr(pyvips, "__version__", None))}
+            except Exception:
+                codecs["libvips"] = {"version": None}
+
+    return codecs
+
+
 def _optional_tool_status() -> dict[str, dict[str, object]]:
     tools = ("exiftool", "ffprobe", "jpegoptim", "jpegtran", "pngquant",
              "butteraugli", "ffmpeg-quality-metrics")
@@ -3479,6 +3543,7 @@ def _build_support_bundle_payload(settings_snapshot: dict | None = None) -> dict
             "plugin_trust": PLUGIN_TRUST_SCHEMA,
         },
         "dependencies": _dependency_versions(),
+        "native_codecs": _native_codec_versions(),
         "optional_tools": _optional_tool_status(),
         "backends": build_backend_info(),
         "formats": _format_support_payload(),

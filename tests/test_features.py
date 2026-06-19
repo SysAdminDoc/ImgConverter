@@ -202,6 +202,8 @@ class TestSupportBundle:
         assert support["privacy"]["source_images_included"] is False
         assert support["settings"] == {"format": "webp", "quality": 82}
         assert "dependencies" in support
+        assert "native_codecs" in support
+        assert isinstance(support["native_codecs"], dict)
         assert "optional_tools" in support
         assert "plugin_trust" in support["schemas"]
         assert any(row["name"] == "JPEG" for row in support["formats"])
@@ -234,6 +236,14 @@ class TestBackendInfo:
 
         assert report["backends"]["pillow"]["features"]["metadata"]["supported"] is True
         assert report["backends"]["vips"]["features"]["metadata"]["supported"] is False
+
+    def test_backend_info_includes_native_codec_inventory(self):
+        report = build_backend_info()
+        assert "native_codecs" in report
+        codecs = report["native_codecs"]
+        assert isinstance(codecs, dict)
+        assert "libheif" in codecs
+        assert "pillow" in codecs
 
     def test_vips_backend_rejects_unacknowledged_or_unsupported_options(self):
         args = _build_parser().parse_args(["--input", "photos", "--backend", "vips", "--format", "jpeg"])
