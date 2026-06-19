@@ -284,6 +284,45 @@ def _vips_convert(src: Path, dst: Path, fmt: str, quality: int) -> tuple[bool, s
 # Optional ffmpeg-quality-metrics / butteraugli for objective quality check.
 HAS_FQM = shutil.which("ffmpeg-quality-metrics") is not None
 BUTTERAUGLI_PATH = shutil.which("butteraugli")
+C2PATOOL_PATH = shutil.which("c2patool")
+
+
+def _verify_c2pa(path: Path) -> dict[str, object] | None:
+    """Verify C2PA manifest using c2patool. Returns structured result or None."""
+    if not C2PATOOL_PATH:
+        return None
+    try:
+        proc = subprocess.run(
+            [C2PATOOL_PATH, str(path), "--detailed"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode == 0:
+            try:
+                manifest = json.loads(proc.stdout)
+                claim_gen = None
+                if isinstance(manifest, dict):
+                    active = manifest.get("active_manifest")
+                    if active and isinstance(manifest.get("manifests"), dict):
+                        am = manifest["manifests"].get(active, {})
+                        claim_gen = am.get("claim_generator")
+                return {
+                    "status": "verified",
+                    "claim_generator": _redact_text(claim_gen) if claim_gen else None,
+                    "manifest_count": len(manifest.get("manifests", {})) if isinstance(manifest, dict) else 0,
+                }
+            except (json.JSONDecodeError, KeyError):
+                return {"status": "verified", "claim_generator": None, "manifest_count": 0}
+        elif "no claim found" in (proc.stderr or proc.stdout or "").lower():
+            return {"status": "no-manifest"}
+        else:
+            return {
+                "status": "invalid",
+                "error": _redact_text((proc.stderr or proc.stdout or "c2patool error").strip()[:200]),
+            }
+    except subprocess.TimeoutExpired:
+        return {"status": "not-verified", "error": "c2patool timed out"}
+    except Exception as e:
+        return {"status": "not-verified", "error": _redact_text(str(e)[:200])}
 
 
 def _verify_quality(src: Path, dst: Path) -> str | None:
@@ -1957,15 +1996,24 @@ def _metadata_presence_from_path(path: Path | None) -> dict[str, bool]:
         }
 
 
-def _finalize_metadata_report(result: ConvertResult, after: dict[str, bool], preserve_metadata: bool):
+def _finalize_metadata_report(result: ConvertResult, after: dict[str, bool],
+                              preserve_metadata: bool, src: Path | None = None,
+                              dst: Path | None = None):
     before = result.metadata_report.get("before") or {kind: False for kind in METADATA_KINDS}
     dropped = [kind for kind in METADATA_KINDS if before.get(kind) and not after.get(kind)]
+
+    c2pa_result = None
+    if before.get("c2pa") and C2PATOOL_PATH and src:
+        c2pa_result = _verify_c2pa(src)
+
     result.metadata_report = {
         "before": before,
         "after": after,
         "dropped": dropped,
         "preserve_requested": bool(preserve_metadata),
     }
+    if c2pa_result:
+        result.metadata_report["c2pa_verification"] = c2pa_result
     if preserve_metadata and dropped:
         result.warnings.append("metadata dropped: " + ", ".join(dropped))
 
@@ -2910,6 +2958,8 @@ def convert_file(
             result,
             _metadata_presence_from_path(out_path),
             preserve_metadata,
+            src=src,
+            dst=out_path,
         )
 
         # Optional quality verification — butteraugli / ffmpeg-quality-metrics.
@@ -3562,7 +3612,7 @@ def _native_codec_versions() -> dict[str, dict[str, object]]:
 
 def _optional_tool_status() -> dict[str, dict[str, object]]:
     tools = ("exiftool", "ffprobe", "jpegoptim", "jpegtran", "pngquant",
-             "butteraugli", "ffmpeg-quality-metrics")
+             "butteraugli", "ffmpeg-quality-metrics", "c2patool")
     status: dict[str, dict[str, object]] = {}
     for tool in tools:
         path = shutil.which(tool)
