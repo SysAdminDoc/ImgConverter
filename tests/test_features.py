@@ -1457,3 +1457,65 @@ class TestMultiFrameExport:
         assert result.dst is not None
         exported = list((out).glob("*.jpg"))
         assert len(exported) == 2
+
+
+# ── 20. Qt event-loop accessibility and keyboard tests ─────────────────────
+
+_qt_skip_reason = None
+try:
+    import os as _qt_os
+    _qt_os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication as _QApp
+    from PyQt6.QtCore import Qt as _Qt
+    _qt_app = _QApp.instance() or _QApp([])
+    _HAS_QT_OFFSCREEN = True
+except Exception as _qt_err:
+    _HAS_QT_OFFSCREEN = False
+    _qt_skip_reason = str(_qt_err)
+
+
+@pytest.mark.skipif(not _HAS_QT_OFFSCREEN, reason=_qt_skip_reason or "PyQt6 offscreen unavailable")
+class TestQtAccessibility:
+
+    @pytest.fixture(autouse=True)
+    def _window(self):
+        import imgconverter
+        self.window = imgconverter.MainWindow()
+        yield
+        self.window.close()
+
+    def test_primary_controls_have_accessible_names(self):
+        w = self.window
+        named = []
+        for attr in ("src_edit", "dst_edit", "fmt_combo", "quality_slider",
+                     "workers_spin", "scan_btn", "convert_btn", "stop_btn",
+                     "meta_combo", "when_done_combo"):
+            widget = getattr(w, attr, None)
+            if widget and widget.accessibleName():
+                named.append(attr)
+        assert len(named) >= 6
+
+    def test_tab_order_covers_primary_flow(self):
+        w = self.window
+        focus_chain = []
+        widget = w.src_edit
+        seen = set()
+        for _ in range(30):
+            name = widget.objectName() or type(widget).__name__
+            if id(widget) in seen:
+                break
+            seen.add(id(widget))
+            focus_chain.append(name)
+            widget = widget.nextInFocusChain()
+
+        assert len(focus_chain) >= 8
+
+    def test_scan_button_is_keyboard_activatable(self):
+        w = self.window
+        assert w.scan_btn.isEnabled()
+        assert w.scan_btn.focusPolicy() != _Qt.FocusPolicy.NoFocus
+
+    def test_format_combo_is_keyboard_navigable(self):
+        w = self.window
+        assert w.fmt_combo.focusPolicy() != _Qt.FocusPolicy.NoFocus
+        assert w.fmt_combo.count() >= 6
