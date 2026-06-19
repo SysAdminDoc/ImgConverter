@@ -4276,6 +4276,104 @@ class PluginTrustDialog(QDialog):
         self._refresh()
 
 
+WATCH_PROFILES_FILE = USER_CONFIG_DIR / "watch-profiles.json"
+
+
+def _load_watch_profiles() -> list[dict]:
+    try:
+        if WATCH_PROFILES_FILE.is_file():
+            return json.loads(WATCH_PROFILES_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return []
+
+
+def _save_watch_profiles(profiles: list[dict]):
+    try:
+        WATCH_PROFILES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        WATCH_PROFILES_FILE.write_text(
+            json.dumps(profiles, indent=2, sort_keys=True), encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+class WatchFolderDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Watch Folder Profiles")
+        self.resize(780, 400)
+        self._profiles: list[dict] = _load_watch_profiles()
+
+        layout = QVBoxLayout(self)
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Source Folder", "Output Folder", "Preset", "Enabled", "Status"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAccessibleName("Watch folder profiles")
+        layout.addWidget(self.table)
+
+        buttons = QHBoxLayout()
+        self.add_btn = QPushButton("Add Profile")
+        self.remove_btn = QPushButton("Remove")
+        self.toggle_btn = QPushButton("Enable/Disable")
+        self.close_btn = QPushButton("Close")
+        for btn in (self.add_btn, self.remove_btn, self.toggle_btn, self.close_btn):
+            buttons.addWidget(btn)
+        layout.addLayout(buttons)
+
+        self.add_btn.clicked.connect(self._add_profile)
+        self.remove_btn.clicked.connect(self._remove_selected)
+        self.toggle_btn.clicked.connect(self._toggle_selected)
+        self.close_btn.clicked.connect(self.accept)
+        self._refresh()
+
+    def _refresh(self):
+        self.table.setRowCount(len(self._profiles))
+        for i, p in enumerate(self._profiles):
+            self.table.setItem(i, 0, QTableWidgetItem(p.get("source", "")))
+            self.table.setItem(i, 1, QTableWidgetItem(p.get("output", "")))
+            self.table.setItem(i, 2, QTableWidgetItem(p.get("preset", "Default")))
+            self.table.setItem(i, 3, QTableWidgetItem("Yes" if p.get("enabled") else "No"))
+            status = p.get("last_error") or p.get("last_run") or "Never run"
+            self.table.setItem(i, 4, QTableWidgetItem(str(status)))
+        self.table.resizeColumnsToContents()
+
+    def _add_profile(self):
+        src = QFileDialog.getExistingDirectory(self, "Select Watch Folder")
+        if not src:
+            return
+        out = QFileDialog.getExistingDirectory(self, "Select Output Folder")
+        if not out:
+            out = str(Path(src) / "converted")
+        presets = list(list_presets().keys())
+        preset_name = "Default" if not presets else presets[0]
+        self._profiles.append({
+            "source": src,
+            "output": out,
+            "preset": preset_name,
+            "enabled": True,
+            "last_run": None,
+            "last_error": None,
+        })
+        _save_watch_profiles(self._profiles)
+        self._refresh()
+
+    def _remove_selected(self):
+        row = self.table.currentRow()
+        if 0 <= row < len(self._profiles):
+            self._profiles.pop(row)
+            _save_watch_profiles(self._profiles)
+            self._refresh()
+
+    def _toggle_selected(self):
+        row = self.table.currentRow()
+        if 0 <= row < len(self._profiles):
+            self._profiles[row]["enabled"] = not self._profiles[row].get("enabled", True)
+            _save_watch_profiles(self._profiles)
+            self._refresh()
+
+
 MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("workflow_state",     "Workflow status",          "Current batch workflow state"),
     ("src_edit",            "Source directory",         "Directory to scan for input images"),
@@ -5138,6 +5236,12 @@ class MainWindow(QMainWindow):
         self.manage_plugins_btn.clicked.connect(self._open_plugin_trust)
         secondary_actions.addWidget(self.manage_plugins_btn)
 
+        self.watch_folders_btn = QPushButton("Watch Folders")
+        self.watch_folders_btn.setToolTip("Manage hot-folder watch profiles")
+        self.watch_folders_btn.setAccessibleName("Watch folder profiles")
+        self.watch_folders_btn.clicked.connect(self._open_watch_folders)
+        secondary_actions.addWidget(self.watch_folders_btn)
+
         self.auto_open_chk = QCheckBox("Auto-open output")
         self.auto_open_chk.setChecked(False)
         self.auto_open_chk.setToolTip("Automatically open the output folder when conversion finishes")
@@ -5330,6 +5434,13 @@ class MainWindow(QMainWindow):
         dialog.exec()
         rows = get_plugin_trust_rows()
         self._log(f"Plugin trust inventory: {len(rows)} entr{'y' if len(rows) == 1 else 'ies'}")
+
+    def _open_watch_folders(self):
+        dialog = WatchFolderDialog(self)
+        dialog.exec()
+        profiles = _load_watch_profiles()
+        enabled = sum(1 for p in profiles if p.get("enabled"))
+        self._log(f"Watch folder profiles: {len(profiles)} total, {enabled} enabled")
 
     # ── Drag & Drop ──
     def dragEnterEvent(self, event: QDragEnterEvent):
