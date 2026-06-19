@@ -703,6 +703,7 @@ class _FakePresetWindow:
             "resize_spin", "tiff_comp_combo", "png_level_spin", "dpi_spin",
             "avif_speed_spin", "avif_codec_combo", "frames_combo",
             "tone_map_combo", "only_if_smaller_spin", "target_kb_spin",
+            "meta_combo",
         ):
             setattr(self, attr, _FakeValue())
         for attr in (
@@ -800,8 +801,7 @@ class TestPresets:
         assert fake.max_file_size_edit.text == "500MB"
         assert fake.target_kb_spin.value == 200
         assert fake.xmp_sidecar_chk.checked is True
-        assert fake.strip_meta_chk.checked is True
-        assert fake.meta_chk.checked is False
+        assert fake.meta_combo.value == 3
         assert fake.structure_chk.checked is False
         assert fake.resize_chk.checked is True
         assert fake.resize_combo.value == 1
@@ -915,6 +915,82 @@ class TestHighBitDepthOutput:
         assert result.success
         assert any("8-bit" in w and "JPEG XL" in w for w in result.warnings)
         assert not any("avif:" in w and "preserving" in w for w in result.warnings)
+
+
+# ── 5b. Selective metadata stripping ────────────────────────────────────────
+
+
+class TestSelectiveMetadataStripping:
+
+    def _build_gps_jpeg(self, path):
+        from PIL.TiffImagePlugin import IFDRational
+        img = Image.new("RGB", (40, 30), (100, 150, 200))
+        exif = img.getexif()
+        exif[0x010F] = "TestMake"
+        exif[0x0110] = "TestModel"
+        exif[0x8298] = "Copyright 2026"
+        gps_ifd = exif.get_ifd(0x8825)
+        gps_ifd[0x0001] = "N"
+        gps_ifd[0x0002] = (IFDRational(40), IFDRational(26), IFDRational(46))
+        gps_ifd[0x0003] = "W"
+        gps_ifd[0x0004] = (IFDRational(74), IFDRational(0), IFDRational(21))
+        exif[0x8825] = gps_ifd
+        img.save(path, "JPEG", exif=exif.tobytes(), quality=92)
+
+    def test_strip_gps_preserves_copyright_and_make(self, tmp_workdir):
+        src = tmp_workdir / "gps.jpg"
+        self._build_gps_jpeg(src)
+        out = tmp_workdir / "out"
+        result = convert_file(
+            src, out, fmt="jpeg",
+            convert_to_srgb=True,
+            strip_fields=frozenset({"gps"}),
+        )
+        assert result.success
+        with Image.open(result.dst) as out_img:
+            out_exif = out_img.getexif()
+            assert out_exif.get(0x8298) == "Copyright 2026"
+            assert out_exif.get(0x010F) == "TestMake"
+            assert 0x8825 not in out_exif
+
+    def test_strip_gps_device_removes_make_model(self, tmp_workdir):
+        src = tmp_workdir / "gps_device.jpg"
+        self._build_gps_jpeg(src)
+        out = tmp_workdir / "out"
+        result = convert_file(
+            src, out, fmt="jpeg",
+            convert_to_srgb=True,
+            strip_fields=frozenset({"gps", "device"}),
+        )
+        assert result.success
+        with Image.open(result.dst) as out_img:
+            out_exif = out_img.getexif()
+            assert out_exif.get(0x8298) == "Copyright 2026"
+            assert out_exif.get(0x010F) is None
+            assert out_exif.get(0x0110) is None
+            assert 0x8825 not in out_exif
+
+    def test_strip_all_removes_everything(self, tmp_workdir):
+        src = tmp_workdir / "full.jpg"
+        self._build_gps_jpeg(src)
+        out = tmp_workdir / "out"
+        result = convert_file(
+            src, out, fmt="jpeg",
+            preserve_metadata=False,
+            strip_fields=frozenset({"all"}),
+        )
+        assert result.success
+        with Image.open(result.dst) as out_img:
+            assert not out_img.getexif()
+
+    def test_cli_flags_parse_strip_gps_and_device(self):
+        from imgconverter import _build_parser
+        args = _build_parser().parse_args([
+            "-i", "/photos", "--strip-gps", "--strip-device",
+        ])
+        assert args.strip_gps is True
+        assert args.strip_device is True
+        assert args.strip_metadata is False
 
 
 # ── 6. Quality targeting ─────────────────────────────────────────────────────

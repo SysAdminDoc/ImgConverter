@@ -760,24 +760,98 @@ def _recompress_jpeg_lossless(src: Path, dst: Path, strip_metadata: bool) -> tup
     return False, "no jpegoptim or jpegtran on PATH"
 
 
-def _run_exiftool_copy(src: Path, dst: Path) -> tuple[bool, str]:
-    """Copy *all* metadata from src to dst using ExifTool. Returns (ok, message)."""
+STRIP_PRESETS = {
+    "none":       frozenset(),
+    "all":        frozenset({"all"}),
+    "gps":        frozenset({"gps"}),
+    "gps+device": frozenset({"gps", "device"}),
+}
+
+GPS_EXIF_TAGS = {
+    0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007,
+    0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E,
+    0x000F, 0x0010, 0x0011, 0x0012, 0x001B, 0x001C, 0x001D, 0x001E,
+}
+DEVICE_EXIF_TAGS = {
+    0x010F,  # Make
+    0x0110,  # Model
+    0x0131,  # Software
+    0xA431,  # BodySerialNumber
+    0xA432,  # LensSpecification
+    0xA433,  # LensMake
+    0xA434,  # LensModel
+    0xA435,  # LensSerialNumber
+    0xC614,  # UniqueCameraModel (DNG)
+}
+
+
+def _strip_exif_fields(exif_bytes: bytes, groups: frozenset[str]) -> bytes:
+    """Remove selected tag groups from EXIF data. Returns modified EXIF bytes."""
+    if not exif_bytes or not groups or "all" in groups:
+        return exif_bytes
+    try:
+        from PIL.Image import Exif
+        exif = Exif()
+        exif.load(exif_bytes)
+
+        if "gps" in groups:
+            gps_ifd = exif.get_ifd(0x8825)
+            if gps_ifd:
+                for tag in list(gps_ifd):
+                    del gps_ifd[tag]
+            if 0x8825 in exif:
+                del exif[0x8825]
+
+        if "device" in groups:
+            for tag in DEVICE_EXIF_TAGS:
+                if tag in exif:
+                    del exif[tag]
+
+        return exif.tobytes()
+    except Exception:
+        return exif_bytes
+
+
+def _run_exiftool_copy(src: Path, dst: Path,
+                       strip_groups: frozenset[str] | None = None) -> tuple[bool, str]:
+    """Copy metadata from src to dst using ExifTool, optionally excluding groups."""
     if not HAS_EXIFTOOL:
         return False, "exiftool not installed"
     try:
-        # -overwrite_original avoids _original sidecars; -P preserves dst mtime;
-        # -tagsfromfile copies every tag including MakerNotes / sub-IFDs / IPTC;
-        # -icc_profile is normally protected, so add it explicitly.
-        proc = subprocess.run(
-            [EXIFTOOL_PATH, "-overwrite_original", "-P",
-             "-tagsfromfile", str(src),
-             "-all:all", "-unsafe", "-icc_profile",
-             str(dst)],
-            capture_output=True, text=True, timeout=30,
-        )
+        cmd = [EXIFTOOL_PATH, "-overwrite_original", "-P",
+               "-tagsfromfile", str(src)]
+
+        groups = strip_groups or frozenset()
+        if "all" in groups:
+            return False, "strip-all: skipping exiftool copy"
+
+        cmd.extend(["-all:all", "-unsafe", "-icc_profile"])
+
+        if "gps" in groups:
+            cmd.append("-gps:all=")
+            cmd.append("-GPSLatitude=")
+            cmd.append("-GPSLongitude=")
+            cmd.append("-GPSAltitude=")
+            cmd.append("-GPSPosition=")
+        if "device" in groups:
+            cmd.append("-Make=")
+            cmd.append("-Model=")
+            cmd.append("-Software=")
+            cmd.append("-SerialNumber=")
+            cmd.append("-BodySerialNumber=")
+            cmd.append("-LensSerialNumber=")
+            cmd.append("-LensMake=")
+            cmd.append("-LensModel=")
+            cmd.append("-InternalSerialNumber=")
+
+        cmd.append(str(dst))
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if proc.returncode != 0:
             return False, (proc.stderr or proc.stdout or "exiftool failed").strip()
-        return True, "metadata copied"
+        suffix = ""
+        if groups:
+            suffix = f" (stripped: {', '.join(sorted(groups))})"
+        return True, f"metadata copied{suffix}"
     except subprocess.TimeoutExpired:
         return False, "exiftool timed out"
     except Exception as e:
@@ -2274,6 +2348,7 @@ def convert_file(
     avif_codec: str = "auto",
     png_lossy: bool = False,
     backend: str = "pillow",
+    strip_fields: frozenset[str] | None = None,
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
@@ -2583,13 +2658,21 @@ def convert_file(
 
         # Gather metadata
         save_kwargs = {}
+        _active_strip = strip_fields or frozenset()
         if preserve_metadata and meta:
             if "exif" in meta:
-                save_kwargs["exif"] = meta["exif"]
+                exif_data = meta["exif"]
+                if _active_strip and "all" not in _active_strip:
+                    exif_data = _strip_exif_fields(exif_data, _active_strip)
+                save_kwargs["exif"] = exif_data
             if "icc_profile" in meta:
                 save_kwargs["icc_profile"] = meta["icc_profile"]
             if "xmp" in meta and out_fmt in ("JPEG", "WEBP", "TIFF", "AVIF", "JXL"):
                 save_kwargs["xmp"] = meta["xmp"]
+            if _active_strip:
+                result.warnings.append(
+                    f"metadata: selectively stripped {', '.join(sorted(_active_strip))}"
+                )
 
         # Format-specific options
         if out_fmt == "JPEG":
@@ -2784,9 +2867,10 @@ def convert_file(
         # caller asked to strip metadata or explicitly opted out.
         if use_exiftool and HAS_EXIFTOOL and preserve_metadata:
             tagcopy_target = temp_path if in_place else out_path
-            ok, msg = _run_exiftool_copy(src, tagcopy_target)
+            ok, msg = _run_exiftool_copy(src, tagcopy_target,
+                                         strip_groups=_active_strip)
             if ok:
-                result.warnings.append("metadata: exiftool tag-copy ok")
+                result.warnings.append(f"metadata: exiftool tag-copy ok ({msg})")
             else:
                 result.warnings.append(
                     f"metadata: exiftool failed ({msg}); Pillow fallback applied"
@@ -2887,7 +2971,8 @@ class ConvertWorker(QThread):
                  recompress_lossless=False, quality_mode=None,
                  watermark=None, canvas=None, canvas_bg="transparent",
                  tone_map="none", avif_speed=6, avif_codec="auto",
-                 png_lossy=False, frames="first"):
+                 png_lossy=False, frames="first",
+                 strip_fields=None):
         super().__init__()
         self.files = files
         self.output_dir = Path(output_dir)
@@ -2925,6 +3010,7 @@ class ConvertWorker(QThread):
         self.avif_codec = avif_codec
         self.png_lossy = png_lossy
         self.frames = frames
+        self.strip_fields = strip_fields or frozenset()
         self._stop_event = threading.Event()
 
     def stop(self):
@@ -2995,6 +3081,8 @@ class ConvertWorker(QThread):
                     self.avif_speed,                 # avif_speed
                     self.avif_codec,                 # avif_codec
                     self.png_lossy,                  # png_lossy
+                    "pillow",                         # backend
+                    self.strip_fields,                # strip_fields
                 )
                 futures[fut] = f
 
@@ -3239,6 +3327,8 @@ def normalize_preset(preset: dict) -> dict:
         "in_place": ("in_place", "inplace"),
         "skip_existing": ("skip_existing",),
         "strip_metadata": ("strip_metadata",),
+        "strip_gps": ("strip_gps",),
+        "strip_device": ("strip_device",),
         "no_exiftool": ("no_exiftool",),
         "xmp_sidecar": ("xmp_sidecar", "emit_xmp_sidecar"),
         "recompress": ("recompress", "recompress_lossless"),
@@ -3736,9 +3826,15 @@ def _apply_preset_to_gui_controls(window, preset: dict):
         if key in norm:
             getattr(window, attr).setChecked(norm[key])
     if "strip_metadata" in norm:
-        strip = norm["strip_metadata"]
-        window.strip_meta_chk.setChecked(strip)
-        window.meta_chk.setChecked(not strip)
+        if norm["strip_metadata"]:
+            window.meta_combo.setCurrentIndex(3)
+        else:
+            window.meta_combo.setCurrentIndex(0)
+    if norm.get("strip_gps") and not norm.get("strip_metadata"):
+        if norm.get("strip_device"):
+            window.meta_combo.setCurrentIndex(2)
+        else:
+            window.meta_combo.setCurrentIndex(1)
     if "no_structure" in norm:
         window.structure_chk.setChecked(not norm["no_structure"])
     if "recursive" in norm:
@@ -3886,7 +3982,7 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("recursive_chk",       "Recursive scan",           "Walk subdirectories under the source directory"),
     ("inplace_chk",         "Convert in place",         "Save output next to each source and delete the source after output validation"),
     ("skip_existing_chk",   "Skip existing outputs",    "Skip files whose output already exists"),
-    ("meta_chk",            "Preserve metadata",        "Keep EXIF, ICC, and XMP through conversion"),
+    ("meta_combo",          "Metadata handling",         "Choose which metadata fields to preserve or strip"),
     ("progressive_jpeg_chk","Progressive JPEG",         "Encode JPEGs as progressive for web delivery"),
     ("lossless_webp_chk",   "Lossless WebP",            "Save WebP in lossless mode"),
     ("resize_chk",          "Enable resize",            "Resize images during conversion"),
@@ -3911,7 +4007,6 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("png_lossy_chk",       "Lossy PNG",                "Run pngquant for lossy PNG size reduction"),
     ("chroma_chk",          "Chroma subsampling",       "Use 4:2:0 chroma for smaller JPEG files"),
     ("srgb_chk",            "Convert to sRGB",          "Convert embedded ICC profiles to sRGB"),
-    ("strip_meta_chk",      "Strip metadata",           "Remove all EXIF, ICC, and XMP from output"),
     ("structure_chk",       "Preserve folder structure", "Mirror source directory layout in output"),
     ("only_if_smaller_spin","Only-if-smaller threshold", "Percentage by which output must be smaller"),
     ("png_level_spin",      "PNG compression level",    "PNG compression 1 (fast) to 9 (smallest)"),
@@ -4308,17 +4403,32 @@ class MainWindow(QMainWindow):
         self.workers_spin.setValue(min(cpu_count, 8))
         opt_grid.addWidget(self.workers_spin, 2, 1)
 
-        self.meta_chk = QCheckBox("Preserve metadata")
-        self.meta_chk.setChecked(True)
-        self.meta_chk.setToolTip("Preserve EXIF, ICC color profiles, and XMP metadata")
-        self.meta_chk.toggled.connect(lambda checked: self.strip_meta_chk.setChecked(False) if checked else None)
-        opt_grid.addWidget(self.meta_chk, 2, 2)
+        meta_label = QLabel("Metadata")
+        meta_label.setObjectName("fieldLabel")
+        opt_grid.addWidget(meta_label, 2, 2)
+        self.meta_combo = QComboBox()
+        self.meta_combo.addItems([
+            "Preserve All",
+            "Strip GPS Only",
+            "Strip GPS + Device Info",
+            "Strip All",
+        ])
+        self.meta_combo.setToolTip(
+            "Preserve All: keep EXIF/ICC/XMP intact\n"
+            "Strip GPS Only: remove location data, keep copyright and color\n"
+            "Strip GPS + Device Info: remove location + camera make/model/serial\n"
+            "Strip All: remove all EXIF, ICC, and XMP metadata"
+        )
+        self.meta_combo.setAccessibleName("Metadata handling")
+        self.meta_combo.setAccessibleDescription(
+            "Choose which metadata fields to preserve or strip during conversion"
+        )
+        opt_grid.addWidget(self.meta_combo, 2, 3)
 
+        self.meta_chk = QCheckBox("Preserve metadata")
+        self.meta_chk.setVisible(False)
         self.strip_meta_chk = QCheckBox("Strip metadata")
-        self.strip_meta_chk.setChecked(False)
-        self.strip_meta_chk.setToolTip("Remove all EXIF, ICC, and XMP metadata from output files")
-        self.strip_meta_chk.toggled.connect(lambda checked: self.meta_chk.setChecked(False) if checked else None)
-        opt_grid.addWidget(self.strip_meta_chk, 2, 3)
+        self.strip_meta_chk.setVisible(False)
 
         self.skip_existing_chk = QCheckBox("Skip files that already have output")
         self.skip_existing_chk.setChecked(False)
@@ -4795,7 +4905,7 @@ class MainWindow(QMainWindow):
             "src_edit", "src_btn", "recent_btn", "dst_edit", "dst_btn",
             "recursive_chk", "structure_chk", "inplace_chk",
             "fmt_combo", "_preset_btn", "quality_slider", "workers_spin",
-            "meta_chk", "strip_meta_chk", "skip_existing_chk",
+            "meta_combo", "skip_existing_chk",
             "progressive_jpeg_chk", "lossless_webp_chk", "resize_chk",
             "resize_combo", "resize_spin", "prefix_edit", "suffix_edit",
             "chroma_chk", "srgb_chk", "tiff_comp_combo", "png_level_spin",
@@ -5091,6 +5201,16 @@ class MainWindow(QMainWindow):
             self.avif_codec_combo.setVisible(is_avif)
 
     # ── Resize controls ──
+    def _gui_strip_fields(self) -> frozenset[str]:
+        idx = self.meta_combo.currentIndex()
+        if idx == 0:
+            return frozenset()
+        if idx == 1:
+            return frozenset({"gps"})
+        if idx == 2:
+            return frozenset({"gps", "device"})
+        return frozenset({"all"})
+
     def _on_resize_toggled(self, checked: bool):
         self.resize_combo.setEnabled(checked)
         self.resize_spin.setEnabled(checked)
@@ -5155,8 +5275,7 @@ class MainWindow(QMainWindow):
             "preserve_structure": self.structure_chk.isChecked(),
             "in_place": self.inplace_chk.isChecked(),
             "skip_existing": self.skip_existing_chk.isChecked(),
-            "preserve_metadata": self.meta_chk.isChecked(),
-            "strip_metadata": self.strip_meta_chk.isChecked(),
+            "metadata_mode": ["preserve_all", "strip_gps", "strip_gps_device", "strip_all"][self.meta_combo.currentIndex()],
             "advanced_expanded": self.adv_toggle.isChecked(),
             "resize_enabled": self.resize_chk.isChecked(),
             "resize_mode": "max_dim" if self.resize_combo.currentIndex() == 0 else "scale",
@@ -5409,7 +5528,7 @@ class MainWindow(QMainWindow):
             output_dir=Path(dst),
             fmt=fmt,
             quality=self.quality_slider.value(),
-            preserve_meta=self.meta_chk.isChecked() and not self.strip_meta_chk.isChecked(),
+            preserve_meta=self.meta_combo.currentIndex() != 3,
             preserve_structure=self.structure_chk.isChecked(),
             base_dir=Path(self.src_edit.text().strip()),
             workers=self.workers_spin.value(),
@@ -5440,6 +5559,7 @@ class MainWindow(QMainWindow):
             avif_codec=["auto", "aom", "rav1e", "svt"][self.avif_codec_combo.currentIndex()],
             png_lossy=self.png_lossy_chk.isChecked(),
             frames=["first", "all", "animate"][self.frames_combo.currentIndex()],
+            strip_fields=self._gui_strip_fields(),
         )
         self._worker.log.connect(self._log)
         self._worker.progress.connect(self._on_progress)
@@ -5614,7 +5734,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("workers", self.workers_spin.value())
         self.settings.setValue("recursive", self.recursive_chk.isChecked())
         self.settings.setValue("structure", self.structure_chk.isChecked())
-        self.settings.setValue("metadata", self.meta_chk.isChecked())
+        self.settings.setValue("metadata_mode", self.meta_combo.currentIndex())
         self.settings.setValue("inplace", self.inplace_chk.isChecked())
         self.settings.setValue("skip_existing", self.skip_existing_chk.isChecked())
         self.settings.setValue("progressive_jpeg", self.progressive_jpeg_chk.isChecked())
@@ -5628,7 +5748,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("convert_to_srgb", self.srgb_chk.isChecked())
         self.settings.setValue("tiff_compression", self.tiff_comp_combo.currentIndex())
         self.settings.setValue("png_compress_level", self.png_level_spin.value())
-        self.settings.setValue("strip_metadata", self.strip_meta_chk.isChecked())
+        # strip_metadata persisted as metadata_mode combo index now
         self.settings.setValue("auto_open_output", self.auto_open_chk.isChecked())
         self.settings.setValue("template", self.template_edit.text())
         self.settings.setValue("dpi", self.dpi_spin.value())
@@ -5705,8 +5825,14 @@ class MainWindow(QMainWindow):
             self.recursive_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("structure")) is not None:
             self.structure_chk.setChecked(v == "true" or v is True)
-        if (v := self.settings.value("metadata")) is not None:
-            self.meta_chk.setChecked(v == "true" or v is True)
+        if (n := self._safe_int(self.settings.value("metadata_mode"))) is not None:
+            if 0 <= n < self.meta_combo.count():
+                self.meta_combo.setCurrentIndex(n)
+        elif (v := self.settings.value("metadata")) is not None:
+            if v == "true" or v is True:
+                self.meta_combo.setCurrentIndex(0)
+            else:
+                self.meta_combo.setCurrentIndex(3)
         if (v := self.settings.value("inplace")) is not None:
             self.inplace_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("skip_existing")) is not None:
@@ -5743,7 +5869,8 @@ class MainWindow(QMainWindow):
         if (n := self._safe_int(self.settings.value("png_compress_level"))) is not None:
             self.png_level_spin.setValue(n)
         if (v := self.settings.value("strip_metadata")) is not None:
-            self.strip_meta_chk.setChecked(v == "true" or v is True)
+            if (v == "true" or v is True) and self._safe_int(self.settings.value("metadata_mode")) is None:
+                self.meta_combo.setCurrentIndex(3)
         if (v := self.settings.value("auto_open_output")) is not None:
             self.auto_open_chk.setChecked(v == "true" or v is True)
         if v := self.settings.value("template"):
@@ -5834,6 +5961,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Only scan top-level directory")
     p.add_argument("--dry-run", action="store_true", help="List files that would be converted, then exit")
     p.add_argument("--strip-metadata", action="store_true", help="Remove all metadata from output files")
+    p.add_argument("--strip-gps", action="store_true",
+                   help="Strip GPS/location data while preserving copyright and color profiles")
+    p.add_argument("--strip-device", action="store_true",
+                   help="Strip camera make/model/serial numbers (combine with --strip-gps for full privacy)")
     p.add_argument("--resize", type=str, default=None, metavar="MODE:VALUE",
                    help="Resize images, e.g. max_dim:1920 or scale:50")
     p.add_argument("--skip-existing", action="store_true",
@@ -5990,6 +6121,8 @@ CLI_FLAG_PARITY = {
     "--no-recursive": {"surface": "gui", "gui": ("recursive_chk",), "readme": True, "note": "Recursive scan toggle inverse"},
     "--dry-run": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless preview"},
     "--strip-metadata": {"surface": "gui", "gui": ("strip_meta_chk",), "readme": True, "note": "Metadata removal"},
+    "--strip-gps": {"surface": "gui", "gui": ("meta_combo",), "readme": True, "note": "GPS/location privacy strip"},
+    "--strip-device": {"surface": "gui", "gui": ("meta_combo",), "readme": True, "note": "Camera make/model/serial privacy strip"},
     "--resize": {"surface": "gui", "gui": ("resize_chk", "resize_combo", "resize_spin"), "readme": True, "note": "Resize controls"},
     "--skip-existing": {"surface": "gui", "gui": ("skip_existing_chk",), "readme": True, "note": "Resume by output existence"},
     "--progressive": {"surface": "gui", "gui": ("progressive_jpeg_chk",), "readme": True, "note": "Progressive JPEG toggle"},
@@ -6216,6 +6349,14 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
     """
     interval = max(1.0, float(getattr(args, "watch_interval", 2.0)))
     print(f"[watch] watching {input_dir} every {interval:.1f}s — Ctrl-C to stop")
+    _sf: set[str] = set()
+    if getattr(args, "strip_metadata", False):
+        _sf.add("all")
+    if getattr(args, "strip_gps", False):
+        _sf.add("gps")
+    if getattr(args, "strip_device", False):
+        _sf.add("device")
+    _cli_strip_fields = frozenset(_sf)
     seen_sizes: dict[Path, int] = {}
     converted: set[Path] = set()
     supported = get_supported_extensions()
@@ -6300,6 +6441,7 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                         avif_codec=getattr(args, "avif_codec", "auto"),
                         png_lossy=getattr(args, "png_lossy", False),
                         backend=getattr(args, "backend", "pillow"),
+                        strip_fields=_cli_strip_fields,
                     )
                     if r.success:
                         print(f"[watch] OK  {f.name} -> {r.dst.name}")
@@ -6773,6 +6915,16 @@ def _run_cli(args):
 
     # Convert
     preserve_meta = not args.strip_metadata
+    _cli_strip_fields: frozenset[str] = frozenset()
+    if args.strip_metadata:
+        _cli_strip_fields = frozenset({"all"})
+    else:
+        _sf = set()
+        if getattr(args, "strip_gps", False):
+            _sf.add("gps")
+        if getattr(args, "strip_device", False):
+            _sf.add("device")
+        _cli_strip_fields = frozenset(_sf)
     ok_count = 0
     fail_count = 0
     skip_count = 0
@@ -6881,6 +7033,7 @@ def _run_cli(args):
                 getattr(args, "avif_codec", "auto"),           # avif_codec
                 getattr(args, "png_lossy", False),             # png_lossy
                 getattr(args, "backend", "pillow"),             # backend
+                _cli_strip_fields,                               # strip_fields
             )
             futures[fut] = f
 

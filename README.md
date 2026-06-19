@@ -195,6 +195,8 @@ python imgconverter.py --support-bundle ./imgconverter_support.zip
 | `--no-recursive` | Only scan top-level directory |
 | `--dry-run` | List files and exit without converting |
 | `--strip-metadata` | Remove all EXIF/ICC/XMP from output |
+| `--strip-gps` | Strip GPS/location data while preserving copyright and color profiles |
+| `--strip-device` | Strip camera make/model/serial numbers (combine with `--strip-gps` for full privacy) |
 | `--resize` | Resize images, e.g. `max_dim:1920` or `scale:50` |
 | `--skip-existing` | Skip files where output already exists |
 | `--progressive` | Save JPEGs as progressive |
