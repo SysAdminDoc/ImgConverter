@@ -29,6 +29,7 @@ requirements:
     - pillow >=12.2.0
     - pillow-heif >=1.4.0
     - pyqt6 >=6.8
+  run_constrained:
     - numpy >=1.26
 
 test:

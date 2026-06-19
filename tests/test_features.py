@@ -293,6 +293,69 @@ class TestBackendInfo:
         assert any("backend: vips" in warning for warning in result.warnings)
 
 
+class TestReleaseMetadataConsistency:
+
+    def test_app_version_matches_pyproject(self):
+        import imgconverter
+        data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        assert data["project"]["version"] == imgconverter.APP_VERSION
+
+    def test_readme_badge_matches_app_version(self):
+        import imgconverter
+        readme = Path("README.md").read_text(encoding="utf-8")
+        assert f"Version-{imgconverter.APP_VERSION}-" in readme
+
+    def test_dependency_floors_match_across_sources(self):
+        pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        reqs_text = Path("requirements.txt").read_text(encoding="utf-8")
+
+        pyproject_deps = {
+            d.split(">=")[0].strip().lower(): d.split(">=")[1].strip().split(",")[0].strip('"')
+            for d in pyproject["project"]["dependencies"]
+            if ">=" in d
+        }
+        reqs_deps = {}
+        for line in reqs_text.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and ">=" in line:
+                name, ver = line.split(">=", 1)
+                reqs_deps[name.strip().lower()] = ver.strip()
+
+        for pkg in ("pillow", "pillow-heif", "pyqt6"):
+            assert pkg in pyproject_deps, f"{pkg} missing from pyproject.toml"
+            assert pkg in reqs_deps, f"{pkg} missing from requirements.txt"
+            assert pyproject_deps[pkg] == reqs_deps[pkg], (
+                f"{pkg} floor mismatch: pyproject={pyproject_deps[pkg]} vs requirements={reqs_deps[pkg]}"
+            )
+
+    def test_conda_version_matches_app(self):
+        import imgconverter
+        conda_text = Path("packaging/conda-forge/meta.yaml").read_text(encoding="utf-8")
+        assert f'version = "{imgconverter.APP_VERSION}"' in conda_text
+
+    def test_conda_does_not_require_numpy_at_runtime(self):
+        conda_text = Path("packaging/conda-forge/meta.yaml").read_text(encoding="utf-8")
+        in_run = False
+        in_run_constrained = False
+        for line in conda_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("run:") and "constrained" not in stripped:
+                in_run = True
+                in_run_constrained = False
+                continue
+            if stripped.startswith("run_constrained:"):
+                in_run = False
+                in_run_constrained = True
+                continue
+            if stripped and not stripped.startswith("-") and not stripped.startswith("#"):
+                in_run = False
+                in_run_constrained = False
+            if in_run and "numpy" in stripped:
+                raise AssertionError(
+                    f"numpy must be in run_constrained, not run: {stripped}"
+                )
+
+
 class TestCLIGUIPParity:
 
     def test_every_parser_flag_has_parity_mapping(self):
