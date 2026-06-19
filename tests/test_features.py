@@ -1683,6 +1683,57 @@ class TestQtAccessibility:
         w._set_line_error(w.max_file_size_edit, "Use a size like 500MB")
         assert "border" in w.max_file_size_edit.styleSheet()
 
-        w.max_file_size_edit.setText("500MB")
+        w.max_file_size_edit.setText("600MB")
 
         assert w.max_file_size_edit.styleSheet() == ""
+
+    def test_export_log_reports_write_failure(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        w = self.window
+        monkeypatch.setattr(
+            imgconverter.QFileDialog,
+            "getSaveFileName",
+            lambda *args, **kwargs: (str(tmp_workdir / "log.txt"), ""),
+        )
+
+        def fail_write(*args, **kwargs):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(imgconverter, "_write_text_atomic", fail_write)
+
+        w.log_view.setPlainText("session log")
+        w._export_log()
+
+        assert w.workflow_state.text() == "Export failed"
+        assert "Could not export log" in w.log_view.toPlainText()
+
+    def test_export_csv_writes_report(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        w = self.window
+        target = tmp_workdir / "report.csv"
+        monkeypatch.setattr(
+            imgconverter.QFileDialog,
+            "getSaveFileName",
+            lambda *args, **kwargs: (str(target), ""),
+        )
+        w._results = [
+            ConvertResult(
+                src=tmp_workdir / "source.bmp",
+                dst=tmp_workdir / "out" / "source.png",
+                success=True,
+                size_before=100,
+                size_after=64,
+                elapsed=0.125,
+                warnings=["metadata copied"],
+                metadata_report={"icc_before": True, "icc_after": True},
+            )
+        ]
+
+        w._export_csv()
+
+        report = target.read_text(encoding="utf-8")
+        assert "Source,Output,Status" in report
+        assert "source.bmp" in report
+        assert "metadata copied" in report

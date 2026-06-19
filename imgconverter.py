@@ -4078,9 +4078,9 @@ def _seed_user_preset_dir():
         target = USER_PRESET_DIR / f"{slug}.json"
         if not target.exists():
             try:
-                target.write_text(json.dumps({"name": name, **payload}, indent=2))
-            except OSError:
-                pass
+                _write_text_atomic(target, json.dumps({"name": name, **payload}, indent=2) + "\n")
+            except OSError as e:
+                _diag_log(f"preset seed failed for {target}: {e}", level="WARNING")
 
 
 def list_presets() -> dict[str, dict]:
@@ -5977,7 +5977,12 @@ class MainWindow(QMainWindow):
             "Text Files (*.txt);;All Files (*)"
         )
         if path:
-            Path(path).write_text(self.log_view.toPlainText(), encoding="utf-8")
+            try:
+                _write_text_atomic(Path(path), self.log_view.toPlainText(), encoding="utf-8")
+            except OSError as e:
+                self._log(f"[ERROR] Could not export log: {e}")
+                self._set_workflow_state("Export failed", "Choose a writable folder and try again.")
+                return
             self._log(f"Log exported to {path}")
 
     def _export_csv(self):
@@ -5992,20 +5997,26 @@ class MainWindow(QMainWindow):
         )
         if path:
             import csv
-            with open(path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(["Source", "Output", "Status", "Size Before", "Size After",
-                                 "Delta", "Elapsed (s)", "Metadata", "Warnings"])
-                for r in self._results:
-                    status = "OK" if r.success else ("SKIP" if r.skipped else "FAIL")
-                    delta = r.size_before - r.size_after if r.success else 0
-                    writer.writerow([
-                        str(r.src), str(r.dst or ""), status,
-                        r.size_before, r.size_after, delta,
-                        f"{r.elapsed:.3f}",
-                        json.dumps(r.metadata_report, sort_keys=True),
-                        "; ".join(r.warnings) if r.warnings else "",
-                    ])
+            buffer = io.StringIO(newline="")
+            writer = csv.writer(buffer)
+            writer.writerow(["Source", "Output", "Status", "Size Before", "Size After",
+                             "Delta", "Elapsed (s)", "Metadata", "Warnings"])
+            for r in self._results:
+                status = "OK" if r.success else ("SKIP" if r.skipped else "FAIL")
+                delta = r.size_before - r.size_after if r.success else 0
+                writer.writerow([
+                    str(r.src), str(r.dst or ""), status,
+                    r.size_before, r.size_after, delta,
+                    f"{r.elapsed:.3f}",
+                    json.dumps(r.metadata_report, sort_keys=True),
+                    "; ".join(r.warnings) if r.warnings else "",
+                ])
+            try:
+                _write_text_atomic(Path(path), buffer.getvalue(), encoding="utf-8")
+            except OSError as e:
+                self._log(f"[ERROR] Could not export CSV report: {e}")
+                self._set_workflow_state("Export failed", "Choose a writable folder and try again.")
+                return
             self._log(f"CSV report exported to {path}")
 
     def _support_settings_snapshot(self) -> dict[str, object]:
@@ -7396,8 +7407,8 @@ def _install_shell_integration(uninstall: bool = False) -> int:
             "Terminal=false\n"
             "Categories=Graphics;\n"
         )
-        (apps_dir / "imgconverter.desktop").write_text(desktop_content)
-        (actions_dir / "imgconverter.desktop").write_text(desktop_content)
+        _write_text_atomic(apps_dir / "imgconverter.desktop", desktop_content)
+        _write_text_atomic(actions_dir / "imgconverter.desktop", desktop_content)
         print(f"[shell-integration] installed at {apps_dir / 'imgconverter.desktop'}")
         return EXIT_OK
 

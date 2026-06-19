@@ -13,6 +13,8 @@ All notable changes to ImgConverter will be documented in this file.
 - **Watchdog race fix**: Watch mode now synchronizes pending filesystem events before conversion.
 - **Output path fallback**: Preserve-structure conversion paths now fall back to the output root when a direct/shell-selected source is outside the supplied base directory.
 - **Validation recovery**: The GUI max-file-size field now clears its error border when edited, matching source/output recovery behavior.
+- **Export resilience**: GUI log and CSV exports now write atomically and show a recoverable workflow error instead of crashing on disk or permission failures.
+- **First-run preset integrity**: Built-in preset seeding and Linux shell integration writes now use the shared atomic writer.
 
 ### UX/UI
 
