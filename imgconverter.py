@@ -3098,18 +3098,31 @@ class ConvertWorker(QThread):
         self.workers = workers
         self.frames = frames
         self._stop_event = threading.Event()
+        self._pause_event = threading.Event()
+        self._pause_event.set()
 
     def stop(self):
         self._stop_event.set()
+        self._pause_event.set()
+
+    def pause(self):
+        self._pause_event.clear()
+
+    def resume(self):
+        self._pause_event.set()
+
+    @property
+    def is_paused(self) -> bool:
+        return not self._pause_event.is_set()
 
     def run(self):
         results = []
         total = len(self.files)
         done = 0
+        queued = 0
 
         self.log.emit(f"Starting conversion of {total} files with {self.workers} workers...")
 
-        # Multi-frame handling — extract or animate when source has >1 frame.
         if self.frames in ("all", "animate"):
             animated_files = [f for f in self.files if count_frames(f) > 1]
             if animated_files:
@@ -3136,51 +3149,81 @@ class ConvertWorker(QThread):
                 self.files = [f for f in self.files if f not in animated_files]
                 total = len(self.files) + done
 
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
-            futures = {}
-            for seq_i, f in enumerate(self.files, start=1):
-                if self._stop_event.is_set():
-                    break
-                fut = pool.submit(
-                    convert_file, f, self.output_dir, seq=seq_i,
-                    opts=self.opts,
-                )
-                futures[fut] = f
+        max_inflight = self.workers * 2
+        file_iter = iter(enumerate(self.files, start=1))
 
-            for fut in as_completed(futures):
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            futures: dict = {}
+
+            def _submit_batch():
+                nonlocal queued
+                while len(futures) < max_inflight:
+                    if self._stop_event.is_set():
+                        return
+                    try:
+                        seq_i, f = next(file_iter)
+                    except StopIteration:
+                        return
+                    fut = pool.submit(
+                        convert_file, f, self.output_dir, seq=seq_i,
+                        opts=self.opts,
+                    )
+                    futures[fut] = f
+                    queued += 1
+
+            _submit_batch()
+
+            while futures:
+                self._pause_event.wait()
                 if self._stop_event.is_set():
                     pool.shutdown(wait=False, cancel_futures=True)
-                    self.log.emit("Conversion cancelled by user.")
+                    unqueued = total - done - len(futures)
+                    self.log.emit(
+                        f"Cancelled. {done} done, {len(futures)} in-flight discarded, "
+                        f"{max(0, unqueued)} never queued."
+                    )
                     break
 
-                try:
-                    result = fut.result()
-                except Exception as exc:
-                    f = futures[fut]
-                    result = ConvertResult(src=f, size_before=0)
-                    result.error = str(exc)
-                results.append(result)
-                done += 1
-                self.progress.emit(done, total)
-                self.current_file.emit(result.src.name)
-                self.file_done.emit(result)
+                completed = []
+                for fut in list(futures):
+                    if fut.done():
+                        completed.append(fut)
+                if not completed:
+                    time.sleep(0.02)
+                    continue
 
-                if result.skipped:
-                    self.log.emit(f"[SKIP] {result.src.name} — output already exists")
-                elif result.success:
-                    saved = result.size_before - result.size_after
-                    pct = (saved / result.size_before * 100) if result.size_before else 0
-                    deleted_tag = "  [source deleted]" if result.src_deleted else ""
-                    self.log.emit(
-                        f"[OK] {result.src.name} -> {result.dst.name}  "
-                        f"({_fmt_size(result.size_before)} -> {_fmt_size(result.size_after)}, "
-                        f"{pct:+.1f}%)  [{result.elapsed:.2f}s]{deleted_tag}"
-                    )
-                else:
-                    self.log.emit(f"[FAIL] {result.src.name}: {result.error}")
+                for fut in completed:
+                    try:
+                        result = fut.result()
+                    except Exception as exc:
+                        f = futures[fut]
+                        result = ConvertResult(src=f, size_before=0)
+                        result.error = str(exc)
+                    del futures[fut]
+                    results.append(result)
+                    done += 1
+                    self.progress.emit(done, total)
+                    self.current_file.emit(result.src.name)
+                    self.file_done.emit(result)
 
-                for warn in result.warnings:
-                    self.log.emit(f"[WARN] {result.src.name}: {warn}")
+                    if result.skipped:
+                        self.log.emit(f"[SKIP] {result.src.name} — output already exists")
+                    elif result.success:
+                        saved = result.size_before - result.size_after
+                        pct = (saved / result.size_before * 100) if result.size_before else 0
+                        deleted_tag = "  [source deleted]" if result.src_deleted else ""
+                        self.log.emit(
+                            f"[OK] {result.src.name} -> {result.dst.name}  "
+                            f"({_fmt_size(result.size_before)} -> {_fmt_size(result.size_after)}, "
+                            f"{pct:+.1f}%)  [{result.elapsed:.2f}s]{deleted_tag}"
+                        )
+                    else:
+                        self.log.emit(f"[FAIL] {result.src.name}: {result.error}")
+
+                    for warn in result.warnings:
+                        self.log.emit(f"[WARN] {result.src.name}: {warn}")
+
+                _submit_batch()
 
         self.finished_all.emit(results)
 
@@ -4872,6 +4915,13 @@ class MainWindow(QMainWindow):
         self.stop_btn.clicked.connect(self._stop)
         primary_actions.addWidget(self.stop_btn)
 
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.setToolTip("Pause conversion after the current in-flight files finish")
+        self.pause_btn.setAccessibleName("Pause/Resume conversion")
+        self.pause_btn.clicked.connect(self._toggle_pause)
+        primary_actions.addWidget(self.pause_btn)
+
         self.paste_btn = QPushButton("Paste Clipboard")
         self.paste_btn.setToolTip("Paste an image from the clipboard as a temporary PNG input")
         self.paste_btn.clicked.connect(self._paste_clipboard)
@@ -5653,6 +5703,8 @@ class MainWindow(QMainWindow):
         self.scan_btn.setEnabled(False)
         self.convert_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        self.pause_btn.setEnabled(True)
+        self.pause_btn.setText("Pause")
         self.open_output_btn.setEnabled(False)
         self._set_conversion_busy(True)
         self._set_workflow_state("Converting", "Converting batch...")
@@ -5780,6 +5832,8 @@ class MainWindow(QMainWindow):
         self.scan_btn.setEnabled(True)
         self.convert_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.setText("Pause")
         self.open_output_btn.setEnabled(True)
         self._set_conversion_busy(False)
         self.progress_bar.setFormat("%p%")
@@ -5891,7 +5945,21 @@ class MainWindow(QMainWindow):
         if self._worker:
             self._worker.stop()
             self.stop_btn.setEnabled(False)
+            self.pause_btn.setEnabled(False)
+            self.pause_btn.setText("Pause")
             self._set_workflow_state("Stopping", "Stopping after the current file finishes...")
+
+    def _toggle_pause(self):
+        if not self._worker:
+            return
+        if self._worker.is_paused:
+            self._worker.resume()
+            self.pause_btn.setText("Pause")
+            self._set_workflow_state("Converting", "Resumed batch conversion...")
+        else:
+            self._worker.pause()
+            self.pause_btn.setText("Resume")
+            self._set_workflow_state("Paused", "Conversion paused. Click Resume to continue.")
 
     def _open_output(self):
         if self.inplace_chk.isChecked():
