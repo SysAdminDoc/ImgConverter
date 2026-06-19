@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.1.0 - Universal image batch converter
+ImgConverter v3.1.1 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.1.1"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -160,7 +160,6 @@ import json
 import zipfile
 import threading
 import traceback
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
@@ -308,6 +307,7 @@ def _write_text_atomic(path: Path, text: str, encoding: str = "utf-8") -> None:
 HAS_FQM = shutil.which("ffmpeg-quality-metrics") is not None
 BUTTERAUGLI_PATH = shutil.which("butteraugli")
 C2PATOOL_PATH = shutil.which("c2patool")
+FFPROBE_PATH = shutil.which("ffprobe")
 
 
 def _verify_c2pa(path: Path) -> dict[str, object] | None:
@@ -1061,7 +1061,8 @@ CAT = {
     "flamingo":  "#f2cdcd", "rosewater":"#f5e0dc",
 }
 
-STAT_VALUE_STYLE = f"color: {CAT['green']}; font-size: 22px; font-weight: 700;"
+_STAT_FONT = "font-size: 22px; font-weight: 700;"
+STAT_VALUE_STYLE = f"color: {CAT['green']}; {_STAT_FONT}"
 
 STYLESHEET = f"""
 QMainWindow {{
@@ -1917,7 +1918,8 @@ def _apply_watermark(img: "Image.Image", spec: str) -> "Image.Image":
     payload_path = Path(payload) if payload else None
     if payload_path and payload_path.is_file():
         from PIL import Image as _Image
-        mark = _Image.open(payload_path).convert("RGBA")
+        with _Image.open(payload_path) as _wm_src:
+            mark = _wm_src.convert("RGBA")
     else:
         from PIL import ImageDraw, ImageFont
         font_size = max(20, min(iw, ih) // 24)
@@ -2016,7 +2018,10 @@ def _tone_map_hdr(img: "Image.Image", curve: str) -> "Image.Image":
         raise RuntimeError(
             "numpy is required for --tone-map. Install it: pip install numpy"
         )
-    arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
+    rgb = img.convert("RGB")
+    arr = np.asarray(rgb, dtype=np.float64)
+    max_val = 65535.0 if arr.dtype.itemsize > 1 or arr.max() > 255 else 255.0
+    arr = arr / max_val
     if curve == "clip":
         out = np.clip(arr, 0.0, 1.0)
     elif curve == "reinhard":
@@ -2443,7 +2448,7 @@ def _apply_sidecar_metadata_via_exiftool(
     if gp_geo and isinstance(gp_geo, dict):
         lat = gp_geo.get("latitude")
         lon = gp_geo.get("longitude")
-        if lat and lon and (lat != 0.0 or lon != 0.0):
+        if lat is not None and lon is not None and (lat != 0.0 or lon != 0.0):
             try:
                 lat_ref = "N" if lat >= 0 else "S"
                 lon_ref = "E" if lon >= 0 else "W"
@@ -2859,11 +2864,11 @@ def convert_file(
                 bg = (0, 0, 0, 0)
             elif bg_spec.startswith("#"):
                 # #RRGGBB or #RRGGBBAA hex
-                h = bg_spec.lstrip("#")
-                if len(h) == 6:
-                    bg = tuple(int(h[i:i+2], 16) for i in (0, 2, 4)) + (255,)
-                elif len(h) == 8:
-                    bg = tuple(int(h[i:i+2], 16) for i in (0, 2, 4, 6))
+                hex_str = bg_spec.lstrip("#")
+                if len(hex_str) == 6:
+                    bg = tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4)) + (255,)
+                elif len(hex_str) == 8:
+                    bg = tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4, 6))
                 else:
                     bg = (0, 0, 0, 0)
             else:
@@ -2931,6 +2936,7 @@ def convert_file(
             and dpi is None
             and icc_override is None
             and not name_template
+            and not strip_fields
         )
         if same_fmt and no_processing and not recompress_lossless:
             result.skipped = True
@@ -3210,11 +3216,10 @@ def convert_file(
         # the file is parseable by something other than libpillow / libheif.
         # Free run for formats ffprobe natively supports (jpeg, png, webp,
         # avif, tiff). Failures don't fail the convert — just log a WARN.
-        ffprobe = shutil.which("ffprobe")
-        if ffprobe and out_fmt in ("JPEG", "PNG", "WEBP", "AVIF", "TIFF"):
+        if FFPROBE_PATH and out_fmt in ("JPEG", "PNG", "WEBP", "AVIF", "TIFF"):
             try:
                 pr = subprocess.run(
-                    [ffprobe, "-v", "error", "-select_streams", "v:0",
+                    [FFPROBE_PATH, "-v", "error", "-select_streams", "v:0",
                      "-show_entries", "stream=width,height", "-of", "csv=p=0",
                      str(check_path)],
                     capture_output=True, text=True, timeout=10,
@@ -4057,9 +4062,13 @@ def _check_for_update(current_version: str, timeout: float = 3.0) -> str | None:
             if Version(tag) > Version(current_version):
                 return tag
         except Exception:
-            # Fallback: literal string mismatch counts as "newer".
-            if tag and tag != current_version:
-                return tag
+            try:
+                tag_parts = tuple(int(x) for x in tag.split("."))
+                cur_parts = tuple(int(x) for x in current_version.split("."))
+                if tag_parts > cur_parts:
+                    return tag
+            except (ValueError, TypeError):
+                pass
         return None
     except Exception:
         return None
@@ -4649,6 +4658,10 @@ class MainWindow(QMainWindow):
         self._results: list[ConvertResult] = []
         self._convert_start_time: float = 0.0
         self._last_ok_dst: Path | None = None
+        self._ok_count = 0
+        self._skip_count = 0
+        self._fail_count = 0
+        self._saved_bytes = 0
 
         # System tray for completion notifications
         self._tray = QSystemTrayIcon(self._icon, self)
@@ -5111,7 +5124,7 @@ class MainWindow(QMainWindow):
 
         self.meta_chk = QCheckBox("Preserve metadata")
         self.meta_chk.setVisible(False)
-        self.strip_meta_chk = QCheckBox("Strip metadata")
+        self.strip_meta_chk = QCheckBox("Strip all metadata")
         self.strip_meta_chk.setVisible(False)
 
         self.skip_existing_chk = QCheckBox("Skip files that already have output")
@@ -6254,6 +6267,10 @@ class MainWindow(QMainWindow):
             resize_mode = "max_dim" if self.resize_combo.currentIndex() == 0 else "scale"
 
         self._results = []
+        self._ok_count = 0
+        self._skip_count = 0
+        self._fail_count = 0
+        self._saved_bytes = 0
         self._convert_start_time = time.perf_counter()
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(self._scan_result.files))
@@ -6358,28 +6375,32 @@ class MainWindow(QMainWindow):
         if (not result.success and not result.skipped and result.error
                 and ("errno 28" in result.error.lower()
                      or "no space left" in result.error.lower()
-                     or "not enough space" in result.error.lower())):
+                     or "not enough space" in result.error.lower()
+                     or "[errno 28]" in result.error.lower())):
             self._log(f"[ERROR] Disk full detected on {result.src.name} — stopping batch.")
             if self._worker:
                 self._worker.stop()
 
-        ok = sum(1 for r in self._results if r.success)
-        skipped = sum(1 for r in self._results if r.skipped)
-        fail = sum(1 for r in self._results if not r.success and not r.skipped)
-        saved = sum(r.size_before - r.size_after for r in self._results if r.success)
+        if result.skipped:
+            self._skip_count += 1
+        elif result.success:
+            self._ok_count += 1
+            self._saved_bytes += result.size_before - result.size_after
+        else:
+            self._fail_count += 1
 
-        self.stat_done._val.setText(str(ok))
-        self.stat_skipped._val.setText(str(skipped))
-        if skipped:
-            self.stat_skipped._val.setStyleSheet(f"color: {CAT['yellow']}; font-size: 22px; font-weight: 700;")
-        self.stat_failed._val.setText(str(fail))
-        if fail:
-            self.stat_failed._val.setStyleSheet(f"color: {CAT['red']}; font-size: 22px; font-weight: 700;")
-        self.stat_saved._val.setText(_fmt_size(abs(saved)))
-        if saved >= 0:
+        self.stat_done._val.setText(str(self._ok_count))
+        self.stat_skipped._val.setText(str(self._skip_count))
+        if self._skip_count:
+            self.stat_skipped._val.setStyleSheet(f"color: {CAT['yellow']}; {_STAT_FONT}")
+        self.stat_failed._val.setText(str(self._fail_count))
+        if self._fail_count:
+            self.stat_failed._val.setStyleSheet(f"color: {CAT['red']}; {_STAT_FONT}")
+        self.stat_saved._val.setText(_fmt_size(abs(self._saved_bytes)))
+        if self._saved_bytes >= 0:
             self.stat_saved._val.setStyleSheet(STAT_VALUE_STYLE)
         else:
-            self.stat_saved._val.setStyleSheet(f"color: {CAT['peach']}; font-size: 22px; font-weight: 700;")
+            self.stat_saved._val.setStyleSheet(f"color: {CAT['peach']}; {_STAT_FONT}")
 
     def _play_completion_sound(self):
         """Play a platform-specific notification sound."""
@@ -6488,22 +6509,30 @@ class MainWindow(QMainWindow):
                 countdown.setStandardButtons(QMessageBox.StandardButton.Cancel)
                 countdown.setDefaultButton(QMessageBox.StandardButton.Cancel)
                 _remaining = [30]
+                _cancelled = [False]
                 def _tick():
                     _remaining[0] -= 1
                     if _remaining[0] <= 0:
                         _timer.stop()
-                        countdown.done(1)
+                        countdown.accept()
                     else:
                         countdown.setText(
                             f"System will {action} in {_remaining[0]} seconds.\n"
                             f"Click Cancel to abort."
                         )
+                countdown.buttonClicked.connect(lambda btn: setattr(_cancelled, '__setitem__', (0, True)) or countdown.reject())
+                def _on_cancel(btn):
+                    _cancelled[0] = True
+                    _timer.stop()
+                    countdown.reject()
+                countdown.buttonClicked.disconnect()
+                countdown.buttonClicked.connect(_on_cancel)
                 _timer = QTimer(self)
                 _timer.timeout.connect(_tick)
                 _timer.start(1000)
-                result_code = countdown.exec()
+                countdown.exec()
                 _timer.stop()
-                if result_code == 1:
+                if not _cancelled[0]:
                     _execute_when_done(action)
             elif action == "close":
                 QTimer.singleShot(500, QApplication.instance().quit)
@@ -6961,7 +6990,7 @@ CLI_FLAG_PARITY = {
     "--recursive": {"surface": "gui", "gui": ("recursive_chk",), "readme": True, "note": "Recursive scan toggle"},
     "--no-recursive": {"surface": "gui", "gui": ("recursive_chk",), "readme": True, "note": "Recursive scan toggle inverse"},
     "--dry-run": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless preview"},
-    "--strip-metadata": {"surface": "gui", "gui": ("strip_meta_chk",), "readme": True, "note": "Metadata removal"},
+    "--strip-metadata": {"surface": "gui", "gui": ("meta_combo",), "readme": True, "note": "Metadata removal (meta_combo index 3)"},
     "--strip-gps": {"surface": "gui", "gui": ("meta_combo",), "readme": True, "note": "GPS/location privacy strip"},
     "--strip-device": {"surface": "gui", "gui": ("meta_combo",), "readme": True, "note": "Camera make/model/serial privacy strip"},
     "--resize": {"surface": "gui", "gui": ("resize_chk", "resize_combo", "resize_spin"), "readme": True, "note": "Resize controls"},
@@ -7162,8 +7191,8 @@ def _save_queue_state(input_dir: Path, output_dir: Path, args, pending: list[Pat
             "format": getattr(args, "format", None),
             "quality": getattr(args, "quality", None),
             "pending": [str(p) for p in pending],
-            "done": done,
-            "failed": failed,
+            "done": sorted(done),
+            "failed": sorted(failed),
         }
         _write_text_atomic(QUEUE_STATE_PATH, json.dumps(state, indent=2) + "\n")
     except Exception as e:
@@ -8098,8 +8127,8 @@ def _run_cli(args):
             print(f"[cache] skipping {len(cache_skipped)} files seen with this preset")
         scan.files = pruned
         total = len(scan.files)
-    done_paths: list[str] = []
-    failed_paths: list[str] = []
+    done_paths: set[str] = set()
+    failed_paths: set[str] = set()
 
     with Executor(max_workers=args.workers) as pool:
         futures = {}
@@ -8121,7 +8150,7 @@ def _run_cli(args):
             done_count += 1
             if result.skipped:
                 skip_count += 1
-                done_paths.append(str(result.src))
+                done_paths.add(str(result.src))
                 print(f"[SKIP] ({done_count}/{total}) {result.src.name}")
             elif result.success:
                 ok_count += 1
@@ -8135,7 +8164,7 @@ def _run_cli(args):
                 )
             else:
                 fail_count += 1
-                failed_paths.append(str(result.src))
+                failed_paths.add(str(result.src))
                 print(f"[FAIL] ({done_count}/{total}) {result.src.name}: {result.error}")
 
             _emit_progress("file_done", {
@@ -8154,7 +8183,7 @@ def _run_cli(args):
                     print(f"[WARN] memory pressure: {free_pct:.0f}% free < {_mem_threshold}% threshold")
 
             if result.success and not result.skipped:
-                done_paths.append(str(result.src))
+                done_paths.add(str(result.src))
                 # Quality verification — butteraugli / ffmpeg-quality-metrics.
                 if getattr(args, "verify_quality", False):
                     qline = _verify_quality(result.src, result.dst)
@@ -8412,7 +8441,6 @@ def main():
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor(CAT["crust"]))
     app.setPalette(palette)
 
-    app.setWindowIcon(_create_app_icon())
     window = MainWindow()
     window.setWindowIcon(branding_icon)
     window.show()

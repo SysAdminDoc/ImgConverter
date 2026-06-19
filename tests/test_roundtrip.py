@@ -48,6 +48,17 @@ def test_rgba_to_jpeg_falls_back_to_png(rgba_image, tmp_workdir):
     assert result.dst.suffix == ".png"
 
 
+def test_auto_rgb_selects_jpeg(rgb_image, tmp_workdir):
+    """auto-mode RGB input (no alpha) should pick JPEG, not PNG."""
+    src = tmp_workdir / "solid.bmp"
+    rgb_image.save(src)
+    out_dir = tmp_workdir / "out"
+
+    result = convert_file(src, out_dir, fmt="auto")
+    assert result.success
+    assert result.dst.suffix == ".jpg"
+
+
 def test_same_format_no_op_skip(rgb_image, tmp_workdir):
     """JPEG source -> JPEG target with no processing -> skipped, source untouched."""
     src = tmp_workdir / "src.jpg"

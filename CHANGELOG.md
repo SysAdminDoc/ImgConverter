@@ -2,6 +2,32 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.1.1] — 2026-06-19
+
+### Fixed
+
+- **GPS zero-coordinate bug**: Google Photos sidecar GPS coordinates at latitude 0 (equator) or longitude 0 (prime meridian) were silently dropped due to Python truthiness check treating 0.0 as falsy.
+- **Same-format skip guard missed `strip_fields`**: Selective metadata stripping (`--strip-gps`, `--strip-device`) was silently skipped when the input and output format matched and no other processing was requested.
+- **HDR tone-map clipped to 8-bit before curve**: `_tone_map_hdr` converted 16-bit sources to 8-bit RGB before applying the tone-mapping curve, destroying the dynamic range the curve is meant to compress. Now normalizes from native bit depth using float64.
+- **When-done countdown Cancel button non-functional**: The sleep/shutdown countdown dialog used `countdown.done(1)` for both timer expiry and Cancel click, making it impossible for users to abort the system action. Cancel now properly aborts.
+- **O(n²) GUI stat counters**: `_on_file_done` recomputed ok/skip/fail/saved by scanning the full results list on every file completion. Replaced with incremental counters.
+- **CLI queue state O(n) membership checks**: `done_paths` and `failed_paths` were lists checked with `in` operator. Converted to sets for O(1) lookups.
+- **ffprobe looked up per-file**: `shutil.which("ffprobe")` was called inside the hot `convert_file` path for every file. Cached at module load like other external tools.
+- **Variable shadow in canvas block**: Local `h` variable for hex parsing shadowed the image height `h` from the outer scope.
+- **Watermark image file handle leak**: `Image.open(payload_path)` was not closed after `.convert("RGBA")`.
+- **Update check fallback treated older versions as newer**: When `packaging` was unavailable, any version string different from the current was returned as "newer". Now uses tuple comparison as fallback.
+- **Redundant app icon set in main()**: `app.setWindowIcon` was called twice with different icons; the second call overwrote the first. Removed the dead call.
+- **Inline stat-value font sizes**: Hardcoded `font-size: 22px; font-weight: 700` in stat color overrides now uses the shared `_STAT_FONT` constant.
+- **Disk-full detection robustness**: Added `[errno 28]` pattern match alongside the existing English string checks.
+
+### Improved
+
+- **Pillow 14 compatibility**: Test suite no longer uses deprecated `Image.getdata()` (removed in Pillow 14, 2027-10-15); uses `get_flattened_data` when available.
+- **Duplicate import removed**: `from pathlib import Path` was imported twice.
+- **Duplicate classifier removed**: `Programming Language :: Python :: 3.14` appeared twice in `pyproject.toml`.
+- **CLI parity dict accuracy**: `--strip-metadata` GUI mapping now points to `meta_combo` (the actual control) instead of the hidden legacy `strip_meta_chk`.
+- 2 new tests: same-format-with-strip-fields skip guard, auto-mode RGB→JPEG format selection.
+
 ## [v3.1.0] — 2026-06-16
 
 ### Audit hardening

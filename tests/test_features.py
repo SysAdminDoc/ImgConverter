@@ -916,7 +916,8 @@ class TestWatermark:
         assert r_wm.success
 
         with Image.open(r_plain.dst) as a, Image.open(r_wm.dst) as b:
-            assert list(a.convert("RGB").getdata()) != list(b.convert("RGB").getdata()), \
+            _get = getattr(Image.Image, "get_flattened_data", Image.Image.getdata)
+            assert list(_get(a.convert("RGB"))) != list(_get(b.convert("RGB"))), \
                 "Watermark should alter pixels"
 
     def test_watermark_warning_emitted(self, rgb_image, tmp_workdir):
@@ -1429,6 +1430,17 @@ class TestSkipGuard:
         rgb_image.save(src, "JPEG", quality=90)
         out = tmp_workdir / "out"
         result = convert_file(src, out, fmt="jpeg", dpi=(300, 300))
+        assert not result.skipped
+
+    def test_same_format_with_strip_fields_not_skipped(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=90)
+        out = tmp_workdir / "out"
+        result = convert_file(
+            src, out, fmt="jpeg",
+            strip_fields=frozenset({"gps"}),
+            convert_to_srgb=True,
+        )
         assert not result.skipped
 
     def test_same_format_no_processing_is_skipped(self, rgb_image, tmp_workdir):
