@@ -2,6 +2,20 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.3.0] — 2026-06-19
+
+### Improved
+
+- **Premium workflow state polish**: The header workflow label now uses semantic visual tones for active, success, warning, and danger states instead of one static badge treatment.
+- **Action hierarchy refinement**: Secondary actions now use a quieter visual role while destructive dialog actions use a distinct danger role, making the main Scan/Convert path easier to read.
+- **Management dialog finish**: Plugin trust and watch-folder dialogs now show explicit empty states and clearer button roles.
+- **Accessibility sync**: Live stat cards now update their accessible descriptions whenever scan/conversion counts change.
+- **First-run trust copy**: The app subtitle now reinforces the local/private conversion model without adding clutter.
+
+### Changed
+
+- Watch-folder profile removal now follows the no-confirmation interaction rule: the profile is removed immediately and the dialog reports the result in-place.
+
 ## [v3.2.0] — 2026-06-19
 
 ### Fixed

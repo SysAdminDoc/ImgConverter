@@ -1,8 +1,8 @@
 # ImgConverter
 
-Universal image batch converter with a modern GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
+Universal image batch converter with a modern, local-first GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
 
-![Version](https://img.shields.io/badge/Version-3.2.0-blue)
+![Version](https://img.shields.io/badge/Version-3.3.0-blue)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
@@ -73,7 +73,8 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **File count in title bar** — shows file count after scan, progress during conversion, summary when done
 - **Resize upscaling guard** — warns when image is already smaller than the resize target
 - **Conversion presets** — Web Optimized, Archive Quality, Mobile Friendly, Print/TIFF one-click presets
-- **Premium workflow UI** — compact source/output setup, visible workflow status, refined action bar, collapsible input filters, and calmer first-run log state
+- **Premium workflow UI** — compact source/output setup, tone-aware workflow status, refined action bar, collapsible input filters, and calmer first-run log state
+- **Polished management dialogs** — plugin trust and watch-folder profiles use clearer empty states, action roles, and keyboard-friendly table behavior
 - **True collapsed advanced controls** — advanced output controls stay out of the main flow until expanded
 - **Smart option visibility** — format-specific controls auto-show/hide based on output format
 - **Dark title bar** — native dark title bar on Windows 10/11 matching Catppuccin theme

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.2.0 - Universal image batch converter
+ImgConverter v3.3.0 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.3.0"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -1108,6 +1108,26 @@ QLabel#workflowState {{
     font-size: 12px;
     font-weight: 700;
 }}
+QLabel#workflowState[tone="active"] {{
+    color: {CAT['blue']};
+    border-color: {CAT['blue']};
+    background-color: {CAT['surface0']};
+}}
+QLabel#workflowState[tone="success"] {{
+    color: {CAT['green']};
+    border-color: {CAT['green']};
+    background-color: {CAT['mantle']};
+}}
+QLabel#workflowState[tone="warning"] {{
+    color: {CAT['yellow']};
+    border-color: {CAT['yellow']};
+    background-color: {CAT['surface0']};
+}}
+QLabel#workflowState[tone="danger"] {{
+    color: {CAT['red']};
+    border-color: {CAT['red']};
+    background-color: {CAT['surface0']};
+}}
 QLabel#fieldLabel {{
     color: {CAT['subtext1']};
     font-size: 12px;
@@ -1193,6 +1213,25 @@ QPushButton#miniBtn {{
     font-size: 11px;
     padding: 3px 10px;
     min-height: 18px;
+}}
+QPushButton#secondaryBtn {{
+    background-color: {CAT['mantle']};
+    color: {CAT['subtext1']};
+    border-color: {CAT['surface0']};
+}}
+QPushButton#secondaryBtn:hover {{
+    color: {CAT['text']};
+    background-color: {CAT['surface0']};
+    border-color: {CAT['surface2']};
+}}
+QPushButton#dangerBtn {{
+    background-color: {CAT['mantle']};
+    color: {CAT['red']};
+    border-color: {CAT['surface1']};
+}}
+QPushButton#dangerBtn:hover {{
+    background-color: {CAT['surface0']};
+    border-color: {CAT['red']};
 }}
 QLineEdit {{
     background-color: {CAT['surface0']};
@@ -1352,6 +1391,14 @@ QLabel#dialogHint {{
     color: {CAT['subtext0']};
     font-size: 12px;
 }}
+QLabel#emptyState {{
+    color: {CAT['subtext1']};
+    background-color: {CAT['mantle']};
+    border: 1px solid {CAT['surface0']};
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+}}
 QLabel#statValue {{
     color: {CAT['green']};
     font-size: 22px;
@@ -1473,6 +1520,13 @@ QMenu::item:selected {{
     background-color: {CAT['surface1']};
     color: {CAT['lavender']};
 }}
+QToolTip {{
+    background-color: {CAT['surface0']};
+    color: {CAT['text']};
+    border: 1px solid {CAT['surface2']};
+    border-radius: 4px;
+    padding: 6px 8px;
+}}
 """
 
 WCAG_AA_NORMAL_TEXT_CONTRAST = 4.5
@@ -1482,6 +1536,10 @@ STYLESHEET_READABLE_PAIRS = (
     ("QLabel#appVersion", "overlay2", "mantle"),
     ("QLabel#appSubtitle", "subtext0", "mantle"),
     ("QLabel#workflowState", "lavender", "surface0"),
+    ("QLabel#workflowState[tone=\"active\"]", "blue", "surface0"),
+    ("QLabel#workflowState[tone=\"success\"]", "green", "mantle"),
+    ("QLabel#workflowState[tone=\"warning\"]", "yellow", "surface0"),
+    ("QLabel#workflowState[tone=\"danger\"]", "red", "surface0"),
     ("QLabel#fieldLabel", "subtext1", "base"),
     ("QGroupBox", "lavender", "mantle"),
     ("QPushButton", "text", "surface0"),
@@ -1490,6 +1548,8 @@ STYLESHEET_READABLE_PAIRS = (
     ("QPushButton#primaryBtn:disabled", "subtext1", "surface1"),
     ("QPushButton#stopBtn", "crust", "red"),
     ("QPushButton#stopBtn:disabled", "subtext1", "surface1"),
+    ("QPushButton#secondaryBtn", "subtext1", "mantle"),
+    ("QPushButton#dangerBtn", "red", "mantle"),
     ("QLineEdit", "text", "surface0"),
     ("QComboBox", "text", "surface0"),
     ("QSpinBox", "text", "surface0"),
@@ -1502,6 +1562,7 @@ STYLESHEET_READABLE_PAIRS = (
     ("QCheckBox:disabled", "subtext1", "base"),
     ("QLabel#dimLabel", "overlay2", "base"),
     ("QLabel#dialogHint", "subtext0", "base"),
+    ("QLabel#emptyState", "subtext1", "mantle"),
     ("QLabel#statValue", "green", "base"),
     ("QLabel#statLabel", "overlay2", "base"),
     ("QStatusBar", "subtext0", "mantle"),
@@ -1510,6 +1571,7 @@ STYLESHEET_READABLE_PAIRS = (
     ("QToolButton#advancedToggle", "subtext1", "mantle"),
     ("QMenu", "text", "surface0"),
     ("QMenu::item:selected", "lavender", "surface1"),
+    ("QToolTip", "text", "surface0"),
 )
 STYLESHEET_FOCUS_SELECTORS = (
     "QPushButton:focus",
@@ -4292,6 +4354,12 @@ class PluginTrustDialog(QDialog):
         self.status_label.setAccessibleName("Plugin trust summary")
         layout.addWidget(self.status_label)
 
+        self.empty_label = QLabel("No local plugin files or package entry points were found.")
+        self.empty_label.setObjectName("emptyState")
+        self.empty_label.setWordWrap(True)
+        self.empty_label.setVisible(False)
+        layout.addWidget(self.empty_label)
+
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Plugin", "Path", "Status", "Hash", "Reason"])
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -4309,6 +4377,9 @@ class PluginTrustDialog(QDialog):
         self.trust_btn = QPushButton("Trust")
         self.untrust_btn = QPushButton("Untrust")
         self.close_btn = QPushButton("Close")
+        self.trust_btn.setObjectName("primaryBtn")
+        self.untrust_btn.setObjectName("dangerBtn")
+        self.close_btn.setObjectName("secondaryBtn")
         self.refresh_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         self.trust_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
         self.untrust_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogDiscardButton))
@@ -4353,6 +4424,8 @@ class PluginTrustDialog(QDialog):
         else:
             text = f"{total} plugin entr{'y' if total == 1 else 'ies'} found."
         self.status_label.setText(text)
+        self.empty_label.setVisible(total == 0)
+        self.table.setEnabled(total > 0)
         self._update_actions()
 
     def _selected_row(self) -> dict | None:
@@ -4448,6 +4521,12 @@ class WatchFolderDialog(QDialog):
         self.status_label.setAccessibleName("Watch folder summary")
         layout.addWidget(self.status_label)
 
+        self.empty_label = QLabel("No watch profiles yet.")
+        self.empty_label.setObjectName("emptyState")
+        self.empty_label.setWordWrap(True)
+        self.empty_label.setVisible(False)
+        layout.addWidget(self.empty_label)
+
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Source Folder", "Output Folder", "Preset", "Enabled", "Status"])
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -4465,6 +4544,9 @@ class WatchFolderDialog(QDialog):
         self.remove_btn = QPushButton("Remove")
         self.toggle_btn = QPushButton("Enable")
         self.close_btn = QPushButton("Close")
+        self.add_btn.setObjectName("primaryBtn")
+        self.remove_btn.setObjectName("dangerBtn")
+        self.close_btn.setObjectName("secondaryBtn")
         self.add_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
         self.remove_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
         self.toggle_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
@@ -4516,6 +4598,8 @@ class WatchFolderDialog(QDialog):
         else:
             text = f"{total} watch profile{'s' if total != 1 else ''}; {enabled} enabled."
         self.status_label.setText(text)
+        self.empty_label.setVisible(total == 0)
+        self.table.setEnabled(total > 0)
         self._update_actions()
 
     def _selected_profile(self) -> tuple[int, dict] | tuple[None, None]:
@@ -4568,18 +4652,14 @@ class WatchFolderDialog(QDialog):
     def _remove_selected(self):
         row, profile = self._selected_profile()
         if row is not None and profile is not None:
-            answer = QMessageBox.question(
-                self,
-                "Remove Watch Profile",
-                f"Remove the watch profile for:\n{profile.get('source', '')}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+            source = str(profile.get("source", ""))
             self._profiles.pop(row)
             _save_watch_profiles(self._profiles)
             self._refresh()
+            label = Path(source).name or source or "profile"
+            self.status_label.setText(f"Removed watch profile: {label}.")
+            if self.table.rowCount():
+                self.table.selectRow(min(row, self.table.rowCount() - 1))
 
     def _toggle_selected(self):
         row, _profile = self._selected_profile()
@@ -4587,6 +4667,37 @@ class WatchFolderDialog(QDialog):
             self._profiles[row]["enabled"] = not self._profiles[row].get("enabled", True)
             _save_watch_profiles(self._profiles)
             self._refresh()
+
+
+WORKFLOW_TONE_BY_STATE = {
+    "ready": "ready",
+    "ready to convert": "success",
+    "complete": "success",
+    "support bundle exported": "success",
+    "scanning": "active",
+    "converting": "active",
+    "paused": "warning",
+    "stopping": "warning",
+    "in-place mode": "warning",
+    "needs input": "warning",
+    "no image": "warning",
+    "no files": "warning",
+    "no report": "warning",
+    "review log": "warning",
+    "blocked": "danger",
+    "failed": "danger",
+    "export failed": "danger",
+}
+
+
+def _refresh_widget_style(widget):
+    """Force Qt to re-evaluate dynamic-property stylesheet selectors."""
+    try:
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
+    except Exception:
+        pass
 
 
 MAIN_WINDOW_ACCESSIBILITY_LABELS = (
@@ -4638,7 +4749,7 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("convert_btn",         "Convert batch",            "Start converting the scanned batch"),
     ("stop_btn",            "Cancel conversion",        "Stop the current conversion batch"),
     ("pause_btn",           "Pause or resume conversion", "Pause or resume the current conversion batch"),
-    ("paste_btn",           "Paste clipboard",          "Paste an image from clipboard as input"),
+    ("paste_btn",           "Paste image",              "Paste an image from clipboard as input"),
     ("manage_plugins_btn",  "Plugin trust",             "Review plugin trust status and trust or untrust plugin files"),
     ("watch_folders_btn",   "Watch folder profiles",    "Manage local hot-folder conversion profiles"),
     ("auto_open_chk",       "Auto-open output",         "Automatically open the output folder when conversion finishes"),
@@ -4745,13 +4856,13 @@ class MainWindow(QMainWindow):
         _diag_log(f"Update available: v{latest}")
 
     def _log_startup(self):
-        """Log supported formats, dependency versions, and optional dep status on launch."""
-        self._log(f"ImgConverter v{APP_VERSION}")
+        """Log startup readiness without flooding the first-run activity view."""
+        self._log(f"ImgConverter v{APP_VERSION} ready.")
         # Core dependency versions
         from PIL import __version__ as pil_ver
         from PyQt6.QtCore import PYQT_VERSION_STR
         heif_ver = getattr(pillow_heif, "__version__", "unknown")
-        self._log(f"Pillow {pil_ver}, pillow-heif {heif_ver}, PyQt6 {PYQT_VERSION_STR}")
+        _diag_log(f"Pillow {pil_ver}, pillow-heif {heif_ver}, PyQt6 {PYQT_VERSION_STR}")
         # Optional dependency versions
         opt_vers = []
         if HAS_RAWPY:
@@ -4761,8 +4872,8 @@ class MainWindow(QMainWindow):
         if HAS_QOI:
             opt_vers.append(f"qoi {getattr(qoi_lib, '__version__', '?')}")
         if opt_vers:
-            self._log(f"Optional: {', '.join(opt_vers)}")
-        self._log(f"Supported input formats: {get_format_support_summary()}")
+            _diag_log(f"Optional dependencies: {', '.join(opt_vers)}")
+        self._log(f"Input formats ready: {get_format_support_summary()}")
         missing = []
         if not HAS_JXL:
             missing.append("JPEG XL (pip install pillow-jxl-plugin)")
@@ -4771,13 +4882,13 @@ class MainWindow(QMainWindow):
         if not HAS_QOI:
             missing.append("QOI (pip install qoi)")
         if missing:
-            self._log(f"Optional formats unavailable: {', '.join(missing)}")
+            self._log(f"Optional add-ons unavailable: {', '.join(missing)}")
         if HAS_EXIFTOOL:
-            self._log(f"ExifTool: {EXIFTOOL_PATH}")
+            _diag_log(f"ExifTool: {EXIFTOOL_PATH}")
         else:
-            self._log("[WARN] ExifTool not found — metadata limited to EXIF/ICC/XMP (MakerNotes, GPS sub-IFDs, IPTC will be lost)")
+            self._log("[WARN] ExifTool not found - extended metadata recovery is disabled.")
         exts = sorted(get_supported_extensions())
-        self._log(f"Scanning for: {' '.join(exts)}")
+        _diag_log(f"Scanning extensions: {' '.join(exts)}")
         self._log("")
 
     def _update_title(self, state: str = "base", **kwargs):
@@ -4919,13 +5030,14 @@ class MainWindow(QMainWindow):
         ver.setObjectName("appVersion")
         self.workflow_state = QLabel("Ready")
         self.workflow_state.setObjectName("workflowState")
+        self.workflow_state.setProperty("tone", "ready")
         self.workflow_state.setAccessibleName("Workflow status")
         self.workflow_state.setAccessibleDescription("Current batch workflow state")
         title_row.addWidget(title)
         title_row.addWidget(ver)
         title_row.addWidget(self.workflow_state)
         title_row.addStretch()
-        desc = QLabel("Metadata-safe batch image conversion")
+        desc = QLabel("Private, metadata-safe batch image conversion")
         desc.setObjectName("appSubtitle")
         desc.setWordWrap(True)
         title_block.addLayout(title_row)
@@ -4949,7 +5061,7 @@ class MainWindow(QMainWindow):
         self.src_edit.textChanged.connect(lambda: self.src_edit.setStyleSheet(""))
         io_grid.addWidget(self.src_edit, 0, 1)
         self.src_btn = QPushButton("Choose")
-        self.src_btn.setFixedWidth(84)
+        self.src_btn.setFixedWidth(104)
         self.src_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.src_btn.clicked.connect(self._browse_source)
         io_grid.addWidget(self.src_btn, 0, 2)
@@ -4980,7 +5092,7 @@ class MainWindow(QMainWindow):
         self.dst_edit.textChanged.connect(lambda: self.dst_edit.setStyleSheet(""))
         io_grid.addWidget(self.dst_edit, 1, 1)
         self.dst_btn = QPushButton("Choose")
-        self.dst_btn.setFixedWidth(84)
+        self.dst_btn.setFixedWidth(104)
         self.dst_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.dst_btn.clicked.connect(self._browse_output)
         io_grid.addWidget(self.dst_btn, 1, 2)
@@ -5478,6 +5590,7 @@ class MainWindow(QMainWindow):
         primary_actions.addWidget(self.stop_btn)
 
         self.pause_btn = QPushButton("Pause")
+        self.pause_btn.setObjectName("secondaryBtn")
         self.pause_btn.setEnabled(False)
         self.pause_btn.setToolTip("Pause conversion after the current in-flight files finish")
         self.pause_btn.setAccessibleName("Pause/Resume conversion")
@@ -5485,7 +5598,8 @@ class MainWindow(QMainWindow):
         self.pause_btn.clicked.connect(self._toggle_pause)
         primary_actions.addWidget(self.pause_btn)
 
-        self.paste_btn = QPushButton("Paste Clipboard")
+        self.paste_btn = QPushButton("Paste Image")
+        self.paste_btn.setObjectName("secondaryBtn")
         self.paste_btn.setToolTip("Paste an image from the clipboard as a temporary PNG input")
         self.paste_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
         self.paste_btn.clicked.connect(self._paste_clipboard)
@@ -5495,12 +5609,14 @@ class MainWindow(QMainWindow):
         secondary_actions.addWidget(self.paste_btn)
 
         self.manage_plugins_btn = QPushButton("Plugins")
+        self.manage_plugins_btn.setObjectName("secondaryBtn")
         self.manage_plugins_btn.setToolTip("Review plugin trust status")
         self.manage_plugins_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView))
         self.manage_plugins_btn.clicked.connect(self._open_plugin_trust)
         secondary_actions.addWidget(self.manage_plugins_btn)
 
         self.watch_folders_btn = QPushButton("Watch Folders")
+        self.watch_folders_btn.setObjectName("secondaryBtn")
         self.watch_folders_btn.setToolTip("Manage hot-folder watch profiles")
         self.watch_folders_btn.setAccessibleName("Watch folder profiles")
         self.watch_folders_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
@@ -5525,6 +5641,7 @@ class MainWindow(QMainWindow):
         output_actions.addWidget(self.when_done_combo)
 
         self.open_output_btn = QPushButton("Open Output")
+        self.open_output_btn.setObjectName("secondaryBtn")
         self.open_output_btn.setEnabled(False)
         self.open_output_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.open_output_btn.clicked.connect(self._open_output)
@@ -5648,7 +5765,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(val)
         lay.addWidget(lbl)
         w._val = val
+        w._stat_label = label
         return w
+
+    def _set_stat_value(self, card, value: str):
+        card._val.setText(value)
+        label = getattr(card, "_stat_label", card.accessibleName() or "Statistic")
+        card.setAccessibleDescription(f"{label}: {value}")
 
     def _toggle_advanced(self, checked: bool):
         self.adv_group.setVisible(checked)
@@ -5664,9 +5787,15 @@ class MainWindow(QMainWindow):
             "Hide input format filters" if checked else "Show input format filters"
         )
 
-    def _set_workflow_state(self, state: str, message: str | None = None):
+    def _set_workflow_state(self, state: str, message: str | None = None, tone: str | None = None):
         if hasattr(self, "workflow_state"):
             self.workflow_state.setText(state)
+            next_tone = tone or WORKFLOW_TONE_BY_STATE.get(state.casefold(), "ready")
+            self.workflow_state.setProperty("tone", next_tone)
+            if message:
+                self.workflow_state.setAccessibleDescription(message)
+                self.workflow_state.setStatusTip(message)
+            _refresh_widget_style(self.workflow_state)
         if message and hasattr(self, "status_bar"):
             self.status_bar.showMessage(message)
 
@@ -5775,8 +5904,8 @@ class MainWindow(QMainWindow):
             self.src_edit.setText(common_parent)
             if not self.dst_edit.text() and not self.inplace_chk.isChecked():
                 self.dst_edit.setText(str(Path(common_parent) / "converted"))
-            self.stat_files._val.setText(str(len(files)))
-            self.stat_size._val.setText(_fmt_size(total_size))
+            self._set_stat_value(self.stat_files, str(len(files)))
+            self._set_stat_value(self.stat_size, _fmt_size(total_size))
             self.convert_btn.setEnabled(True)
             self._update_title("scanned", count=len(files))
             self._log(f"Added {len(files)} file{'s' if len(files) != 1 else ''} via drag & drop")
@@ -5801,8 +5930,8 @@ class MainWindow(QMainWindow):
         self.src_edit.setText(str(tmp_dir))
         if not self.dst_edit.text() and not self.inplace_chk.isChecked():
             self.dst_edit.setText(str(tmp_dir / "converted"))
-        self.stat_files._val.setText("1")
-        self.stat_size._val.setText(_fmt_size(total_size))
+        self._set_stat_value(self.stat_files, "1")
+        self._set_stat_value(self.stat_size, _fmt_size(total_size))
         self.convert_btn.setEnabled(True)
         self._update_title("scanned", count=1)
         self.progress_bar.setMaximum(100)
@@ -6174,8 +6303,8 @@ class MainWindow(QMainWindow):
                 rel = Path(directory).name
         except ValueError:
             rel = directory
-        self.stat_files._val.setText(str(count))
-        self.stat_size._val.setText(_fmt_size(total_size))
+        self._set_stat_value(self.stat_files, str(count))
+        self._set_stat_value(self.stat_size, _fmt_size(total_size))
         self._log(f"  {rel}/ — {dir_count} file{'s' if dir_count != 1 else ''}")
         self.status_bar.showMessage(f"Scanning... {count} files found ({_fmt_size(total_size)})")
 
@@ -6186,8 +6315,8 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("%p%")
 
-        self.stat_files._val.setText(str(len(result.files)))
-        self.stat_size._val.setText(_fmt_size(result.total_size))
+        self._set_stat_value(self.stat_files, str(len(result.files)))
+        self._set_stat_value(self.stat_size, _fmt_size(result.total_size))
 
         if result.files:
             self.convert_btn.setEnabled(True)
@@ -6302,10 +6431,10 @@ class MainWindow(QMainWindow):
         self._convert_start_time = time.perf_counter()
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(self._scan_result.files))
-        self.stat_done._val.setText("0")
-        self.stat_skipped._val.setText("0")
-        self.stat_failed._val.setText("0")
-        self.stat_saved._val.setText("0 B")
+        self._set_stat_value(self.stat_done, "0")
+        self._set_stat_value(self.stat_skipped, "0")
+        self._set_stat_value(self.stat_failed, "0")
+        self._set_stat_value(self.stat_saved, "0 B")
         # Reset stat colors to default green for new batch
         self.stat_done._val.setStyleSheet(STAT_VALUE_STYLE)
         self.stat_skipped._val.setStyleSheet(STAT_VALUE_STYLE)
@@ -6419,14 +6548,14 @@ class MainWindow(QMainWindow):
         else:
             self._fail_count += 1
 
-        self.stat_done._val.setText(str(self._ok_count))
-        self.stat_skipped._val.setText(str(self._skip_count))
+        self._set_stat_value(self.stat_done, str(self._ok_count))
+        self._set_stat_value(self.stat_skipped, str(self._skip_count))
         if self._skip_count:
             self.stat_skipped._val.setStyleSheet(f"color: {CAT['yellow']}; {_STAT_FONT}")
-        self.stat_failed._val.setText(str(self._fail_count))
+        self._set_stat_value(self.stat_failed, str(self._fail_count))
         if self._fail_count:
             self.stat_failed._val.setStyleSheet(f"color: {CAT['red']}; {_STAT_FONT}")
-        self.stat_saved._val.setText(_fmt_size(abs(self._saved_bytes)))
+        self._set_stat_value(self.stat_saved, _fmt_size(abs(self._saved_bytes)))
         if self._saved_bytes >= 0:
             self.stat_saved._val.setStyleSheet(STAT_VALUE_STYLE)
         else:
