@@ -6282,6 +6282,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    choices=["nothing", "close", "sleep", "shutdown"],
                    help="Action after batch completion: nothing (default), close (exit app), "
                         "sleep (system sleep), shutdown (system shutdown).")
+    p.add_argument("--max-memory", type=int, default=None, metavar="PCT",
+                   help="Reduce workers when free system memory drops below PCT%% (default: disabled). "
+                        "Requires psutil or falls back to platform checks.")
     return p
 
 
@@ -6355,6 +6358,7 @@ CLI_FLAG_PARITY = {
     "--verify-quality": {"surface": "cli-only", "gui": (), "readme": True, "note": "External quality metric checks"},
     "--progress": {"surface": "cli-only", "gui": (), "readme": True, "note": "JSON Lines machine-readable progress events"},
     "--when-done": {"surface": "gui", "gui": ("when_done_combo",), "readme": True, "note": "Post-batch action"},
+    "--max-memory": {"surface": "cli-only", "gui": (), "readme": True, "note": "RAM pressure worker throttle threshold"},
     "--help": {"surface": "cli-only", "gui": (), "readme": False, "note": "argparse built-in help"},
 }
 
@@ -7006,6 +7010,51 @@ def _execute_when_done(action: str):
             subprocess.run(["systemctl", "poweroff"], capture_output=True)
 
 
+def _get_free_memory_pct() -> float | None:
+    """Return percentage of free system memory, or None if unavailable."""
+    try:
+        import psutil
+        return psutil.virtual_memory().available / psutil.virtual_memory().total * 100
+    except ImportError:
+        pass
+    if platform.system() == "Windows":
+        try:
+            kernel32 = ctypes.windll.kernel32
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(stat)
+            if kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return stat.ullAvailPhys / stat.ullTotalPhys * 100
+        except Exception:
+            pass
+    elif platform.system() == "Linux":
+        try:
+            with open("/proc/meminfo") as f:
+                info = {}
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        info[parts[0].strip()] = int(parts[1].strip().split()[0])
+                total = info.get("MemTotal", 0)
+                avail = info.get("MemAvailable", 0)
+                if total > 0:
+                    return avail / total * 100
+        except Exception:
+            pass
+    return None
+
+
 def _emit_progress(event: str, data: dict | None = None, *, enabled: bool = False):
     if not enabled:
         return
@@ -7130,6 +7179,12 @@ def _run_cli(args):
             print("[ERROR] --watch requires exactly one input directory.", file=sys.stderr)
             sys.exit(EXIT_INPUT_ERROR)
         sys.exit(_watch_directory(args, input_dir, output_dir, resize_mode, resize_value))
+
+    # Memory pressure threshold
+    _mem_threshold = getattr(args, "max_memory", None)
+    if _mem_threshold is not None:
+        _mem_threshold = max(1, min(99, int(_mem_threshold)))
+        print(f"[memory] throttle threshold: {_mem_threshold}% free")
 
     # Scan
     _progress_on = getattr(args, "progress", False)
@@ -7349,6 +7404,11 @@ def _run_cli(args):
                 "current": done_count,
                 "total": total,
             }, enabled=_progress_on)
+
+            if _mem_threshold is not None and done_count % max(1, args.workers) == 0:
+                free_pct = _get_free_memory_pct()
+                if free_pct is not None and free_pct < _mem_threshold:
+                    print(f"[WARN] memory pressure: {free_pct:.0f}% free < {_mem_threshold}% threshold")
 
             if result.success and not result.skipped:
                 done_paths.append(str(result.src))
