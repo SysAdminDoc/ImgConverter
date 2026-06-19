@@ -1478,6 +1478,50 @@ class ScanResult:
     elapsed: float = 0.0
 
 
+@dataclass
+class ConvertOptions:
+    """Validated conversion-options boundary.
+
+    Every execution surface (GUI, CLI, watch, presets) builds one of these.
+    ``convert_file()`` accepts it directly. Adding a field here without
+    wiring it through every surface will break the parity test.
+    """
+    fmt: str = "auto"
+    jpeg_quality: int = 92
+    preserve_metadata: bool = True
+    preserve_structure: bool = False
+    base_dir: Path | None = None
+    in_place: bool = False
+    skip_existing: bool = False
+    resize_mode: str = "none"
+    resize_value: int = 1920
+    prefix: str = ""
+    suffix: str = ""
+    lossless_webp: bool = False
+    progressive_jpeg: bool = False
+    chroma_subsampling: bool = False
+    convert_to_srgb: bool = False
+    tiff_compression: str = "none"
+    png_compress_level: int = 6
+    use_exiftool: bool = True
+    name_template: str | None = None
+    only_if_smaller_pct: float | None = None
+    dpi: tuple[int, int] | None = None
+    icc_override: str | None = None
+    emit_xmp_sidecar: bool = False
+    recompress_lossless: bool = False
+    quality_mode: tuple[str, float] | None = None
+    watermark: str | None = None
+    canvas: tuple[int, int] | None = None
+    canvas_bg: str = "transparent"
+    tone_map: str = "none"
+    avif_speed: int = 6
+    avif_codec: str = "auto"
+    png_lossy: bool = False
+    backend: str = "pillow"
+    strip_fields: frozenset[str] = field(default_factory=frozenset)
+
+
 def _same_resolved_path(left: Path, right: Path) -> bool:
     """Best-effort equality for paths that may not exist yet."""
     try:
@@ -2397,15 +2441,50 @@ def convert_file(
     png_lossy: bool = False,
     backend: str = "pillow",
     strip_fields: frozenset[str] | None = None,
+    *,
+    opts: "ConvertOptions | None" = None,
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
-    When ``use_exiftool`` is True and the ``exiftool`` binary is on PATH,
-    runs an ExifTool tag-copy pass after the save so MakerNotes, GPS
-    sub-IFDs, IPTC, and sidecar XMP make it across — Pillow drops these
-    silently. Falls back to Pillow's EXIF / ICC / XMP keys when ExifTool
-    is unavailable.
+    Accepts either individual keyword arguments (legacy) or a single
+    ``opts=ConvertOptions(...)`` object. When ``opts`` is provided,
+    its fields take precedence over positional defaults.
     """
+    if opts is not None:
+        fmt = opts.fmt
+        jpeg_quality = opts.jpeg_quality
+        preserve_metadata = opts.preserve_metadata
+        preserve_structure = opts.preserve_structure
+        base_dir = opts.base_dir
+        in_place = opts.in_place
+        skip_existing = opts.skip_existing
+        resize_mode = opts.resize_mode
+        resize_value = opts.resize_value
+        prefix = opts.prefix
+        suffix = opts.suffix
+        lossless_webp = opts.lossless_webp
+        progressive_jpeg = opts.progressive_jpeg
+        chroma_subsampling = opts.chroma_subsampling
+        convert_to_srgb = opts.convert_to_srgb
+        tiff_compression = opts.tiff_compression
+        png_compress_level = opts.png_compress_level
+        use_exiftool = opts.use_exiftool
+        name_template = opts.name_template
+        only_if_smaller_pct = opts.only_if_smaller_pct
+        dpi = opts.dpi
+        icc_override = opts.icc_override
+        emit_xmp_sidecar = opts.emit_xmp_sidecar
+        recompress_lossless = opts.recompress_lossless
+        quality_mode = opts.quality_mode
+        watermark = opts.watermark
+        canvas = opts.canvas
+        canvas_bg = opts.canvas_bg
+        tone_map = opts.tone_map
+        avif_speed = opts.avif_speed
+        avif_codec = opts.avif_codec
+        png_lossy = opts.png_lossy
+        backend = opts.backend
+        strip_fields = opts.strip_fields
     if backend == "vips":
         return _convert_file_vips(
             src=src,
@@ -3009,58 +3088,15 @@ class ConvertWorker(QThread):
     finished_all = pyqtSignal(list)        # list[ConvertResult]
     log = pyqtSignal(str)
 
-    def __init__(self, files, output_dir, fmt, quality, preserve_meta,
-                 preserve_structure, base_dir, workers, in_place=False,
-                 skip_existing=False, resize_mode="none", resize_value=1920,
-                 prefix="", suffix="", lossless_webp=False,
-                 progressive_jpeg=False, chroma_subsampling=False,
-                 convert_to_srgb=False, tiff_compression="none",
-                 png_compress_level=6, use_exiftool=True,
-                 name_template=None, only_if_smaller_pct=None,
-                 dpi=None, icc_override=None, emit_xmp_sidecar=False,
-                 recompress_lossless=False, quality_mode=None,
-                 watermark=None, canvas=None, canvas_bg="transparent",
-                 tone_map="none", avif_speed=6, avif_codec="auto",
-                 png_lossy=False, frames="first",
-                 strip_fields=None):
+    def __init__(self, files: list[Path], output_dir: Path,
+                 opts: ConvertOptions, workers: int = 4,
+                 frames: str = "first"):
         super().__init__()
-        self.files = files
+        self.files = list(files)
         self.output_dir = Path(output_dir)
-        self.fmt = fmt
-        self.quality = quality
-        self.preserve_meta = preserve_meta
-        self.preserve_structure = preserve_structure
-        self.base_dir = base_dir
+        self.opts = opts
         self.workers = workers
-        self.in_place = in_place
-        self.skip_existing = skip_existing
-        self.resize_mode = resize_mode
-        self.resize_value = resize_value
-        self.prefix = prefix
-        self.suffix = suffix
-        self.lossless_webp = lossless_webp
-        self.progressive_jpeg = progressive_jpeg
-        self.chroma_subsampling = chroma_subsampling
-        self.convert_to_srgb = convert_to_srgb
-        self.tiff_compression = tiff_compression
-        self.png_compress_level = png_compress_level
-        self.use_exiftool = use_exiftool
-        self.name_template = name_template
-        self.only_if_smaller_pct = only_if_smaller_pct
-        self.dpi = dpi
-        self.icc_override = icc_override
-        self.emit_xmp_sidecar = emit_xmp_sidecar
-        self.recompress_lossless = recompress_lossless
-        self.quality_mode = quality_mode
-        self.watermark = watermark
-        self.canvas = canvas
-        self.canvas_bg = canvas_bg
-        self.tone_map = tone_map
-        self.avif_speed = avif_speed
-        self.avif_codec = avif_codec
-        self.png_lossy = png_lossy
         self.frames = frames
-        self.strip_fields = strip_fields or frozenset()
         self._stop_event = threading.Event()
 
     def stop(self):
@@ -3083,10 +3119,10 @@ class ConvertWorker(QThread):
                 )
                 for f in animated_files:
                     r = _convert_animated_or_sequence(
-                        f, self.output_dir, self.fmt,
+                        f, self.output_dir, self.opts.fmt,
                         extract_frames=(self.frames == "all"),
-                        base_dir=self.base_dir,
-                        preserve_structure=self.preserve_structure,
+                        base_dir=self.opts.base_dir,
+                        preserve_structure=self.opts.preserve_structure,
                     )
                     results.append(r)
                     done += 1
@@ -3106,33 +3142,8 @@ class ConvertWorker(QThread):
                 if self._stop_event.is_set():
                     break
                 fut = pool.submit(
-                    convert_file, f, self.output_dir, self.fmt,
-                    self.quality, self.preserve_meta,
-                    self.preserve_structure, self.base_dir,
-                    self.in_place, self.skip_existing,
-                    self.resize_mode, self.resize_value,
-                    self.prefix, self.suffix,
-                    self.lossless_webp, self.progressive_jpeg,
-                    self.chroma_subsampling, self.convert_to_srgb,
-                    self.tiff_compression, self.png_compress_level,
-                    self.use_exiftool,
-                    self.name_template,             # name_template
-                    seq_i,                          # seq
-                    self.only_if_smaller_pct,       # only_if_smaller_pct
-                    self.dpi,                       # dpi
-                    self.icc_override,              # icc_override
-                    self.emit_xmp_sidecar,          # emit_xmp_sidecar
-                    self.recompress_lossless,        # recompress_lossless
-                    self.quality_mode,               # quality_mode
-                    self.watermark,                  # watermark
-                    self.canvas,                     # canvas
-                    self.canvas_bg,                  # canvas_bg
-                    self.tone_map,                   # tone_map
-                    self.avif_speed,                 # avif_speed
-                    self.avif_codec,                 # avif_codec
-                    self.png_lossy,                  # png_lossy
-                    "pillow",                         # backend
-                    self.strip_fields,                # strip_fields
+                    convert_file, f, self.output_dir, seq=seq_i,
+                    opts=self.opts,
                 )
                 futures[fut] = f
 
@@ -5649,15 +5660,12 @@ class MainWindow(QMainWindow):
         if in_place:
             self._log("In-place mode: converted files saved next to originals, source files will be deleted")
 
-        self._worker = ConvertWorker(
-            files=self._scan_result.files,
-            output_dir=Path(dst),
+        gui_opts = ConvertOptions(
             fmt=fmt,
-            quality=self.quality_slider.value(),
-            preserve_meta=self.meta_combo.currentIndex() != 3,
+            jpeg_quality=self.quality_slider.value(),
+            preserve_metadata=self.meta_combo.currentIndex() != 3,
             preserve_structure=self.structure_chk.isChecked(),
             base_dir=Path(self.src_edit.text().strip()),
-            workers=self.workers_spin.value(),
             in_place=in_place,
             skip_existing=self.skip_existing_chk.isChecked(),
             resize_mode=resize_mode,
@@ -5684,8 +5692,14 @@ class MainWindow(QMainWindow):
             avif_speed=self.avif_speed_spin.value(),
             avif_codec=["auto", "aom", "rav1e", "svt"][self.avif_codec_combo.currentIndex()],
             png_lossy=self.png_lossy_chk.isChecked(),
-            frames=["first", "all", "animate"][self.frames_combo.currentIndex()],
             strip_fields=self._gui_strip_fields(),
+        )
+        self._worker = ConvertWorker(
+            files=self._scan_result.files,
+            output_dir=Path(dst),
+            opts=gui_opts,
+            workers=self.workers_spin.value(),
+            frames=["first", "all", "animate"][self.frames_combo.currentIndex()],
         )
         self._worker.log.connect(self._log)
         self._worker.progress.connect(self._on_progress)
@@ -6543,14 +6557,9 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
     requiring file size stability before processing.
     """
     interval = max(1.0, float(getattr(args, "watch_interval", 2.0)))
-    _sf: set[str] = set()
-    if getattr(args, "strip_metadata", False):
-        _sf.add("all")
-    if getattr(args, "strip_gps", False):
-        _sf.add("gps")
-    if getattr(args, "strip_device", False):
-        _sf.add("device")
-    _cli_strip_fields = frozenset(_sf)
+    watch_opts = _build_convert_options(args, resize_mode=resize_mode,
+                                         resize_value=resize_value,
+                                         input_dir=input_dir)
     seen_sizes: dict[Path, int] = {}
     converted: set[Path] = set()
     supported = get_supported_extensions()
@@ -6637,42 +6646,8 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                 seq = len(converted) + 1
                 try:
                     r = convert_file(
-                        f, output_dir,
-                        fmt=args.format,
-                        jpeg_quality=args.quality,
-                        preserve_metadata=not args.strip_metadata,
-                        preserve_structure=not args.no_structure,
-                        base_dir=input_dir,
-                        in_place=args.in_place,
-                        skip_existing=args.skip_existing,
-                        resize_mode=resize_mode,
-                        resize_value=resize_value,
-                        prefix=args.prefix,
-                        suffix=args.suffix,
-                        lossless_webp=args.lossless,
-                        progressive_jpeg=args.progressive,
-                        chroma_subsampling=args.chroma_420,
-                        convert_to_srgb=args.srgb,
-                        tiff_compression=args.tiff_compression,
-                        png_compress_level=args.png_level,
-                        use_exiftool=not args.no_exiftool,
-                        name_template=getattr(args, "template", None),
-                        seq=seq,
-                        only_if_smaller_pct=getattr(args, "only_if_smaller", None),
-                        dpi=(args.dpi, args.dpi) if getattr(args, "dpi", None) else None,
-                        icc_override=getattr(args, "icc", None),
-                        emit_xmp_sidecar=getattr(args, "xmp_sidecar", False),
-                        recompress_lossless=getattr(args, "recompress", False),
-                        quality_mode=_build_quality_mode(args),
-                        watermark=getattr(args, "watermark", None),
-                        canvas=_parse_canvas(getattr(args, "canvas", None)),
-                        canvas_bg=getattr(args, "canvas_bg", "transparent"),
-                        tone_map=getattr(args, "tone_map", "none"),
-                        avif_speed=getattr(args, "avif_speed", 6),
-                        avif_codec=getattr(args, "avif_codec", "auto"),
-                        png_lossy=getattr(args, "png_lossy", False),
-                        backend=getattr(args, "backend", "pillow"),
-                        strip_fields=_cli_strip_fields,
+                        f, output_dir, seq=seq,
+                        opts=watch_opts,
                     )
                     if r.success:
                         print(f"[watch] OK  {f.name} -> {r.dst.name}")
@@ -6810,6 +6785,55 @@ def _parse_canvas(spec: str | None) -> tuple[int, int] | None:
         return (w, h)
     except (ValueError, AttributeError):
         return None
+
+
+def _build_convert_options(args, *, resize_mode: str = "none",
+                           resize_value: int = 1920,
+                           input_dir: Path | None = None) -> ConvertOptions:
+    """Build a ConvertOptions from an argparse Namespace."""
+    _sf: set[str] = set()
+    if getattr(args, "strip_metadata", False):
+        _sf.add("all")
+    if getattr(args, "strip_gps", False):
+        _sf.add("gps")
+    if getattr(args, "strip_device", False):
+        _sf.add("device")
+    return ConvertOptions(
+        fmt=args.format,
+        jpeg_quality=args.quality,
+        preserve_metadata=not getattr(args, "strip_metadata", False),
+        preserve_structure=not getattr(args, "no_structure", False),
+        base_dir=input_dir,
+        in_place=getattr(args, "in_place", False),
+        skip_existing=getattr(args, "skip_existing", False),
+        resize_mode=resize_mode,
+        resize_value=resize_value,
+        prefix=getattr(args, "prefix", ""),
+        suffix=getattr(args, "suffix", ""),
+        lossless_webp=getattr(args, "lossless", False),
+        progressive_jpeg=getattr(args, "progressive", False),
+        chroma_subsampling=getattr(args, "chroma_420", False),
+        convert_to_srgb=getattr(args, "srgb", False),
+        tiff_compression=getattr(args, "tiff_compression", "none"),
+        png_compress_level=getattr(args, "png_level", 6),
+        use_exiftool=not getattr(args, "no_exiftool", False),
+        name_template=getattr(args, "template", None),
+        only_if_smaller_pct=getattr(args, "only_if_smaller", None),
+        dpi=(args.dpi, args.dpi) if getattr(args, "dpi", None) else None,
+        icc_override=getattr(args, "icc", None),
+        emit_xmp_sidecar=getattr(args, "xmp_sidecar", False),
+        recompress_lossless=getattr(args, "recompress", False),
+        quality_mode=_build_quality_mode(args),
+        watermark=getattr(args, "watermark", None),
+        canvas=_parse_canvas(getattr(args, "canvas", None)),
+        canvas_bg=getattr(args, "canvas_bg", "transparent"),
+        tone_map=getattr(args, "tone_map", "none"),
+        avif_speed=getattr(args, "avif_speed", 6),
+        avif_codec=getattr(args, "avif_codec", "auto"),
+        png_lossy=getattr(args, "png_lossy", False),
+        backend=getattr(args, "backend", "pillow"),
+        strip_fields=frozenset(_sf),
+    )
 
 
 def _build_quality_mode(args) -> tuple[str, float] | None:
@@ -7336,17 +7360,9 @@ def _run_cli(args):
         pass
 
     # Convert
-    preserve_meta = not args.strip_metadata
-    _cli_strip_fields: frozenset[str] = frozenset()
-    if args.strip_metadata:
-        _cli_strip_fields = frozenset({"all"})
-    else:
-        _sf = set()
-        if getattr(args, "strip_gps", False):
-            _sf.add("gps")
-        if getattr(args, "strip_device", False):
-            _sf.add("device")
-        _cli_strip_fields = frozenset(_sf)
+    cli_opts = _build_convert_options(args, resize_mode=resize_mode,
+                                      resize_value=resize_value,
+                                      input_dir=input_dir)
     ok_count = 0
     fail_count = 0
     skip_count = 0
@@ -7433,29 +7449,8 @@ def _run_cli(args):
         futures = {}
         for seq_i, f in enumerate(scan.files, start=1):
             fut = pool.submit(
-                convert_file, f, output_dir, args.format, args.quality,
-                preserve_meta, not args.no_structure, input_dir, args.in_place,
-                args.skip_existing, resize_mode, resize_value,
-                args.prefix, args.suffix, args.lossless, args.progressive,
-                args.chroma_420, args.srgb, args.tiff_compression, args.png_level,
-                not args.no_exiftool,           # use_exiftool
-                getattr(args, "template", None), # name_template
-                seq_i,                          # seq
-                getattr(args, "only_if_smaller", None),  # only_if_smaller_pct
-                (args.dpi, args.dpi) if getattr(args, "dpi", None) else None,  # dpi
-                getattr(args, "icc", None),                  # icc_override
-                getattr(args, "xmp_sidecar", False),         # emit_xmp_sidecar
-                getattr(args, "recompress", False),          # recompress_lossless
-                _build_quality_mode(args),                   # quality_mode
-                getattr(args, "watermark", None),             # watermark
-                _parse_canvas(getattr(args, "canvas", None)), # canvas
-                getattr(args, "canvas_bg", "transparent"),    # canvas_bg
-                getattr(args, "tone_map", "none"),             # tone_map
-                getattr(args, "avif_speed", 6),                # avif_speed
-                getattr(args, "avif_codec", "auto"),           # avif_codec
-                getattr(args, "png_lossy", False),             # png_lossy
-                getattr(args, "backend", "pillow"),             # backend
-                _cli_strip_fields,                               # strip_fields
+                convert_file, f, output_dir, seq=seq_i,
+                opts=cli_opts,
             )
             futures[fut] = f
 
