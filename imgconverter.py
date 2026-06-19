@@ -6473,14 +6473,14 @@ def _clear_queue_state():
 
 def _watch_directory(args, input_dir: Path, output_dir: Path,
                      resize_mode: str = "none", resize_value: int = 1920) -> int:
-    """Polling-based watch mode. Avoids hard dep on watchdog.
+    """Watch mode with optional watchdog filesystem events and polling fallback.
 
-    Every poll interval, rescan the directory; convert any file we haven't
-    seen yet. Debounces partial-write races by requiring the file size to
-    be stable for one full poll interval before processing.
+    When watchdog is installed, uses OS-level filesystem events (inotify/
+    FSEvents/ReadDirectoryChangesW) for sub-second response. Falls back to
+    polling when watchdog is absent. Debounces partial-write races by
+    requiring file size stability before processing.
     """
     interval = max(1.0, float(getattr(args, "watch_interval", 2.0)))
-    print(f"[watch] watching {input_dir} every {interval:.1f}s — Ctrl-C to stop")
     _sf: set[str] = set()
     if getattr(args, "strip_metadata", False):
         _sf.add("all")
@@ -6492,6 +6492,35 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
     seen_sizes: dict[Path, int] = {}
     converted: set[Path] = set()
     supported = get_supported_extensions()
+    pending_files: set[Path] = set()
+
+    try:
+        from watchdog.observers import Observer
+        from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileModifiedEvent
+
+        class _WatchHandler(FileSystemEventHandler):
+            def on_created(self, event):
+                if not event.is_directory:
+                    p = Path(event.src_path)
+                    if p.suffix.lower() in supported:
+                        pending_files.add(p)
+
+            def on_modified(self, event):
+                if not event.is_directory:
+                    p = Path(event.src_path)
+                    if p.suffix.lower() in supported:
+                        pending_files.add(p)
+
+        observer = Observer()
+        observer.schedule(_WatchHandler(), str(input_dir), recursive=args.recursive)
+        observer.start()
+        _watch_backend = "watchdog"
+    except ImportError:
+        observer = None
+        _watch_backend = "polling"
+
+    print(f"[watch] watching {input_dir} ({_watch_backend}) every {interval:.1f}s — Ctrl-C to stop")
+
     try:
         def _safe_walk(d: Path, visited: set[str]):
             try:
@@ -6518,21 +6547,29 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
 
         while True:
             current = []
-            try:
-                visited: set[str] = set()
-                for p in _safe_walk(input_dir, visited):
-                    if p in converted:
-                        continue
-                    try:
-                        size = p.stat().st_size
-                    except OSError:
-                        continue
-                    if seen_sizes.get(p) == size:
-                        current.append(p)
-                    else:
-                        seen_sizes[p] = size
-            except OSError:
-                pass
+
+            if observer is not None:
+                candidates = list(pending_files)
+                pending_files.clear()
+            else:
+                candidates = []
+                try:
+                    visited_dirs: set[str] = set()
+                    candidates = list(_safe_walk(input_dir, visited_dirs))
+                except OSError:
+                    pass
+
+            for p in candidates:
+                if p in converted:
+                    continue
+                try:
+                    size = p.stat().st_size
+                except OSError:
+                    continue
+                if seen_sizes.get(p) == size:
+                    current.append(p)
+                else:
+                    seen_sizes[p] = size
 
             for f in current:
                 seq = len(converted) + 1
@@ -6589,6 +6626,10 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
             time.sleep(interval)
     except KeyboardInterrupt:
         print(f"\n[watch] stopped. Total processed: {len(converted)}")
+    finally:
+        if observer is not None:
+            observer.stop()
+            observer.join(timeout=2)
     return EXIT_OK
 
 
