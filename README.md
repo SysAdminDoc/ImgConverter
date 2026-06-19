@@ -50,6 +50,7 @@ Most image converters get the details wrong — they strip metadata, mangle colo
 | `rawpy` | Camera RAW | `pip install rawpy` |
 | `qoi` | QOI input | `pip install qoi` |
 | `exiftool` | Recovers MakerNotes / GPS sub-IFDs / IPTC / sidecar XMP that Pillow drops silently | [exiftool.org](https://exiftool.org/) |
+| `watchdog` | Lower-latency filesystem events for `--watch` mode; polling remains the fallback | `pip install watchdog` |
 
 Run `imgconverter --install-deps` to install all required + optional Python packages, or `pip install -r requirements.txt`. If a format-specific decoder is missing, that family is skipped gracefully and the app logs which are unavailable. `exiftool` is detected automatically when present on `PATH`; pass `--no-exiftool` to disable the tag-copy pass.
 
@@ -240,8 +241,8 @@ python imgconverter.py --support-bundle ./imgconverter_support.zip
 | `--use-cache` | Skip source/preset pairs that already converted successfully |
 | `--clear-cache` | Delete the conversion hash cache and exit |
 | `--resume` | Resume an interrupted CLI batch from the saved queue |
-| `--watch` | Watch the input directory and convert new files as they arrive |
-| `--watch-interval SEC` | Polling interval for `--watch` mode |
+| `--watch` | Watch the input directory and convert new files as they arrive; uses watchdog events when installed, otherwise polling |
+| `--watch-interval SEC` | Polling/debounce interval for `--watch` mode |
 | `--use-processes` | Use process workers instead of threads for conversion |
 | `--sidecar-history` | Write per-output `.imgconverter.json` reproducibility sidecars |
 | `--backend BACKEND` | Select `pillow` or experimental `vips` backend |
@@ -249,7 +250,7 @@ python imgconverter.py --support-bundle ./imgconverter_support.zip
 | `--backend-benchmark PATH` | With `--backend-info`, benchmark each available backend against one image |
 | `--verify-quality` | Run optional external quality metrics after conversion |
 | `--progress` | Emit JSON Lines per-file events to stderr for machine consumption |
-| `--when-done ACTION` | Action after batch: `nothing` (default), `close`, `sleep`, `shutdown` |
+| `--when-done ACTION` | Action after a clean batch: `nothing` (default), `close`, `sleep`, `shutdown`; skipped when any file fails so exit codes stay truthful |
 | `--stdin-files` | Read file paths from stdin (one per line), mutually exclusive with `--input`/`--files` |
 | `--stdin-null` | With `--stdin-files`, use NUL delimiter (for `find -print0`) |
 | `--max-memory PCT` | Warn when free system memory drops below PCT% during conversion |

@@ -281,6 +281,29 @@ def _vips_convert(src: Path, dst: Path, fmt: str, quality: int) -> tuple[bool, s
         return False, str(e)
 
 
+def _write_text_atomic(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Write text via same-directory temp + replace so state files are never torn."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as fp:
+            fp.write(text)
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 # Optional ffmpeg-quality-metrics / butteraugli for objective quality check.
 HAS_FQM = shutil.which("ffmpeg-quality-metrics") is not None
 BUTTERAUGLI_PATH = shutil.which("butteraugli")
@@ -568,28 +591,11 @@ def _load_plugin_trust() -> dict[str, dict]:
 
 def _write_plugin_trust(records: dict[str, dict]) -> None:
     path = _plugin_trust_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": PLUGIN_TRUST_SCHEMA,
         "plugins": dict(sorted(records.items())),
     }
-    import tempfile
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=".trusted-plugins.",
-        suffix=".tmp",
-        dir=str(path.parent),
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fp:
-            json.dump(payload, fp, indent=2, sort_keys=True)
-            fp.write("\n")
-        os.replace(tmp_name, path)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    _write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def _resolve_plugin_ref(ref: str | Path) -> Path:
@@ -1663,6 +1669,20 @@ def _same_resolved_path(left: Path, right: Path) -> bool:
         return left.absolute() == right.absolute()
 
 
+def _structured_output_dir(
+    src: Path,
+    output_dir: Path,
+    preserve_structure: bool,
+    base_dir: Path | None,
+) -> Path:
+    if preserve_structure and base_dir:
+        try:
+            return output_dir / src.parent.relative_to(base_dir)
+        except ValueError:
+            return output_dir
+    return output_dir
+
+
 def _parse_size_spec(spec: str) -> int | None:
     """Parse a human-readable size like '500MB' or '2GB' to bytes."""
     if not spec:
@@ -2287,14 +2307,7 @@ def _convert_animated_or_sequence(
     t0 = time.perf_counter()
     result = ConvertResult(src=src, size_before=src.stat().st_size)
     try:
-        if preserve_structure and base_dir:
-            try:
-                rel = src.parent.relative_to(base_dir)
-                dest_dir = output_dir / rel
-            except ValueError:
-                dest_dir = output_dir
-        else:
-            dest_dir = output_dir
+        dest_dir = _structured_output_dir(src, output_dir, preserve_structure, base_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         from PIL import ImageSequence
@@ -2560,14 +2573,8 @@ def _convert_file_vips(
 
         if in_place:
             dest_dir = src.parent
-        elif preserve_structure and base_dir:
-            try:
-                rel = src.parent.relative_to(base_dir)
-            except ValueError:
-                rel = Path()
-            dest_dir = output_dir / rel
         else:
-            dest_dir = output_dir
+            dest_dir = _structured_output_dir(src, output_dir, preserve_structure, base_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         stem = prefix + src.stem + suffix
         out_path = dest_dir / (stem + ext)
@@ -2938,11 +2945,8 @@ def convert_file(
             ext = ".jpg"
             if in_place:
                 dest_dir = src.parent
-            elif preserve_structure and base_dir:
-                rel = src.parent.relative_to(base_dir)
-                dest_dir = output_dir / rel
             else:
-                dest_dir = output_dir
+                dest_dir = _structured_output_dir(src, output_dir, preserve_structure, base_dir)
             dest_dir.mkdir(parents=True, exist_ok=True)
             stem_short = prefix + src.stem + suffix
             out_path = dest_dir / (stem_short + ext)
@@ -2978,11 +2982,8 @@ def convert_file(
         # Build output path — in-place writes next to the source file
         if in_place:
             dest_dir = src.parent
-        elif preserve_structure and base_dir:
-            rel = src.parent.relative_to(base_dir)
-            dest_dir = output_dir / rel
         else:
-            dest_dir = output_dir
+            dest_dir = _structured_output_dir(src, output_dir, preserve_structure, base_dir)
 
         # Output filename — template language wins; prefix/suffix is the
         # backward-compat path when name_template is None.
@@ -4370,20 +4371,44 @@ WATCH_PROFILES_FILE = USER_CONFIG_DIR / "watch-profiles.json"
 def _load_watch_profiles() -> list[dict]:
     try:
         if WATCH_PROFILES_FILE.is_file():
-            return json.loads(WATCH_PROFILES_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        pass
+            data = json.loads(WATCH_PROFILES_FILE.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                raise ValueError("watch profiles root must be a list")
+            return _loadable_watch_profiles(data)
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        _diag_log(f"watch profile load failed: {e}", level="WARNING")
     return []
 
 
 def _save_watch_profiles(profiles: list[dict]):
     try:
-        WATCH_PROFILES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        WATCH_PROFILES_FILE.write_text(
-            json.dumps(profiles, indent=2, sort_keys=True), encoding="utf-8",
+        _write_text_atomic(
+            WATCH_PROFILES_FILE,
+            json.dumps(_loadable_watch_profiles(profiles), indent=2, sort_keys=True) + "\n",
         )
-    except OSError:
-        pass
+    except OSError as e:
+        _diag_log(f"watch profile save failed: {e}", level="WARNING")
+
+
+def _loadable_watch_profiles(profiles: list[dict]) -> list[dict]:
+    """Return only watch-profile fields understood by the GUI watcher."""
+    cleaned = []
+    for raw in profiles:
+        if not isinstance(raw, dict):
+            continue
+        source = str(raw.get("source", "")).strip()
+        if not source:
+            continue
+        output = str(raw.get("output", "")).strip() or str(Path(source) / "converted")
+        cleaned.append({
+            "source": source,
+            "output": output,
+            "preset": str(raw.get("preset", "Default") or "Default"),
+            "enabled": _preset_bool(raw.get("enabled", True)),
+            "last_run": raw.get("last_run") if isinstance(raw.get("last_run"), str) else None,
+            "last_error": raw.get("last_error") if isinstance(raw.get("last_error"), str) else None,
+        })
+    return cleaned
 
 
 class WatchFolderDialog(QDialog):
@@ -5366,6 +5391,7 @@ class MainWindow(QMainWindow):
         self.max_file_size_edit.setMinimumWidth(100)
         self.max_file_size_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.max_file_size_edit.setToolTip("Skip files larger than this size (B, KB, MB, GB, TB)")
+        self.max_file_size_edit.textChanged.connect(lambda: self.max_file_size_edit.setStyleSheet(""))
         adv_grid.addWidget(self.max_file_size_edit, 9, 3)
 
         scroll_layout.addWidget(adv_group)
@@ -7128,7 +7154,7 @@ def _save_queue_state(input_dir: Path, output_dir: Path, args, pending: list[Pat
             "done": done,
             "failed": failed,
         }
-        QUEUE_STATE_PATH.write_text(json.dumps(state, indent=2))
+        _write_text_atomic(QUEUE_STATE_PATH, json.dumps(state, indent=2) + "\n")
     except Exception as e:
         _diag_log(f"queue save failed: {e}", level="WARNING")
 
@@ -7137,7 +7163,13 @@ def _load_queue_state() -> dict | None:
     if not QUEUE_STATE_PATH.is_file():
         return None
     try:
-        return json.loads(QUEUE_STATE_PATH.read_text())
+        state = json.loads(QUEUE_STATE_PATH.read_text())
+        if not isinstance(state, dict):
+            raise ValueError("queue root must be an object")
+        for key in ("pending", "done", "failed"):
+            if not isinstance(state.get(key, []), list):
+                state[key] = []
+        return state
     except Exception as e:
         _diag_log(f"queue load failed: {e}", level="WARNING")
         return None
@@ -7167,6 +7199,7 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
     converted: set[Path] = set()
     supported = get_supported_extensions()
     pending_files: set[Path] = set()
+    pending_lock = threading.Lock()
 
     try:
         from watchdog.observers import Observer
@@ -7177,13 +7210,15 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                 if not event.is_directory:
                     p = Path(event.src_path)
                     if p.suffix.lower() in supported:
-                        pending_files.add(p)
+                        with pending_lock:
+                            pending_files.add(p)
 
             def on_modified(self, event):
                 if not event.is_directory:
                     p = Path(event.src_path)
                     if p.suffix.lower() in supported:
-                        pending_files.add(p)
+                        with pending_lock:
+                            pending_files.add(p)
 
         observer = Observer()
         observer.schedule(_WatchHandler(), str(input_dir), recursive=args.recursive)
@@ -7223,8 +7258,9 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
             current = []
 
             if observer is not None:
-                candidates = list(pending_files)
-                pending_files.clear()
+                with pending_lock:
+                    candidates = list(pending_files)
+                    pending_files.clear()
             else:
                 candidates = []
                 try:
@@ -7271,6 +7307,12 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
             observer.stop()
             observer.join(timeout=2)
     return EXIT_OK
+
+
+def _desktop_exec_arg(value: str) -> str:
+    """Quote a freedesktop Exec argument; spaces in Python/script paths are common."""
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _install_shell_integration(uninstall: bool = False) -> int:
@@ -7349,7 +7391,7 @@ def _install_shell_integration(uninstall: bool = False) -> int:
             "[Desktop Entry]\n"
             "Type=Application\n"
             "Name=Convert with ImgConverter\n"
-            f"Exec={exe} {script} --files %F\n"
+            f"Exec={_desktop_exec_arg(exe)} {_desktop_exec_arg(script)} --files %F\n"
             "MimeType=image/heic;image/heif;image/avif;image/jpeg;image/png;image/webp;image/tiff;\n"
             "Terminal=false\n"
             "Categories=Graphics;\n"
@@ -8114,7 +8156,7 @@ def _run_cli(args):
                 if getattr(args, "sidecar_history", False) and result.dst:
                     try:
                         sidecar = result.dst.with_suffix(result.dst.suffix + ".imgconverter.json")
-                        sidecar.write_text(json.dumps({
+                        _write_text_atomic(sidecar, json.dumps({
                             "version": APP_VERSION,
                             "timestamp": int(time.time()),
                             "src": str(result.src),
@@ -8149,7 +8191,7 @@ def _run_cli(args):
                                 "size_out": result.size_after,
                                 "warnings": list(result.warnings),
                             },
-                        }, indent=2, default=str))
+                        }, indent=2, default=str) + "\n")
                     except OSError:
                         pass
                 # Persist into hash cache for future --use-cache runs.
@@ -8234,20 +8276,29 @@ def _run_cli(args):
             ],
         }
         try:
-            Path(args.report).write_text(json.dumps(report, indent=2, default=str))
+            _write_text_atomic(Path(args.report), json.dumps(report, indent=2, default=str) + "\n")
             print(f"\n[report] wrote {args.report}")
         except OSError as e:
             print(f"[report] failed to write {args.report}: {e}", file=sys.stderr)
 
+    if fail_count == total and total > 0:
+        exit_code = EXIT_TOTAL_FAILURE
+    elif fail_count > 0:
+        exit_code = EXIT_PARTIAL_FAILURE
+    else:
+        exit_code = EXIT_OK
+
     when_done = getattr(args, "when_done", "nothing") or "nothing"
     if when_done != "nothing":
-        _execute_when_done(when_done)
+        if exit_code == EXIT_OK:
+            _execute_when_done(when_done)
+        else:
+            print(
+                f"[when-done] skipped {when_done!r} because {fail_count} file(s) failed",
+                file=sys.stderr,
+            )
 
-    if fail_count == total and total > 0:
-        sys.exit(EXIT_TOTAL_FAILURE)
-    elif fail_count > 0:
-        sys.exit(EXIT_PARTIAL_FAILURE)
-    sys.exit(EXIT_OK)
+    sys.exit(exit_code)
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────

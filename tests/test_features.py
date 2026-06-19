@@ -19,6 +19,7 @@ from imgconverter import (
     _build_quality_mode,
     _convert_animated_or_sequence,
     _load_queue_state,
+    _load_watch_profiles,
     _install_shell_integration,
     _parse_canvas,
     _run_cli,
@@ -26,6 +27,7 @@ from imgconverter import (
     CLI_FLAG_PARITY,
     _validate_cli_args,
     _save_queue_state,
+    _save_watch_profiles,
     build_backend_info,
     convert_file,
     ConvertOptions,
@@ -435,6 +437,26 @@ class TestConvertOptionsParity:
         assert result.success
         assert result.dst.suffix == ".png"
 
+    def test_preserve_structure_falls_back_when_base_is_not_ancestor(self, rgb_image, tmp_workdir):
+        source_dir = tmp_workdir / "source"
+        unrelated_base = tmp_workdir / "other-root"
+        source_dir.mkdir()
+        unrelated_base.mkdir()
+        src = source_dir / "photo.bmp"
+        rgb_image.save(src)
+        out_dir = tmp_workdir / "out"
+
+        result = convert_file(
+            src,
+            out_dir,
+            fmt="png",
+            preserve_structure=True,
+            base_dir=unrelated_base,
+        )
+
+        assert result.success
+        assert result.dst == out_dir / "photo.png"
+
 
 def _relative_luminance(hex_color: str) -> float:
     raw = hex_color.lstrip("#")
@@ -603,6 +625,35 @@ class TestSelectedFileCLI:
         assert (out / "second.png").exists()
 
 
+class TestWhenDoneCLI:
+
+    def test_when_done_is_skipped_when_cli_batch_has_failures(
+        self, rgb_image, tmp_workdir, monkeypatch, capsys,
+    ):
+        import imgconverter
+
+        good = tmp_workdir / "good.bmp"
+        bad = tmp_workdir / "bad.bmp"
+        rgb_image.save(good)
+        bad.write_bytes(b"not an image")
+        called = []
+        monkeypatch.setattr(imgconverter, "_execute_when_done", lambda action: called.append(action))
+
+        args = _build_parser().parse_args([
+            "--input", str(tmp_workdir),
+            "--output", str(tmp_workdir / "out"),
+            "--format", "png",
+            "--no-recursive",
+            "--when-done", "close",
+        ])
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        assert exc.value.code == EXIT_PARTIAL_FAILURE
+        assert called == []
+        assert "skipped 'close'" in capsys.readouterr().err
+
+
 class TestShellIntegration:
     """Verify generated shell entries route files through --files."""
 
@@ -611,10 +662,17 @@ class TestShellIntegration:
 
         monkeypatch.setattr(imgconverter.platform, "system", lambda: "Linux")
         monkeypatch.setattr(imgconverter.Path, "home", classmethod(lambda cls: tmp_workdir))
+        monkeypatch.setattr(imgconverter.sys, "executable", str(tmp_workdir / "Python Folder" / "python"))
+        monkeypatch.setattr(imgconverter, "__file__", str(tmp_workdir / "App Folder" / "imgconverter.py"))
 
         assert _install_shell_integration(False) == EXIT_OK
         desktop = tmp_workdir / ".local" / "share" / "applications" / "imgconverter.desktop"
-        assert "--files %F" in desktop.read_text(encoding="utf-8")
+        text = desktop.read_text(encoding="utf-8")
+        exec_line = next(line for line in text.splitlines() if line.startswith("Exec="))
+        assert "--files %F" in exec_line
+        assert exec_line.startswith("Exec=\"")
+        assert "Python Folder" in exec_line
+        assert "App Folder" in exec_line
 
     def test_windows_registry_commands_use_files_and_directory_paths(self, monkeypatch):
         import imgconverter
@@ -1424,6 +1482,48 @@ class TestCanvasAlpha:
 # ── 18. Queue persistence ──────────────────────────────────────────────────
 
 
+class TestWatchProfilePersistence:
+
+    def test_load_watch_profiles_sanitizes_malformed_entries(self, tmp_workdir, monkeypatch):
+        path = tmp_workdir / "watch-profiles.json"
+        path.write_text(json.dumps([
+            "bad",
+            {"output": "missing-source"},
+            {"source": str(tmp_workdir / "in"), "enabled": "false", "unknown": "drop"},
+            {
+                "source": str(tmp_workdir / "src"),
+                "output": str(tmp_workdir / "dst"),
+                "preset": "Archive Quality",
+                "enabled": True,
+                "last_run": "2026-06-19T00:00:00Z",
+                "last_error": 404,
+            },
+        ]), encoding="utf-8")
+        monkeypatch.setattr("imgconverter.WATCH_PROFILES_FILE", path)
+
+        profiles = _load_watch_profiles()
+
+        assert len(profiles) == 2
+        assert profiles[0]["enabled"] is False
+        assert profiles[0]["output"].endswith("converted")
+        assert profiles[1]["preset"] == "Archive Quality"
+        assert profiles[1]["last_error"] is None
+
+    def test_save_watch_profiles_writes_loadable_shape(self, tmp_workdir, monkeypatch):
+        path = tmp_workdir / "watch-profiles.json"
+        monkeypatch.setattr("imgconverter.WATCH_PROFILES_FILE", path)
+
+        _save_watch_profiles([
+            {"source": str(tmp_workdir / "src"), "enabled": "yes", "extra": "drop"},
+            {"source": ""},
+        ])
+
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        assert len(saved) == 1
+        assert saved[0]["enabled"] is True
+        assert sorted(saved[0]) == ["enabled", "last_error", "last_run", "output", "preset", "source"]
+
+
 class TestQueuePersistence:
 
     def test_save_and_load_roundtrip(self, tmp_workdir, monkeypatch):
@@ -1445,6 +1545,22 @@ class TestQueuePersistence:
         qpath.write_text("{bad json!!!")
         monkeypatch.setattr("imgconverter.QUEUE_STATE_PATH", qpath)
         assert _load_queue_state() is None
+
+    def test_load_non_object_queue_returns_none(self, tmp_workdir, monkeypatch):
+        qpath = tmp_workdir / "queue.json"
+        qpath.write_text("[]")
+        monkeypatch.setattr("imgconverter.QUEUE_STATE_PATH", qpath)
+        assert _load_queue_state() is None
+
+    def test_load_queue_normalizes_bad_list_fields(self, tmp_workdir, monkeypatch):
+        qpath = tmp_workdir / "queue.json"
+        qpath.write_text(json.dumps({"input": "in", "pending": "bad", "done": None, "failed": ["x"]}))
+        monkeypatch.setattr("imgconverter.QUEUE_STATE_PATH", qpath)
+        state = _load_queue_state()
+        assert state is not None
+        assert state["pending"] == []
+        assert state["done"] == []
+        assert state["failed"] == ["x"]
 
     def test_cli_queue_marks_skipped_files_done(self, rgb_image, tmp_workdir, monkeypatch):
         good = tmp_workdir / "already.jpg"
@@ -1561,3 +1677,12 @@ class TestQtAccessibility:
         w.filter_toggle.setChecked(False)
         assert w.filter_group.isHidden()
         assert "Show input format filters" in w.filter_toggle.text()
+
+    def test_validation_style_clears_when_max_file_size_changes(self):
+        w = self.window
+        w._set_line_error(w.max_file_size_edit, "Use a size like 500MB")
+        assert "border" in w.max_file_size_edit.styleSheet()
+
+        w.max_file_size_edit.setText("500MB")
+
+        assert w.max_file_size_edit.styleSheet() == ""
