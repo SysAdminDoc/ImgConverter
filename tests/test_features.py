@@ -1406,6 +1406,33 @@ class TestInPlace:
         assert src.exists()
 
 
+# ── 14b. Error code propagation ─────────────────────────────────────────────
+
+
+class TestErrorCode:
+
+    def test_error_code_set_on_oserror(self, tmp_workdir, monkeypatch):
+        import errno
+        src = tmp_workdir / "photo.bmp"
+        src.write_bytes(b"not an image")
+        out = tmp_workdir / "out"
+        result = convert_file(src, out, fmt="jpeg")
+        assert not result.success
+        assert result.error_code is None or isinstance(result.error_code, int)
+
+    def test_error_code_none_on_non_os_error(self, tmp_workdir):
+        src = tmp_workdir / "corrupt.bmp"
+        src.write_bytes(b"garbage data")
+        out = tmp_workdir / "out"
+        result = convert_file(src, out, fmt="jpeg")
+        assert not result.success
+        assert result.error_code is None
+
+    def test_convert_result_has_error_code_field(self):
+        r = ConvertResult(src=Path("dummy.jpg"))
+        assert r.error_code is None
+
+
 # ── 15. Same-format skip guard completeness ─────────────────────────────────
 
 

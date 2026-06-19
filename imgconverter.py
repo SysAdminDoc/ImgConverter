@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.1.1 - Universal image batch converter
+ImgConverter v3.2.0 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.1.1"
+APP_VERSION = "3.2.0"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -1604,6 +1604,7 @@ class ConvertResult:
     success: bool = False
     skipped: bool = False
     error: str = ""
+    error_code: int | None = None
     size_before: int = 0
     size_after: int = 0
     elapsed: float = 0.0
@@ -2358,6 +2359,8 @@ def _convert_animated_or_sequence(
                 result.warnings.append(f"multi-frame: animated {fmt_pil} with {len(frames)} frames")
     except Exception as e:
         result.error = f"multi-frame: {e}"
+        if isinstance(e, OSError) and e.errno is not None:
+            result.error_code = e.errno
     result.elapsed = time.perf_counter() - t0
     return result
 
@@ -2643,6 +2646,9 @@ def _convert_file_vips(
         return result
     except Exception as e:
         result.error = str(e)
+        if isinstance(e, OSError) and e.errno is not None:
+            import errno
+            result.error_code = e.errno
         result.elapsed = time.perf_counter() - t0
         return result
     finally:
@@ -3307,6 +3313,9 @@ def convert_file(
 
     except Exception as e:
         result.error = str(e)
+        if isinstance(e, OSError) and e.errno is not None:
+            import errno
+            result.error_code = e.errno
         # Clean up temp file on failure
         if temp_path and temp_path.exists():
             try:
@@ -3742,26 +3751,29 @@ def normalize_preset(preset: dict) -> dict:
 
 
 
+_diag_log_lock = threading.Lock()
+
 def _diag_log(message: str, level: str = "INFO"):
     """Append a timestamped line to ~/.cache/imgconverter/imgconverter.log.
 
     Best-effort: failures (disk full, permission denied) are swallowed so
-    diagnostics never break the converter.
+    diagnostics never break the converter. A lock serializes rotation + write
+    so concurrent threads don't lose lines during rename.
     """
     try:
         USER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        # Rotate on size: 5 MB ceiling, keep one backup. Plenty for support cases.
-        try:
-            if USER_LOG_PATH.exists() and USER_LOG_PATH.stat().st_size > 5_000_000:
-                rotated = USER_LOG_PATH.with_suffix(".log.1")
-                if rotated.exists():
-                    rotated.unlink()
-                USER_LOG_PATH.rename(rotated)
-        except OSError:
-            pass
-        from datetime import datetime
-        with USER_LOG_PATH.open("a", encoding="utf-8", errors="replace") as fp:
-            fp.write(f"[{datetime.now().isoformat(timespec='seconds')}] {level} {message}\n")
+        with _diag_log_lock:
+            try:
+                if USER_LOG_PATH.exists() and USER_LOG_PATH.stat().st_size > 5_000_000:
+                    rotated = USER_LOG_PATH.with_suffix(".log.1")
+                    if rotated.exists():
+                        rotated.unlink()
+                    USER_LOG_PATH.rename(rotated)
+            except OSError:
+                pass
+            from datetime import datetime
+            with USER_LOG_PATH.open("a", encoding="utf-8", errors="replace") as fp:
+                fp.write(f"[{datetime.now().isoformat(timespec='seconds')}] {level} {message}\n")
     except Exception:
         pass
 
@@ -4698,7 +4710,11 @@ class MainWindow(QMainWindow):
                 pass
 
     def _maybe_check_for_update(self):
-        """Throttled GitHub release check — opt-in, off by default. 24-hour cooldown."""
+        """Throttled GitHub release check — opt-in, off by default. 24-hour cooldown.
+
+        Runs the network call in a background thread so DNS/TLS latency
+        never freezes the GUI.
+        """
         try:
             enabled_raw = self.settings.value("update_check_enabled", False)
             enabled = enabled_raw == "true" or enabled_raw is True
@@ -4709,13 +4725,24 @@ class MainWindow(QMainWindow):
             if _time.time() - last < 86400:
                 return
             self.settings.setValue("last_update_check", _time.time())
-            latest = _check_for_update(APP_VERSION)
-            if latest:
-                self._log(f"[UPDATE] ImgConverter v{latest} is available "
-                          f"(https://github.com/SysAdminDoc/ImgConverter/releases)")
-                _diag_log(f"Update available: v{latest}")
+
+            class _UpdateWorker(QThread):
+                result = pyqtSignal(str)
+                def run(self_):
+                    tag = _check_for_update(APP_VERSION)
+                    if tag:
+                        self_.result.emit(tag)
+
+            self._update_worker = _UpdateWorker(self)
+            self._update_worker.result.connect(self._on_update_result)
+            self._update_worker.start()
         except Exception:
             pass
+
+    def _on_update_result(self, latest: str):
+        self._log(f"[UPDATE] ImgConverter v{latest} is available "
+                  f"(https://github.com/SysAdminDoc/ImgConverter/releases)")
+        _diag_log(f"Update available: v{latest}")
 
     def _log_startup(self):
         """Log supported formats, dependency versions, and optional dep status on launch."""
@@ -4791,13 +4818,14 @@ class MainWindow(QMainWindow):
             import ctypes.wintypes
             _CoInitialize = ctypes.windll.ole32.CoInitialize
             _CoCreateInstance = ctypes.windll.ole32.CoCreateInstance
-            CLSID_TaskbarList = ctypes.c_char * 16
-            clsid = CLSID_TaskbarList(
+            _GUID = ctypes.c_char * 16
+            # CLSID_TaskbarList {56FDF344-FD6D-11D0-958A-006097C9A090}
+            clsid = _GUID(
                 b'\x44\xf3\xfd\x56\x6d\xfd\xd0\x11\x95\x8a\x00\x60\x97\xc9\xa0\x90'
             )
-            IID_ITaskbarList3 = ctypes.c_char * 16
-            iid = IID_ITaskbarList3(
-                b'\x02\xd3\xea\xea\x1b\xdc\xcf\x4d\x9e\xb3\xf4\x49\x55\x00\x23\x18'
+            # IID_ITaskbarList3 {EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}
+            iid = _GUID(
+                b'\x91\xfb\x1a\xea\x28\x9e\x86\x4b\x90\xe9\x9e\x9f\x8a\x5e\xef\xaf'
             )
             _CoInitialize(None)
             tbptr = ctypes.c_void_p()
@@ -5938,8 +5966,8 @@ class MainWindow(QMainWindow):
         # Progressive JPEG: JPEG, Auto
         self.progressive_jpeg_chk.setVisible(is_auto or is_jpeg)
 
-        # Lossless WebP: WebP, Auto
-        self.lossless_webp_chk.setVisible(is_webp)
+        # Lossless WebP: WebP or Auto (Auto can select WebP for transparent sources)
+        self.lossless_webp_chk.setVisible(is_webp or is_auto)
 
         # TIFF compression: TIFF only
         self.tiff_comp_label.setVisible(is_tiff)
@@ -6371,12 +6399,14 @@ class MainWindow(QMainWindow):
         if result.success and result.dst:
             self._last_ok_dst = result.dst
 
-        # Disk-full auto-stop: detect errno 28 / "No space left" and halt batch.
-        if (not result.success and not result.skipped and result.error
-                and ("errno 28" in result.error.lower()
-                     or "no space left" in result.error.lower()
-                     or "not enough space" in result.error.lower()
-                     or "[errno 28]" in result.error.lower())):
+        # Disk-full auto-stop: check structured error_code (locale-independent).
+        import errno as _errno
+        _is_disk_full = (
+            not result.success and not result.skipped
+            and (result.error_code == _errno.ENOSPC
+                 or result.error_code == getattr(_errno, "EDQUOT", None))
+        )
+        if _is_disk_full:
             self._log(f"[ERROR] Disk full detected on {result.src.name} — stopping batch.")
             if self._worker:
                 self._worker.stop()
@@ -7742,7 +7772,7 @@ def _dedup_scan(files: list[Path], threshold: int = 8) -> list[tuple[Path, Path,
     for f in files:
         try:
             with Image.open(str(f)) as img:
-                h = imagehash.average_hash(img.convert("RGB").resize((8, 8)))
+                h = imagehash.average_hash(img.convert("RGB"))
                 hashes.append((f, h))
         except Exception:
             continue

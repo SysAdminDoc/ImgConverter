@@ -2,6 +2,21 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.2.0] — 2026-06-19
+
+### Fixed
+
+- **Locale-independent disk-full detection**: `_on_file_done` no longer relies on English error message strings ("No space left", "not enough space") to detect full disks. A new `ConvertResult.error_code` field carries the OS errno from `OSError` exceptions, and the GUI checks `errno.ENOSPC` / `errno.EDQUOT` directly. Works on all Windows and Linux locales.
+- **Non-blocking update check**: `_maybe_check_for_update` now runs the network call in a background `QThread` instead of blocking the main Qt event loop. Slow DNS or unreachable GitHub no longer freeze the GUI on startup.
+- **ITaskbarList3 IID was wrong**: The COM IID bytes for `ITaskbarList3` were incorrect, causing `CoCreateInstance` to silently fail on every Windows session. Taskbar progress (green bar during conversion) now actually works on Windows 7+.
+- **Dedup hash double-resize removed**: `_dedup_scan` no longer pre-resizes images to 8x8 before calling `imagehash.average_hash`, which already handles its own resize. Eliminates false-positive duplicate matches from destroyed spatial detail.
+- **Thread-safe diagnostic log rotation**: `_diag_log` now holds a `threading.Lock` across the size-check → rename → write sequence, preventing concurrent worker threads from losing log lines during rotation.
+- **Lossless WebP visible in Auto mode**: The lossless WebP checkbox is now shown when output format is Auto (not just WebP), since Auto can select WebP for transparent sources.
+
+### Added
+
+- 3 new tests for the `error_code` field on `ConvertResult`.
+
 ## [v3.1.1] — 2026-06-19
 
 ### Fixed
