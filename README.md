@@ -72,7 +72,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **File count in title bar** — shows file count after scan, progress during conversion, summary when done
 - **Resize upscaling guard** — warns when image is already smaller than the resize target
 - **Conversion presets** — Web Optimized, Archive Quality, Mobile Friendly, Print/TIFF one-click presets
-- **Premium workflow UI** — compact source/output setup, visible workflow status, refined action bar, and calmer first-run log state
+- **Premium workflow UI** — compact source/output setup, visible workflow status, refined action bar, collapsible input filters, and calmer first-run log state
 - **True collapsed advanced controls** — advanced output controls stay out of the main flow until expanded
 - **Smart option visibility** — format-specific controls auto-show/hide based on output format
 - **Dark title bar** — native dark title bar on Windows 10/11 matching Catppuccin theme
@@ -126,7 +126,7 @@ GitHub release binaries are unsigned until platform signing infrastructure is av
 1. **Choose** or **drag & drop** a directory containing image files
 2. **Adjust output settings** — format, quality, workers, metadata, resize, and naming
 3. **Scan Source** to discover supported files
-4. Optionally refine **Input formats** or expand **Advanced output controls**
+4. Optionally expand **Input format filters** or **Advanced output controls**
 5. **Convert Batch** — output goes to `source/converted/` by default
 
 Toggle **"Convert in place after verified output"** to save output next to each source file and delete the original after validation succeeds.

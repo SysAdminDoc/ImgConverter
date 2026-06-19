@@ -728,6 +728,7 @@ def get_plugin_trust_rows() -> list[dict]:
             rows.append({
                 "name": py.name,
                 "path": str(py),
+                "trust_ref": str(py),
                 "status": status,
                 "hash_prefix": digest[:12],
                 "reason": "trusted file matches manifest" if status == "trusted" else detail,
@@ -738,6 +739,7 @@ def get_plugin_trust_rows() -> list[dict]:
         rows.append({
             "name": name,
             "path": str(plugin_dir / name),
+            "trust_ref": name,
             "status": "missing",
             "hash_prefix": str(records[name].get("sha256", ""))[:12],
             "reason": "trusted manifest entry has no file on disk",
@@ -748,6 +750,7 @@ def get_plugin_trust_rows() -> list[dict]:
         rows.append({
             "name": ep_info["trust_key"],
             "path": ep_info["module"],
+            "trust_ref": ep_info["trust_key"],
             "status": status,
             "hash_prefix": "",
             "reason": detail,
@@ -1006,7 +1009,8 @@ try:
         QProgressBar, QPlainTextEdit, QCheckBox, QGroupBox, QGridLayout,
         QFrame, QSplitter, QStatusBar, QMessageBox, QLineEdit, QStyle,
         QSystemTrayIcon, QMenu, QToolButton, QScrollArea, QSizePolicy,
-        QDialog, QTableWidget, QTableWidgetItem,
+        QDialog, QTableWidget, QTableWidgetItem, QHeaderView,
+        QAbstractItemView, QInputDialog,
     )
     HAS_PYQT6 = True
 except ImportError:
@@ -1034,7 +1038,8 @@ except ImportError:
     QProgressBar = QPlainTextEdit = QCheckBox = QGroupBox = QGridLayout = _Stub
     QFrame = QSplitter = QStatusBar = QMessageBox = QLineEdit = QStyle = _Stub
     QSystemTrayIcon = QMenu = QToolButton = QScrollArea = QSizePolicy = _Stub
-    QDialog = QTableWidget = QTableWidgetItem = _Stub
+    QDialog = QTableWidget = QTableWidgetItem = QHeaderView = _Stub
+    QAbstractItemView = QInputDialog = _Stub
     QTimer = _Stub
 
 # ── Catppuccin Mocha Palette ──────────────────────────────────────────────────
@@ -1061,6 +1066,9 @@ QWidget {{
     color: {CAT['text']};
     font-family: 'Segoe UI', 'Inter', sans-serif;
     font-size: 13px;
+}}
+QDialog {{
+    background-color: {CAT['base']};
 }}
 QLabel, QCheckBox {{
     background-color: transparent;
@@ -1276,6 +1284,31 @@ QPlainTextEdit {{
 QPlainTextEdit:focus {{
     border: 1px solid {CAT['blue']};
 }}
+QTableWidget {{
+    background-color: {CAT['base']};
+    alternate-background-color: {CAT['mantle']};
+    color: {CAT['text']};
+    border: 1px solid {CAT['surface0']};
+    border-radius: 8px;
+    gridline-color: {CAT['surface0']};
+    selection-background-color: {CAT['blue']};
+    selection-color: {CAT['crust']};
+}}
+QTableWidget:focus {{
+    border: 1px solid {CAT['blue']};
+}}
+QTableWidget::item {{
+    padding: 6px 8px;
+    border: none;
+}}
+QHeaderView::section {{
+    background-color: {CAT['surface0']};
+    color: {CAT['subtext0']};
+    border: none;
+    border-right: 1px solid {CAT['surface1']};
+    padding: 7px 8px;
+    font-weight: 700;
+}}
 QCheckBox {{
     spacing: 8px;
     color: {CAT['text']};
@@ -1306,6 +1339,10 @@ QCheckBox::indicator:disabled {{
 }}
 QLabel#dimLabel {{
     color: {CAT['overlay2']};
+    font-size: 12px;
+}}
+QLabel#dialogHint {{
+    color: {CAT['subtext0']};
     font-size: 12px;
 }}
 QLabel#statValue {{
@@ -1452,9 +1489,12 @@ STYLESHEET_READABLE_PAIRS = (
     ("QLineEdit/QComboBox/QSpinBox:disabled", "overlay2", "crust"),
     ("QProgressBar", "text", "surface0"),
     ("QPlainTextEdit", "subtext0", "crust"),
+    ("QTableWidget", "text", "base"),
+    ("QHeaderView::section", "subtext0", "surface0"),
     ("QCheckBox", "text", "base"),
     ("QCheckBox:disabled", "subtext1", "base"),
     ("QLabel#dimLabel", "overlay2", "base"),
+    ("QLabel#dialogHint", "subtext0", "base"),
     ("QLabel#statValue", "green", "base"),
     ("QLabel#statLabel", "overlay2", "base"),
     ("QStatusBar", "subtext0", "mantle"),
@@ -1471,6 +1511,7 @@ STYLESHEET_FOCUS_SELECTORS = (
     "QSpinBox:focus",
     "QSlider::handle:horizontal:focus",
     "QPlainTextEdit:focus",
+    "QTableWidget:focus",
     "QCheckBox::indicator:focus",
     "QToolButton:focus",
 )
@@ -4200,27 +4241,55 @@ def _estimate_output_size(total_input_bytes: int, fmt: str) -> int:
     return int(total_input_bytes * factor)
 
 
+def _configure_inventory_table(table: QTableWidget):
+    """Apply consistent, keyboard-friendly table behavior for management dialogs."""
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.setWordWrap(False)
+    table.verticalHeader().setVisible(False)
+    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+    table.horizontalHeader().setHighlightSections(False)
+    table.horizontalHeader().setMinimumSectionSize(90)
+    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+
+
 class PluginTrustDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Plugin Trust")
-        self.resize(820, 420)
+        self.resize(880, 460)
         self._rows: list[dict] = []
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        self.status_label = QLabel("Loading plugin trust inventory...")
+        self.status_label.setObjectName("dialogHint")
+        self.status_label.setAccessibleName("Plugin trust summary")
+        layout.addWidget(self.status_label)
+
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Plugin", "Path", "Status", "Hash", "Reason"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAccessibleName("Plugin trust inventory")
         self.table.setAccessibleDescription("Installed plugin files with trust status and hash prefix")
+        _configure_inventory_table(self.table)
+        self.table.itemSelectionChanged.connect(self._update_actions)
         layout.addWidget(self.table)
 
         buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(8)
         self.refresh_btn = QPushButton("Refresh")
-        self.trust_btn = QPushButton("Trust Selected")
-        self.untrust_btn = QPushButton("Untrust Selected")
+        self.trust_btn = QPushButton("Trust")
+        self.untrust_btn = QPushButton("Untrust")
         self.close_btn = QPushButton("Close")
+        self.refresh_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self.trust_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.untrust_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogDiscardButton))
         buttons.addWidget(self.refresh_btn)
         buttons.addStretch()
         buttons.addWidget(self.trust_btn)
@@ -4242,14 +4311,27 @@ class PluginTrustDialog(QDialog):
             button.setAccessibleDescription(desc)
             button.setStatusTip(desc)
         self._refresh()
+        self._update_actions()
 
     def _refresh(self):
         self._rows = get_plugin_trust_rows()
         self.table.setRowCount(len(self._rows))
         for row_idx, row in enumerate(self._rows):
             for col_idx, key in enumerate(("name", "path", "status", "hash_prefix", "reason")):
-                self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(row.get(key, ""))))
+                item = QTableWidgetItem(str(row.get(key, "")))
+                item.setToolTip(str(row.get(key, "")))
+                self.table.setItem(row_idx, col_idx, item)
         self.table.resizeColumnsToContents()
+        total = len(self._rows)
+        needs_review = sum(1 for r in self._rows if r.get("status") in {"untrusted", "changed"})
+        if total == 0:
+            text = "No plugin files or package entry points found."
+        elif needs_review:
+            text = f"{total} plugin entr{'y' if total == 1 else 'ies'} found; {needs_review} need review."
+        else:
+            text = f"{total} plugin entr{'y' if total == 1 else 'ies'} found."
+        self.status_label.setText(text)
+        self._update_actions()
 
     def _selected_row(self) -> dict | None:
         row = self.table.currentRow()
@@ -4257,12 +4339,18 @@ class PluginTrustDialog(QDialog):
             return None
         return self._rows[row]
 
+    def _update_actions(self):
+        row = self._selected_row()
+        status = row.get("status") if row else None
+        self.trust_btn.setEnabled(status in {"untrusted", "changed"})
+        self.untrust_btn.setEnabled(status in {"trusted", "changed", "missing"})
+
     def _trust_selected(self):
         row = self._selected_row()
         if not row or row.get("status") == "missing":
-            QMessageBox.information(self, "Plugin Trust", "Select a plugin file to trust.")
+            QMessageBox.information(self, "Plugin Trust", "Select a plugin that needs review.")
             return
-        ok, msg = _trust_plugin(row["path"])
+        ok, msg = _trust_plugin(row.get("trust_ref") or row["path"])
         (QMessageBox.information if ok else QMessageBox.warning)(self, "Plugin Trust", msg)
         self._refresh()
 
@@ -4271,7 +4359,7 @@ class PluginTrustDialog(QDialog):
         if not row:
             QMessageBox.information(self, "Plugin Trust", "Select a plugin entry to untrust.")
             return
-        ok, msg = _untrust_plugin(row["name"])
+        ok, msg = _untrust_plugin(row.get("trust_ref") or row["name"])
         (QMessageBox.information if ok else QMessageBox.warning)(self, "Plugin Trust", msg)
         self._refresh()
 
@@ -4302,42 +4390,107 @@ class WatchFolderDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Watch Folder Profiles")
-        self.resize(780, 400)
+        self.resize(860, 460)
         self._profiles: list[dict] = _load_watch_profiles()
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        self.status_label = QLabel("Loading watch profiles...")
+        self.status_label.setObjectName("dialogHint")
+        self.status_label.setAccessibleName("Watch folder summary")
+        layout.addWidget(self.status_label)
+
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Source Folder", "Output Folder", "Preset", "Enabled", "Status"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAccessibleName("Watch folder profiles")
+        self.table.setAccessibleDescription("Local folders monitored for automatic conversion")
+        _configure_inventory_table(self.table)
+        self.table.itemSelectionChanged.connect(self._update_actions)
         layout.addWidget(self.table)
 
         buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(8)
         self.add_btn = QPushButton("Add Profile")
         self.remove_btn = QPushButton("Remove")
-        self.toggle_btn = QPushButton("Enable/Disable")
+        self.toggle_btn = QPushButton("Enable")
         self.close_btn = QPushButton("Close")
-        for btn in (self.add_btn, self.remove_btn, self.toggle_btn, self.close_btn):
-            buttons.addWidget(btn)
+        self.add_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
+        self.remove_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        self.toggle_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        buttons.addWidget(self.add_btn)
+        buttons.addStretch()
+        buttons.addWidget(self.toggle_btn)
+        buttons.addWidget(self.remove_btn)
+        buttons.addWidget(self.close_btn)
         layout.addLayout(buttons)
 
         self.add_btn.clicked.connect(self._add_profile)
         self.remove_btn.clicked.connect(self._remove_selected)
         self.toggle_btn.clicked.connect(self._toggle_selected)
         self.close_btn.clicked.connect(self.accept)
+        for button, name, desc in (
+            (self.add_btn, "Add watch profile", "Create a local folder watch profile"),
+            (self.remove_btn, "Remove watch profile", "Remove the selected watch profile"),
+            (self.toggle_btn, "Toggle watch profile", "Enable or disable the selected watch profile"),
+            (self.close_btn, "Close watch profiles", "Close the watch folder profiles dialog"),
+        ):
+            button.setAccessibleName(name)
+            button.setAccessibleDescription(desc)
+            button.setStatusTip(desc)
         self._refresh()
+        self._update_actions()
 
     def _refresh(self):
         self.table.setRowCount(len(self._profiles))
         for i, p in enumerate(self._profiles):
-            self.table.setItem(i, 0, QTableWidgetItem(p.get("source", "")))
-            self.table.setItem(i, 1, QTableWidgetItem(p.get("output", "")))
-            self.table.setItem(i, 2, QTableWidgetItem(p.get("preset", "Default")))
-            self.table.setItem(i, 3, QTableWidgetItem("Yes" if p.get("enabled") else "No"))
+            values = (
+                p.get("source", ""),
+                p.get("output", ""),
+                p.get("preset", "Default"),
+                "Enabled" if p.get("enabled") else "Paused",
+            )
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
+                self.table.setItem(i, col, item)
             status = p.get("last_error") or p.get("last_run") or "Never run"
-            self.table.setItem(i, 4, QTableWidgetItem(str(status)))
+            item = QTableWidgetItem(str(status))
+            item.setToolTip(str(status))
+            self.table.setItem(i, 4, item)
         self.table.resizeColumnsToContents()
+        enabled = sum(1 for p in self._profiles if p.get("enabled"))
+        total = len(self._profiles)
+        if total == 0:
+            text = "No watch profiles yet."
+        else:
+            text = f"{total} watch profile{'s' if total != 1 else ''}; {enabled} enabled."
+        self.status_label.setText(text)
+        self._update_actions()
+
+    def _selected_profile(self) -> tuple[int, dict] | tuple[None, None]:
+        row = self.table.currentRow()
+        if 0 <= row < len(self._profiles):
+            return row, self._profiles[row]
+        return None, None
+
+    def _update_actions(self):
+        _row, profile = self._selected_profile()
+        has_selection = profile is not None
+        self.remove_btn.setEnabled(has_selection)
+        self.toggle_btn.setEnabled(has_selection)
+        if profile is None:
+            self.toggle_btn.setText("Enable")
+            self.toggle_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        else:
+            enabled = profile.get("enabled")
+            self.toggle_btn.setText("Pause" if enabled else "Enable")
+            icon = QStyle.StandardPixmap.SP_MediaPause if enabled else QStyle.StandardPixmap.SP_DialogApplyButton
+            self.toggle_btn.setIcon(self.style().standardIcon(icon))
 
     def _add_profile(self):
         src = QFileDialog.getExistingDirectory(self, "Select Watch Folder")
@@ -4347,7 +4500,14 @@ class WatchFolderDialog(QDialog):
         if not out:
             out = str(Path(src) / "converted")
         presets = list(list_presets().keys())
-        preset_name = "Default" if not presets else presets[0]
+        if presets:
+            preset_name, ok = QInputDialog.getItem(
+                self, "Watch Profile Preset", "Preset", presets, 0, False,
+            )
+            if not ok:
+                return
+        else:
+            preset_name = "Default"
         self._profiles.append({
             "source": src,
             "output": out,
@@ -4360,15 +4520,24 @@ class WatchFolderDialog(QDialog):
         self._refresh()
 
     def _remove_selected(self):
-        row = self.table.currentRow()
-        if 0 <= row < len(self._profiles):
+        row, profile = self._selected_profile()
+        if row is not None and profile is not None:
+            answer = QMessageBox.question(
+                self,
+                "Remove Watch Profile",
+                f"Remove the watch profile for:\n{profile.get('source', '')}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
             self._profiles.pop(row)
             _save_watch_profiles(self._profiles)
             self._refresh()
 
     def _toggle_selected(self):
-        row = self.table.currentRow()
-        if 0 <= row < len(self._profiles):
+        row, _profile = self._selected_profile()
+        if row is not None:
             self._profiles[row]["enabled"] = not self._profiles[row].get("enabled", True)
             _save_watch_profiles(self._profiles)
             self._refresh()
@@ -4417,13 +4586,17 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("only_if_smaller_spin","Only-if-smaller threshold", "Percentage by which output must be smaller"),
     ("png_level_spin",      "PNG compression level",    "PNG compression 1 (fast) to 9 (smallest)"),
     ("tiff_comp_combo",     "TIFF compression",         "TIFF compression: None, LZW, or Deflate"),
+    ("filter_toggle",       "Input format filters",     "Show or hide input format family filters"),
     ("adv_toggle",          "Advanced output controls", "Show or hide advanced output controls"),
     ("scan_btn",            "Scan source",              "Scan the selected source for supported images"),
     ("convert_btn",         "Convert batch",            "Start converting the scanned batch"),
     ("stop_btn",            "Cancel conversion",        "Stop the current conversion batch"),
+    ("pause_btn",           "Pause or resume conversion", "Pause or resume the current conversion batch"),
     ("paste_btn",           "Paste clipboard",          "Paste an image from clipboard as input"),
     ("manage_plugins_btn",  "Plugin trust",             "Review plugin trust status and trust or untrust plugin files"),
+    ("watch_folders_btn",   "Watch folder profiles",    "Manage local hot-folder conversion profiles"),
     ("auto_open_chk",       "Auto-open output",         "Automatically open the output folder when conversion finishes"),
+    ("when_done_combo",     "When done action",         "Choose what happens after conversion finishes"),
     ("open_output_btn",     "Open output folder",       "Open the most recent output folder"),
     ("export_log_btn",      "Export log",               "Save the conversion log as a text file"),
     ("export_csv_btn",      "Export CSV",               "Export conversion results as a CSV report"),
@@ -4711,6 +4884,7 @@ class MainWindow(QMainWindow):
         io_grid.addWidget(self.src_edit, 0, 1)
         self.src_btn = QPushButton("Choose")
         self.src_btn.setFixedWidth(84)
+        self.src_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.src_btn.clicked.connect(self._browse_source)
         io_grid.addWidget(self.src_btn, 0, 2)
 
@@ -4741,6 +4915,7 @@ class MainWindow(QMainWindow):
         io_grid.addWidget(self.dst_edit, 1, 1)
         self.dst_btn = QPushButton("Choose")
         self.dst_btn.setFixedWidth(84)
+        self.dst_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.dst_btn.clicked.connect(self._browse_output)
         io_grid.addWidget(self.dst_btn, 1, 2)
 
@@ -4794,6 +4969,18 @@ class MainWindow(QMainWindow):
         for c in range(5):
             filter_layout.setColumnStretch(c, 1)
 
+        self.filter_toggle = QToolButton()
+        self.filter_toggle.setObjectName("advancedToggle")
+        self.filter_toggle.setCheckable(True)
+        self.filter_toggle.setChecked(False)
+        self.filter_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.filter_toggle.setText("Show input format filters")
+        self.filter_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.filter_toggle.setToolTip("Show or hide input format family filters")
+        self.filter_toggle.toggled.connect(self._toggle_filters)
+        self.filter_group = filter_group
+        self.filter_group.setVisible(False)
+        scroll_layout.addWidget(self.filter_toggle)
         scroll_layout.addWidget(filter_group)
 
         # ── Conversion Options ──
@@ -5199,21 +5386,27 @@ class MainWindow(QMainWindow):
         secondary_actions = QHBoxLayout()
         secondary_actions.setContentsMargins(0, 0, 0, 0)
         secondary_actions.setSpacing(10)
+        output_actions = QHBoxLayout()
+        output_actions.setContentsMargins(0, 0, 0, 0)
+        output_actions.setSpacing(10)
 
         self.scan_btn = QPushButton("Scan Source")
         self.scan_btn.setObjectName("primaryBtn")
+        self.scan_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView))
         self.scan_btn.clicked.connect(self._scan)
         primary_actions.addWidget(self.scan_btn)
 
         self.convert_btn = QPushButton("Convert Batch")
         self.convert_btn.setObjectName("primaryBtn")
         self.convert_btn.setEnabled(False)
+        self.convert_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.convert_btn.clicked.connect(self._convert)
         primary_actions.addWidget(self.convert_btn)
 
         self.stop_btn = QPushButton("Cancel")
         self.stop_btn.setObjectName("stopBtn")
         self.stop_btn.setEnabled(False)
+        self.stop_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogCancelButton))
         self.stop_btn.clicked.connect(self._stop)
         primary_actions.addWidget(self.stop_btn)
 
@@ -5221,24 +5414,29 @@ class MainWindow(QMainWindow):
         self.pause_btn.setEnabled(False)
         self.pause_btn.setToolTip("Pause conversion after the current in-flight files finish")
         self.pause_btn.setAccessibleName("Pause/Resume conversion")
+        self.pause_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
         self.pause_btn.clicked.connect(self._toggle_pause)
         primary_actions.addWidget(self.pause_btn)
 
         self.paste_btn = QPushButton("Paste Clipboard")
         self.paste_btn.setToolTip("Paste an image from the clipboard as a temporary PNG input")
+        self.paste_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
         self.paste_btn.clicked.connect(self._paste_clipboard)
-        primary_actions.addWidget(self.paste_btn)
 
         primary_actions.addStretch()
 
+        secondary_actions.addWidget(self.paste_btn)
+
         self.manage_plugins_btn = QPushButton("Plugins")
         self.manage_plugins_btn.setToolTip("Review plugin trust status")
+        self.manage_plugins_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView))
         self.manage_plugins_btn.clicked.connect(self._open_plugin_trust)
         secondary_actions.addWidget(self.manage_plugins_btn)
 
         self.watch_folders_btn = QPushButton("Watch Folders")
         self.watch_folders_btn.setToolTip("Manage hot-folder watch profiles")
         self.watch_folders_btn.setAccessibleName("Watch folder profiles")
+        self.watch_folders_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
         self.watch_folders_btn.clicked.connect(self._open_watch_folders)
         secondary_actions.addWidget(self.watch_folders_btn)
 
@@ -5246,29 +5444,34 @@ class MainWindow(QMainWindow):
         self.auto_open_chk.setChecked(False)
         self.auto_open_chk.setToolTip("Automatically open the output folder when conversion finishes")
         secondary_actions.addStretch()
-        secondary_actions.addWidget(self.auto_open_chk)
+        output_actions.addStretch()
+        output_actions.addWidget(self.auto_open_chk)
 
-        when_done_label = QLabel("When done:")
+        when_done_label = QLabel("After conversion:")
         when_done_label.setObjectName("fieldLabel")
-        secondary_actions.addWidget(when_done_label)
+        output_actions.addWidget(when_done_label)
         self.when_done_combo = QComboBox()
         self.when_done_combo.addItems(["Do Nothing", "Close App", "Sleep", "Shutdown"])
         self.when_done_combo.setToolTip("Action to take after batch conversion completes")
         self.when_done_combo.setAccessibleName("When done action")
         self.when_done_combo.setFixedWidth(130)
-        secondary_actions.addWidget(self.when_done_combo)
+        output_actions.addWidget(self.when_done_combo)
 
         self.open_output_btn = QPushButton("Open Output")
         self.open_output_btn.setEnabled(False)
+        self.open_output_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.open_output_btn.clicked.connect(self._open_output)
-        secondary_actions.addWidget(self.open_output_btn)
+        output_actions.addWidget(self.open_output_btn)
 
         actions.addLayout(primary_actions)
         actions.addLayout(secondary_actions)
+        actions.addLayout(output_actions)
 
-        scroll_layout.removeWidget(filter_group)
         scroll_layout.insertWidget(2, action_bar)
-        scroll_layout.insertWidget(4, filter_group)
+        scroll_layout.removeWidget(self.filter_toggle)
+        scroll_layout.removeWidget(filter_group)
+        scroll_layout.insertWidget(4, self.filter_toggle)
+        scroll_layout.insertWidget(5, filter_group)
 
         # ── Stats bar ──
         stats_frame = QFrame()
@@ -5306,24 +5509,28 @@ class MainWindow(QMainWindow):
         self.export_log_btn = QPushButton("Export Log")
         self.export_log_btn.setObjectName("miniBtn")
         self.export_log_btn.setToolTip("Save the conversion log as a text file")
+        self.export_log_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_log_btn.clicked.connect(self._export_log)
         log_header.addWidget(self.export_log_btn)
 
         self.export_csv_btn = QPushButton("Export CSV")
         self.export_csv_btn.setObjectName("miniBtn")
         self.export_csv_btn.setToolTip("Export conversion results as a CSV report")
+        self.export_csv_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_csv_btn.clicked.connect(self._export_csv)
         log_header.addWidget(self.export_csv_btn)
 
         self.export_support_btn = QPushButton("Support Bundle")
         self.export_support_btn.setObjectName("miniBtn")
         self.export_support_btn.setToolTip("Save redacted diagnostics for support")
+        self.export_support_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_support_btn.clicked.connect(self._export_support_bundle)
         log_header.addWidget(self.export_support_btn)
 
         self.clear_log_btn = QPushButton("Clear")
         self.clear_log_btn.setObjectName("miniBtn")
         self.clear_log_btn.setToolTip("Clear the log output")
+        self.clear_log_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
         self.clear_log_btn.clicked.connect(self._clear_log)
         log_header.addWidget(self.clear_log_btn)
 
@@ -5383,6 +5590,13 @@ class MainWindow(QMainWindow):
             "Hide advanced output controls" if checked else "Show advanced output controls"
         )
 
+    def _toggle_filters(self, checked: bool):
+        self.filter_group.setVisible(checked)
+        self.filter_toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+        self.filter_toggle.setText(
+            "Hide input format filters" if checked else "Show input format filters"
+        )
+
     def _set_workflow_state(self, state: str, message: str | None = None):
         if hasattr(self, "workflow_state"):
             self.workflow_state.setText(state)
@@ -5404,13 +5618,14 @@ class MainWindow(QMainWindow):
             "progressive_jpeg_chk", "lossless_webp_chk", "resize_chk",
             "resize_combo", "resize_spin", "prefix_edit", "suffix_edit",
             "chroma_chk", "srgb_chk", "tiff_comp_combo", "png_level_spin",
-            "adv_toggle", "template_edit", "dpi_spin", "avif_speed_spin",
+            "filter_toggle", "adv_toggle", "template_edit", "dpi_spin", "avif_speed_spin",
             "avif_codec_combo", "frames_combo", "tone_map_combo", "icc_edit",
             "watermark_edit", "canvas_edit", "canvas_bg_edit",
             "exclude_edit", "max_file_size_edit",
             "xmp_sidecar_chk", "recompress_chk", "only_if_smaller_chk",
             "only_if_smaller_spin", "target_kb_spin", "png_lossy_chk",
-            "paste_btn", "manage_plugins_btn", "auto_open_chk", "when_done_combo",
+            "paste_btn", "manage_plugins_btn", "watch_folders_btn",
+            "auto_open_chk", "when_done_combo",
             "export_support_btn",
         ]:
             w = getattr(self, attr, None)
@@ -6328,6 +6543,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("only_if_smaller_pct", self.only_if_smaller_spin.value())
         self.settings.setValue("target_kb", self.target_kb_spin.value())
         self.settings.setValue("png_lossy", self.png_lossy_chk.isChecked())
+        self.settings.setValue("filters_expanded", self.filter_toggle.isChecked())
         self.settings.setValue("adv_expanded", self.adv_toggle.isChecked())
         self.settings.setValue("geometry", self.saveGeometry())
         # Format filter states
@@ -6472,6 +6688,10 @@ class MainWindow(QMainWindow):
             self.target_kb_spin.setValue(n)
         if (v := self.settings.value("png_lossy")) is not None:
             self.png_lossy_chk.setChecked(v == "true" or v is True)
+        if (v := self.settings.value("filters_expanded")) is not None:
+            expanded = v == "true" or v is True
+            self.filter_toggle.setChecked(expanded)
+            self._toggle_filters(expanded)
         if (v := self.settings.value("adv_expanded")) is not None:
             expanded = v == "true" or v is True
             self.adv_toggle.setChecked(expanded)

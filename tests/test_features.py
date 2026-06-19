@@ -1549,3 +1549,15 @@ class TestQtAccessibility:
         w = self.window
         assert w.fmt_combo.focusPolicy() != _Qt.FocusPolicy.NoFocus
         assert w.fmt_combo.count() >= 6
+
+    def test_input_filters_are_progressively_disclosed(self):
+        w = self.window
+        assert w.filter_group.isHidden()
+
+        w.filter_toggle.setChecked(True)
+        assert not w.filter_group.isHidden()
+        assert "Hide input format filters" in w.filter_toggle.text()
+
+        w.filter_toggle.setChecked(False)
+        assert w.filter_group.isHidden()
+        assert "Show input format filters" in w.filter_toggle.text()

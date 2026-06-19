@@ -97,6 +97,37 @@ def test_plugin_trust_rows_do_not_execute_plugin_code(tmp_workdir, monkeypatch):
     assert rows[0]["status"] == "untrusted"
     assert rows[0]["hash_prefix"]
     assert "trust-plugin" in rows[0]["reason"]
+    assert rows[0]["trust_ref"] == str(plugin)
+
+
+def test_entrypoint_plugin_rows_can_be_trusted_by_trust_ref(tmp_workdir, monkeypatch):
+    import imgconverter
+
+    plugin_dir = tmp_workdir / "plugins"
+    plugin_dir.mkdir()
+    ep_info = {
+        "name": "demo",
+        "package": "imgconverter-demo",
+        "version": "1.2.3",
+        "module": "imgconverter_demo:register",
+        "trust_key": "ep:imgconverter-demo==1.2.3:demo",
+    }
+
+    monkeypatch.setattr(imgconverter, "_plugin_dir", lambda: plugin_dir)
+    monkeypatch.setattr(imgconverter, "_discover_entrypoint_plugins", lambda: [ep_info])
+
+    rows = imgconverter.get_plugin_trust_rows()
+    assert rows[0]["name"] == ep_info["trust_key"]
+    assert rows[0]["path"] == ep_info["module"]
+    assert rows[0]["trust_ref"] == ep_info["trust_key"]
+    assert rows[0]["status"] == "untrusted"
+
+    ok, msg = imgconverter._trust_plugin(rows[0]["trust_ref"])
+    assert ok, msg
+    assert ep_info["trust_key"] in imgconverter._load_plugin_trust()
+
+    rows = imgconverter.get_plugin_trust_rows()
+    assert rows[0]["status"] == "trusted"
 
 
 def test_trusted_plugin_registers_decoder_encoder_and_storage(tmp_workdir, monkeypatch):
