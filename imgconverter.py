@@ -4051,6 +4051,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._apply_dark_titlebar()
+        self._init_taskbar_progress()
         self._restore_state()
         self._apply_accessibility_labels()
         self._log_startup()
@@ -4162,6 +4163,71 @@ class MainWindow(QMainWindow):
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, 20, ctypes.byref(value), ctypes.sizeof(value)
             )
+        except Exception:
+            pass
+
+    def _init_taskbar_progress(self):
+        self._taskbar_hwnd = None
+        if platform.system() != "Windows":
+            return
+        try:
+            import ctypes.wintypes
+            _CoInitialize = ctypes.windll.ole32.CoInitialize
+            _CoCreateInstance = ctypes.windll.ole32.CoCreateInstance
+            CLSID_TaskbarList = ctypes.c_char * 16
+            clsid = CLSID_TaskbarList(
+                b'\x44\xf3\xfd\x56\x6d\xfd\xd0\x11\x95\x8a\x00\x60\x97\xc9\xa0\x90'
+            )
+            IID_ITaskbarList3 = ctypes.c_char * 16
+            iid = IID_ITaskbarList3(
+                b'\x02\xd3\xea\xea\x1b\xdc\xcf\x4d\x9e\xb3\xf4\x49\x55\x00\x23\x18'
+            )
+            _CoInitialize(None)
+            tbptr = ctypes.c_void_p()
+            hr = _CoCreateInstance(
+                ctypes.byref(clsid), None, 1,
+                ctypes.byref(iid), ctypes.byref(tbptr),
+            )
+            if hr == 0 and tbptr.value:
+                self._taskbar_hwnd = int(self.winId())
+                self._taskbar_ptr = tbptr
+            else:
+                self._taskbar_ptr = None
+        except Exception:
+            self._taskbar_ptr = None
+
+    def _set_taskbar_progress(self, current: int, total: int):
+        if not getattr(self, "_taskbar_ptr", None) or not self._taskbar_hwnd:
+            return
+        try:
+            vt = ctypes.cast(
+                ctypes.cast(self._taskbar_ptr, ctypes.POINTER(ctypes.c_void_p))[0],
+                ctypes.POINTER(ctypes.c_void_p),
+            )
+            SetProgressValue = ctypes.CFUNCTYPE(
+                ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.c_ulonglong, ctypes.c_ulonglong,
+            )(vt[9])
+            SetProgressState = ctypes.CFUNCTYPE(
+                ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int,
+            )(vt[10])
+            SetProgressState(self._taskbar_ptr, self._taskbar_hwnd, 0x2)
+            SetProgressValue(self._taskbar_ptr, self._taskbar_hwnd, current, total)
+        except Exception:
+            pass
+
+    def _clear_taskbar_progress(self):
+        if not getattr(self, "_taskbar_ptr", None) or not self._taskbar_hwnd:
+            return
+        try:
+            vt = ctypes.cast(
+                ctypes.cast(self._taskbar_ptr, ctypes.POINTER(ctypes.c_void_p))[0],
+                ctypes.POINTER(ctypes.c_void_p),
+            )
+            SetProgressState = ctypes.CFUNCTYPE(
+                ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int,
+            )(vt[10])
+            SetProgressState(self._taskbar_ptr, self._taskbar_hwnd, 0x0)
         except Exception:
             pass
 
@@ -4763,6 +4829,16 @@ class MainWindow(QMainWindow):
         secondary_actions.addStretch()
         secondary_actions.addWidget(self.auto_open_chk)
 
+        when_done_label = QLabel("When done:")
+        when_done_label.setObjectName("fieldLabel")
+        secondary_actions.addWidget(when_done_label)
+        self.when_done_combo = QComboBox()
+        self.when_done_combo.addItems(["Do Nothing", "Close App", "Sleep", "Shutdown"])
+        self.when_done_combo.setToolTip("Action to take after batch conversion completes")
+        self.when_done_combo.setAccessibleName("When done action")
+        self.when_done_combo.setFixedWidth(130)
+        secondary_actions.addWidget(self.when_done_combo)
+
         self.open_output_btn = QPushButton("Open Output")
         self.open_output_btn.setEnabled(False)
         self.open_output_btn.clicked.connect(self._open_output)
@@ -4915,7 +4991,7 @@ class MainWindow(QMainWindow):
             "exclude_edit", "max_file_size_edit",
             "xmp_sidecar_chk", "recompress_chk", "only_if_smaller_chk",
             "only_if_smaller_spin", "target_kb_spin", "png_lossy_chk",
-            "paste_btn", "manage_plugins_btn", "auto_open_chk",
+            "paste_btn", "manage_plugins_btn", "auto_open_chk", "when_done_combo",
             "export_support_btn",
         ]:
             w = getattr(self, attr, None)
@@ -5571,6 +5647,7 @@ class MainWindow(QMainWindow):
     def _on_progress(self, current, total):
         self.progress_bar.setValue(current)
         self._update_title("converting", current=current, total=total)
+        self._set_taskbar_progress(current, total)
         elapsed = time.perf_counter() - self._convert_start_time
         if current > 0 and elapsed > 0 and current < total:
             speed = current / elapsed
@@ -5707,9 +5784,44 @@ class MainWindow(QMainWindow):
 
         self._update_title("done", ok=ok, fail=fail)
         self._play_completion_sound()
+        self._clear_taskbar_progress()
         if self.auto_open_chk.isChecked():
             self._open_output()
         self._save_state()
+
+        when_done_idx = self.when_done_combo.currentIndex()
+        if when_done_idx > 0:
+            action = ["nothing", "close", "sleep", "shutdown"][when_done_idx]
+            if action in ("sleep", "shutdown"):
+                countdown = QMessageBox(self)
+                countdown.setIcon(QMessageBox.Icon.Warning)
+                countdown.setWindowTitle(f"ImgConverter — {action.title()} in 30 seconds")
+                countdown.setText(
+                    f"System will {action} in 30 seconds.\n"
+                    f"Click Cancel to abort."
+                )
+                countdown.setStandardButtons(QMessageBox.StandardButton.Cancel)
+                countdown.setDefaultButton(QMessageBox.StandardButton.Cancel)
+                _remaining = [30]
+                def _tick():
+                    _remaining[0] -= 1
+                    if _remaining[0] <= 0:
+                        _timer.stop()
+                        countdown.done(1)
+                    else:
+                        countdown.setText(
+                            f"System will {action} in {_remaining[0]} seconds.\n"
+                            f"Click Cancel to abort."
+                        )
+                _timer = QTimer(self)
+                _timer.timeout.connect(_tick)
+                _timer.start(1000)
+                result_code = countdown.exec()
+                _timer.stop()
+                if result_code == 1:
+                    _execute_when_done(action)
+            elif action == "close":
+                QTimer.singleShot(500, QApplication.instance().quit)
 
     def _stop(self):
         if self._worker:
@@ -5750,6 +5862,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("png_compress_level", self.png_level_spin.value())
         # strip_metadata persisted as metadata_mode combo index now
         self.settings.setValue("auto_open_output", self.auto_open_chk.isChecked())
+        self.settings.setValue("when_done", self.when_done_combo.currentIndex())
         self.settings.setValue("template", self.template_edit.text())
         self.settings.setValue("dpi", self.dpi_spin.value())
         self.settings.setValue("avif_speed", self.avif_speed_spin.value())
@@ -5873,6 +5986,9 @@ class MainWindow(QMainWindow):
                 self.meta_combo.setCurrentIndex(3)
         if (v := self.settings.value("auto_open_output")) is not None:
             self.auto_open_chk.setChecked(v == "true" or v is True)
+        if (n := self._safe_int(self.settings.value("when_done"))) is not None:
+            if 0 <= n < self.when_done_combo.count():
+                self.when_done_combo.setCurrentIndex(n)
         if v := self.settings.value("template"):
             self.template_edit.setText(v)
         if (n := self._safe_int(self.settings.value("dpi"))) is not None:
@@ -5993,6 +6109,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Flatten output (no subdirectory mirroring)")
     p.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
                    help="Glob pattern to exclude (repeatable). Example: --exclude '*.thumb.*' --exclude 'cache/**'")
+    p.add_argument("--stdin-files", action="store_true",
+                   help="Read file paths from stdin (one per line). Mutually exclusive with --input and --files. "
+                        "Use --stdin-null for NUL-delimited input (find -print0 compatible).")
+    p.add_argument("--stdin-null", action="store_true",
+                   help="With --stdin-files, use NUL byte as delimiter instead of newline (for find -print0)")
     p.add_argument("--no-exiftool", action="store_true",
                    help="Skip ExifTool tag-copy pass even when exiftool is on PATH (uses Pillow EXIF/ICC/XMP only)")
     p.add_argument("--template", type=str, default=None, metavar="STR",
@@ -6104,6 +6225,13 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="After each conversion, run butteraugli (preferred) or "
                         "ffmpeg-quality-metrics if available, logging PSNR/SSIM "
                         "or butteraugli score in result.warnings.")
+    p.add_argument("--progress", action="store_true",
+                   help="Emit JSON Lines per-file events to stderr for machine consumption. "
+                        "Events: scan_start, scan_done, file_start, file_done, batch_done.")
+    p.add_argument("--when-done", type=str, default="nothing",
+                   choices=["nothing", "close", "sleep", "shutdown"],
+                   help="Action after batch completion: nothing (default), close (exit app), "
+                        "sleep (system sleep), shutdown (system shutdown).")
     return p
 
 
@@ -6136,6 +6264,8 @@ CLI_FLAG_PARITY = {
     "--png-lossy": {"surface": "gui", "gui": ("png_lossy_chk",), "readme": True, "note": "pngquant toggle"},
     "--no-structure": {"surface": "gui", "gui": ("structure_chk",), "readme": True, "note": "Folder structure inverse"},
     "--exclude": {"surface": "gui", "gui": ("exclude_edit",), "readme": True, "note": "Glob exclusion"},
+    "--stdin-files": {"surface": "cli-only", "gui": (), "readme": True, "note": "Read file paths from stdin"},
+    "--stdin-null": {"surface": "cli-only", "gui": (), "readme": True, "note": "NUL-delimited stdin paths"},
     "--no-exiftool": {"surface": "cli-only", "gui": (), "readme": True, "note": "CLI metadata backend override"},
     "--template": {"surface": "gui", "gui": ("template_edit",), "readme": True, "note": "Filename template"},
     "--report": {"surface": "cli-only", "gui": ("export_csv_btn",), "readme": True, "note": "CLI JSON report; GUI has CSV export"},
@@ -6173,6 +6303,8 @@ CLI_FLAG_PARITY = {
     "--backend-info": {"surface": "admin-only", "gui": (), "readme": True, "note": "Backend capability report"},
     "--backend-benchmark": {"surface": "admin-only", "gui": (), "readme": True, "note": "Optional backend benchmark input"},
     "--verify-quality": {"surface": "cli-only", "gui": (), "readme": True, "note": "External quality metric checks"},
+    "--progress": {"surface": "cli-only", "gui": (), "readme": True, "note": "JSON Lines machine-readable progress events"},
+    "--when-done": {"surface": "gui", "gui": ("when_done_combo",), "readme": True, "note": "Post-batch action"},
     "--help": {"surface": "cli-only", "gui": (), "readme": False, "note": "argparse built-in help"},
 }
 
@@ -6662,8 +6794,21 @@ def _collect_cli_input_refs(args) -> tuple[Path, list[Path], list[Path]]:
     if getattr(args, "input", None):
         refs.append(Path(args.input).expanduser().resolve())
     refs.extend(Path(p).expanduser().resolve() for p in (getattr(args, "files", None) or []))
+
+    if getattr(args, "stdin_files", False):
+        if refs:
+            print("[ERROR] --stdin-files is mutually exclusive with --input and --files.",
+                  file=sys.stderr)
+            sys.exit(EXIT_INPUT_ERROR)
+        delim = "\0" if getattr(args, "stdin_null", False) else "\n"
+        raw = sys.stdin.read()
+        for line in raw.split(delim):
+            line = line.strip()
+            if line:
+                refs.append(Path(line).expanduser().resolve())
+
     if not refs:
-        print("[ERROR] Provide --input or --files.", file=sys.stderr)
+        print("[ERROR] Provide --input, --files, or --stdin-files.", file=sys.stderr)
         sys.exit(EXIT_INPUT_ERROR)
 
     dirs: list[Path] = []
@@ -6742,6 +6887,41 @@ def _scan_cli_inputs(
     scan.files.sort()
     scan.elapsed = time.perf_counter() - t0
     return scan
+
+
+def _execute_when_done(action: str):
+    if action == "nothing" or not action:
+        return
+    if action == "close":
+        sys.exit(EXIT_OK)
+    if action == "sleep":
+        if platform.system() == "Windows":
+            subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
+                           capture_output=True)
+        elif platform.system() == "Darwin":
+            subprocess.run(["pmset", "sleepnow"], capture_output=True)
+        else:
+            subprocess.run(["systemctl", "suspend"], capture_output=True)
+    elif action == "shutdown":
+        if platform.system() == "Windows":
+            subprocess.run(["shutdown", "/s", "/t", "60", "/c",
+                            "ImgConverter: shutting down after batch conversion. "
+                            "Run 'shutdown /a' to cancel."], capture_output=True)
+        elif platform.system() == "Darwin":
+            subprocess.run(["osascript", "-e",
+                            'tell application "System Events" to shut down'],
+                           capture_output=True)
+        else:
+            subprocess.run(["systemctl", "poweroff"], capture_output=True)
+
+
+def _emit_progress(event: str, data: dict | None = None, *, enabled: bool = False):
+    if not enabled:
+        return
+    payload = {"event": event}
+    if data:
+        payload.update(data)
+    print(json.dumps(payload, default=str), file=sys.stderr, flush=True)
 
 
 def _run_cli(args):
@@ -6861,12 +7041,16 @@ def _run_cli(args):
         sys.exit(_watch_directory(args, input_dir, output_dir, resize_mode, resize_value))
 
     # Scan
+    _progress_on = getattr(args, "progress", False)
     print(f"\nScanning{' recursively' if args.recursive else ''}...")
+    _emit_progress("scan_start", {"input": str(input_dir)}, enabled=_progress_on)
     max_bytes = _parse_size_spec(getattr(args, "max_file_size", None) or "")
     if max_bytes:
         print(f"[filter] skipping files larger than {_fmt_size(max_bytes)}")
     scan = _scan_cli_inputs(args, input_dir, input_dirs, input_files, max_bytes)
     print(f"Found {len(scan.files)} files ({_fmt_size(scan.total_size)}) in {scan.elapsed:.2f}s")
+    _emit_progress("scan_done", {"count": len(scan.files), "total_bytes": scan.total_size,
+                                  "elapsed": round(scan.elapsed, 3)}, enabled=_progress_on)
 
     # --resume: drop files that the previous run already converted.
     if getattr(args, "resume", False):
@@ -7065,6 +7249,16 @@ def _run_cli(args):
                 failed_paths.append(str(result.src))
                 print(f"[FAIL] ({done_count}/{total}) {result.src.name}: {result.error}")
 
+            _emit_progress("file_done", {
+                "file": str(result.src),
+                "status": "ok" if result.success else ("skip" if result.skipped else "fail"),
+                "size_before": result.size_before,
+                "size_after": result.size_after,
+                "elapsed": round(result.elapsed, 3),
+                "current": done_count,
+                "total": total,
+            }, enabled=_progress_on)
+
             if result.success and not result.skipped:
                 done_paths.append(str(result.src))
                 # Quality verification — butteraugli / ffmpeg-quality-metrics.
@@ -7159,6 +7353,10 @@ def _run_cli(args):
     wall_time = time.perf_counter() - t0
     speed = ok_count / wall_time if wall_time > 0 else 0
     print(f"\nDone: {ok_count} converted, {fail_count} failed, {skip_count} skipped in {wall_time:.0f}s ({speed:.1f} files/sec)")
+    _emit_progress("batch_done", {
+        "ok": ok_count, "failed": fail_count, "skipped": skip_count,
+        "wall_seconds": round(wall_time, 2), "files_per_sec": round(speed, 1),
+    }, enabled=_progress_on)
 
     # JSON report — structured per-file output for CI / Ansible / cron pipelines.
     if getattr(args, "report", None):
@@ -7200,7 +7398,10 @@ def _run_cli(args):
         except OSError as e:
             print(f"[report] failed to write {args.report}: {e}", file=sys.stderr)
 
-    # Structured exit-code matrix — see EXIT_CODES at module top.
+    when_done = getattr(args, "when_done", "nothing") or "nothing"
+    if when_done != "nothing":
+        _execute_when_done(when_done)
+
     if fail_count == total and total > 0:
         sys.exit(EXIT_TOTAL_FAILURE)
     elif fail_count > 0:
@@ -7276,7 +7477,7 @@ def main():
     if plugins:
         print(f"[plugins] loaded: {', '.join(plugins)}")
 
-    if args.input or getattr(args, "files", None):
+    if args.input or getattr(args, "files", None) or getattr(args, "stdin_files", False):
         _run_cli(args)
         return
 
