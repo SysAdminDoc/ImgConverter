@@ -641,6 +641,20 @@ def _plugin_trust_status(py: Path, records: dict[str, dict]) -> tuple[str, str]:
 
 
 def _trust_plugin(ref: str | Path) -> tuple[bool, str]:
+    ref_str = str(ref)
+    if ref_str.startswith("ep:"):
+        records = _load_plugin_trust()
+        for ep_info in _discover_entrypoint_plugins():
+            if ep_info["trust_key"] == ref_str:
+                records[ref_str] = {
+                    "package": ep_info["package"],
+                    "version": ep_info["version"],
+                    "module": ep_info["module"],
+                    "trusted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+                _write_plugin_trust(records)
+                return True, f"[plugins] trusted entry-point {ep_info['name']} ({ep_info['package']}=={ep_info['version']})"
+        return False, f"[plugins] no entry-point found matching {ref_str}"
     try:
         py = _resolve_plugin_ref(ref)
         digest = _file_sha256(py)
@@ -670,17 +684,28 @@ def _list_plugins() -> int:
     plugin_dir = _plugin_dir()
     records = _load_plugin_trust()
     print(f"[plugins] directory: {plugin_dir}")
-    if not plugin_dir.is_dir():
+    if plugin_dir.is_dir():
+        seen = set()
+        for py in sorted(plugin_dir.glob("*.py")):
+            seen.add(py.name)
+            status, detail = _plugin_trust_status(py, records)
+            suffix = detail[:12] if status == "trusted" else detail
+            print(f"[plugins] {py.name}: {status} ({suffix})")
+        for name in sorted(set(records) - seen):
+            if not name.startswith("ep:"):
+                print(f"[plugins] {name}: missing trusted entry")
+    else:
         print("[plugins] no plugin directory")
-        return EXIT_OK
-    seen = set()
-    for py in sorted(plugin_dir.glob("*.py")):
-        seen.add(py.name)
-        status, detail = _plugin_trust_status(py, records)
-        suffix = detail[:12] if status == "trusted" else detail
-        print(f"[plugins] {py.name}: {status} ({suffix})")
-    for name in sorted(set(records) - seen):
-        print(f"[plugins] {name}: missing trusted entry")
+
+    ep_plugins = _discover_entrypoint_plugins()
+    if ep_plugins:
+        print(f"\n[plugins] entry-points ({len(ep_plugins)} discovered):")
+        for ep_info in ep_plugins:
+            status, detail = _entrypoint_trust_status(ep_info, records)
+            print(f"[plugins]   {ep_info['name']}: {status} ({ep_info['package']}=={ep_info['version']})")
+            print(f"[plugins]     module: {ep_info['module']}")
+            if status == "untrusted":
+                print(f"[plugins]     trust with: --trust-plugin {ep_info['trust_key']}")
     return EXIT_OK
 
 
@@ -708,6 +733,8 @@ def get_plugin_trust_rows() -> list[dict]:
                 "reason": "trusted file matches manifest" if status == "trusted" else detail,
             })
     for name in sorted(set(records) - seen):
+        if name.startswith("ep:"):
+            continue
         rows.append({
             "name": name,
             "path": str(plugin_dir / name),
@@ -715,44 +742,109 @@ def get_plugin_trust_rows() -> list[dict]:
             "hash_prefix": str(records[name].get("sha256", ""))[:12],
             "reason": "trusted manifest entry has no file on disk",
         })
+
+    for ep_info in _discover_entrypoint_plugins():
+        status, detail = _entrypoint_trust_status(ep_info, records)
+        rows.append({
+            "name": ep_info["trust_key"],
+            "path": ep_info["module"],
+            "status": status,
+            "hash_prefix": "",
+            "reason": detail,
+        })
     return rows
 
 
+def _discover_entrypoint_plugins() -> list[dict]:
+    """Discover packages advertising ``imgconverter.plugins`` entry points."""
+    results: list[dict] = []
+    try:
+        if sys.version_info >= (3, 12):
+            from importlib.metadata import entry_points
+            eps = entry_points(group="imgconverter.plugins")
+        else:
+            from importlib.metadata import entry_points
+            all_eps = entry_points()
+            eps = all_eps.get("imgconverter.plugins", [])
+        for ep in eps:
+            pkg = ep.dist.name if ep.dist else "unknown"
+            ver = ep.dist.version if ep.dist else "0"
+            results.append({
+                "name": ep.name,
+                "package": pkg,
+                "version": ver,
+                "module": ep.value,
+                "trust_key": f"ep:{pkg}=={ver}:{ep.name}",
+            })
+    except Exception:
+        pass
+    return results
+
+
+def _entrypoint_trust_status(ep_info: dict, records: dict[str, dict]) -> tuple[str, str]:
+    key = ep_info["trust_key"]
+    record = records.get(key)
+    if not record:
+        return "untrusted", f"run --trust-plugin {key} to trust this package plugin"
+    if record.get("version") != ep_info["version"]:
+        return "changed", f"package updated from {record.get('version')} to {ep_info['version']}"
+    return "trusted", f"{ep_info['package']}=={ep_info['version']}"
+
+
 def _load_plugins() -> list[str]:
-    """Discover and import trusted user plugins. Returns loaded module names."""
+    """Discover and import trusted user + entry-point plugins."""
     _reset_plugin_registry()
-    plugin_dir = _plugin_dir()
-    if not plugin_dir.is_dir():
-        return []
     trust_records = _load_plugin_trust()
     loaded = []
-    for py in sorted(plugin_dir.glob("*.py")):
-        status, detail = _plugin_trust_status(py, trust_records)
+
+    plugin_dir = _plugin_dir()
+    if plugin_dir.is_dir():
+        for py in sorted(plugin_dir.glob("*.py")):
+            status, detail = _plugin_trust_status(py, trust_records)
+            if status != "trusted":
+                print(f"[plugins] skipped {py.name}: {detail}", file=sys.stderr)
+                continue
+            try:
+                mod_name = f"imgconverter_plugin_{py.stem}"
+                spec = importlib.util.spec_from_file_location(mod_name, py)
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    if hasattr(mod, "register"):
+                        capabilities = mod.register({"app_version": APP_VERSION})
+                        registered = _register_plugin_capabilities(py.stem, capabilities)
+                        details = []
+                        if registered.get("decoders"):
+                            details.append("decoders=" + ",".join(registered["decoders"]))
+                        if registered.get("encoders"):
+                            details.append("encoders=" + ",".join(registered["encoders"]))
+                        if registered.get("storage"):
+                            details.append("storage=" + ",".join(registered["storage"]))
+                        if details:
+                            print(f"[plugins] {py.name}: registered {'; '.join(details)}")
+                    loaded.append(py.stem)
+            except Exception as e:
+                print(f"[plugins] failed to load {py.name}: {e}", file=sys.stderr)
+
+    for ep_info in _discover_entrypoint_plugins():
+        status, detail = _entrypoint_trust_status(ep_info, trust_records)
         if status != "trusted":
-            print(f"[plugins] skipped {py.name}: {detail}", file=sys.stderr)
             continue
         try:
-            mod_name = f"imgconverter_plugin_{py.stem}"
-            spec = importlib.util.spec_from_file_location(mod_name, py)
-            if spec and spec.loader:
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                # If plugin has register() at module level, call it.
-                if hasattr(mod, "register"):
-                    capabilities = mod.register({"app_version": APP_VERSION})
-                    registered = _register_plugin_capabilities(py.stem, capabilities)
-                    details = []
-                    if registered.get("decoders"):
-                        details.append("decoders=" + ",".join(registered["decoders"]))
-                    if registered.get("encoders"):
-                        details.append("encoders=" + ",".join(registered["encoders"]))
-                    if registered.get("storage"):
-                        details.append("storage=" + ",".join(registered["storage"]))
-                    if details:
-                        print(f"[plugins] {py.name}: registered {'; '.join(details)}")
-                loaded.append(py.stem)
+            parts = ep_info["module"].rsplit(":", 1)
+            mod = importlib.import_module(parts[0])
+            if len(parts) == 2:
+                register_fn = getattr(mod, parts[1])
+            else:
+                register_fn = getattr(mod, "register", None)
+            if callable(register_fn):
+                capabilities = register_fn({"app_version": APP_VERSION})
+                _register_plugin_capabilities(ep_info["name"], capabilities)
+            loaded.append(ep_info["name"])
+            print(f"[plugins] entry-point: loaded {ep_info['name']} ({ep_info['package']})")
         except Exception as e:
-            print(f"[plugins] failed to load {py.name}: {e}", file=sys.stderr)
+            print(f"[plugins] entry-point {ep_info['name']} failed: {e}", file=sys.stderr)
+
     return loaded
 
 # Optional: jpegoptim / jpegtran for lossless JPEG recompression — bit-preserving
