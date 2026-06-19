@@ -6285,6 +6285,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-memory", type=int, default=None, metavar="PCT",
                    help="Reduce workers when free system memory drops below PCT%% (default: disabled). "
                         "Requires psutil or falls back to platform checks.")
+    p.add_argument("--dedup-warn", action="store_true",
+                   help="After scan, log near-duplicate image pairs using perceptual hashing. "
+                        "Requires imagehash (pip install imagehash). Does not block conversion.")
+    p.add_argument("--dedup-skip", action="store_true",
+                   help="Skip near-duplicates: keep only the largest file in each duplicate group. "
+                        "Requires imagehash (pip install imagehash).")
     return p
 
 
@@ -6359,6 +6365,8 @@ CLI_FLAG_PARITY = {
     "--progress": {"surface": "cli-only", "gui": (), "readme": True, "note": "JSON Lines machine-readable progress events"},
     "--when-done": {"surface": "gui", "gui": ("when_done_combo",), "readme": True, "note": "Post-batch action"},
     "--max-memory": {"surface": "cli-only", "gui": (), "readme": True, "note": "RAM pressure worker throttle threshold"},
+    "--dedup-warn": {"surface": "cli-only", "gui": (), "readme": True, "note": "Perceptual hash duplicate detection (warn)"},
+    "--dedup-skip": {"surface": "cli-only", "gui": (), "readme": True, "note": "Perceptual hash duplicate detection (skip)"},
     "--help": {"surface": "cli-only", "gui": (), "readme": False, "note": "argparse built-in help"},
 }
 
@@ -7010,6 +7018,62 @@ def _execute_when_done(action: str):
             subprocess.run(["systemctl", "poweroff"], capture_output=True)
 
 
+def _dedup_scan(files: list[Path], threshold: int = 8) -> list[tuple[Path, Path, int]]:
+    """Find near-duplicate image pairs using perceptual hashing.
+
+    Returns list of (file_a, file_b, hamming_distance) for pairs below threshold.
+    Requires imagehash library; returns empty list if unavailable.
+    """
+    try:
+        import imagehash
+    except ImportError:
+        return []
+
+    hashes: list[tuple[Path, object]] = []
+    for f in files:
+        try:
+            with Image.open(str(f)) as img:
+                h = imagehash.average_hash(img.convert("RGB").resize((8, 8)))
+                hashes.append((f, h))
+        except Exception:
+            continue
+
+    dupes: list[tuple[Path, Path, int]] = []
+    for i, (fa, ha) in enumerate(hashes):
+        for fb, hb in hashes[i + 1:]:
+            dist = ha - hb
+            if dist <= threshold:
+                dupes.append((fa, fb, dist))
+    return dupes
+
+
+def _dedup_groups(dupes: list[tuple[Path, Path, int]]) -> list[list[Path]]:
+    """Build connected-component groups from pairwise duplicates."""
+    parent: dict[Path, Path] = {}
+
+    def find(x: Path) -> Path:
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+
+    def union(a: Path, b: Path):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for fa, fb, _ in dupes:
+        parent.setdefault(fa, fa)
+        parent.setdefault(fb, fb)
+        union(fa, fb)
+
+    groups: dict[Path, list[Path]] = {}
+    for p in parent:
+        root = find(p)
+        groups.setdefault(root, []).append(p)
+    return [g for g in groups.values() if len(g) > 1]
+
+
 def _get_free_memory_pct() -> float | None:
     """Return percentage of free system memory, or None if unavailable."""
     try:
@@ -7214,6 +7278,34 @@ def _run_cli(args):
     if not scan.files:
         print("No supported files found.")
         sys.exit(EXIT_OK)
+
+    if getattr(args, "dedup_warn", False) or getattr(args, "dedup_skip", False):
+        try:
+            import imagehash  # noqa: F401
+            print("[dedup] scanning for near-duplicates...")
+            dupes = _dedup_scan(scan.files)
+            if dupes:
+                print(f"[dedup] found {len(dupes)} near-duplicate pair(s):")
+                for fa, fb, dist in dupes[:20]:
+                    print(f"  hamming={dist}: {fa.name} <-> {fb.name}")
+                if len(dupes) > 20:
+                    print(f"  ... and {len(dupes) - 20} more pairs")
+                if getattr(args, "dedup_skip", False):
+                    groups = _dedup_groups(dupes)
+                    skip_set: set[Path] = set()
+                    for group in groups:
+                        largest = max(group, key=lambda p: p.stat().st_size)
+                        skip_set |= set(group) - {largest}
+                    pre = len(scan.files)
+                    scan.files = [f for f in scan.files if f not in skip_set]
+                    scan.total_size = sum(f.stat().st_size for f in scan.files)
+                    print(f"[dedup] skipped {pre - len(scan.files)} near-duplicates, "
+                          f"converting {len(scan.files)} unique files")
+            else:
+                print("[dedup] no near-duplicates found")
+        except ImportError:
+            print("[dedup] imagehash not installed — pip install imagehash to enable dedup",
+                  file=sys.stderr)
 
     # Dry run — list and exit
     if args.dry_run:

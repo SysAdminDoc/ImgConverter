@@ -253,6 +253,8 @@ python imgconverter.py --support-bundle ./imgconverter_support.zip
 | `--stdin-files` | Read file paths from stdin (one per line), mutually exclusive with `--input`/`--files` |
 | `--stdin-null` | With `--stdin-files`, use NUL delimiter (for `find -print0`) |
 | `--max-memory PCT` | Warn when free system memory drops below PCT% during conversion |
+| `--dedup-warn` | Log near-duplicate image pairs using perceptual hashing (requires `imagehash`) |
+| `--dedup-skip` | Skip near-duplicates, keeping only the largest in each group (requires `imagehash`) |
 | `--version` | Print version and exit |
 
 Parser, GUI, and README parity is guarded by `build_cli_parity_matrix()` and the test suite: every long CLI flag must be classified as GUI-backed, CLI-only, admin-only, or internal-only, and every user-facing flag must remain documented here.
