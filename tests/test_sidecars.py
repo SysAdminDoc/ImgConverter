@@ -65,3 +65,36 @@ def test_metadata_report_records_provenance_drop(rgb_image, tmp_workdir):
     assert metadata["after"]["c2pa"] is False
     assert "c2pa" in metadata["dropped"]
     assert any("metadata dropped: c2pa" in w for w in data["files"][0]["warnings"])
+
+
+def test_adjacent_xmp_sidecar_ingested(rgb_image, tmp_workdir):
+    """An adjacent .xmp sidecar should be ingested into meta during conversion."""
+    src = tmp_workdir / "photo.bmp"
+    rgb_image.save(src)
+    xmp_path = tmp_workdir / "photo.xmp"
+    xmp_path.write_text(
+        '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>'
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        '</rdf:RDF></x:xmpmeta><?xpacket end="w"?>',
+        encoding="utf-8",
+    )
+    out_dir = tmp_workdir / "out"
+    result = convert_file(src, out_dir, fmt="png")
+    assert result.success
+    assert any("sidecar-import" in w and "xmp" in w.lower() for w in result.warnings)
+
+
+def test_adjacent_google_photos_json_ingested(rgb_image, tmp_workdir):
+    """A Google Photos JSON sidecar should be detected and ingested."""
+    src = tmp_workdir / "IMG_001.bmp"
+    rgb_image.save(src)
+    gp_path = tmp_workdir / "IMG_001.bmp.json"
+    gp_path.write_text(json.dumps({
+        "title": "My Photo",
+        "photoTakenTime": {"timestamp": "1718712000"},
+    }), encoding="utf-8")
+    out_dir = tmp_workdir / "out"
+    result = convert_file(src, out_dir, fmt="png")
+    assert result.success
+    assert any("Google Photos" in w for w in result.warnings)

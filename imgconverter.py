@@ -2211,6 +2211,111 @@ def _convert_animated_or_sequence(
     return result
 
 
+def _ingest_adjacent_sidecars(
+    src: Path, meta: dict, result: "ConvertResult",
+) -> dict:
+    """Detect and ingest adjacent .xmp and Google Photos .json sidecars into meta."""
+    xmp_candidates = [
+        src.with_suffix(src.suffix + ".xmp"),
+        src.with_suffix(".xmp"),
+    ]
+    for xmp_path in xmp_candidates:
+        if xmp_path.is_file() and "xmp" not in meta:
+            try:
+                xmp_data = xmp_path.read_bytes()
+                if b"<x:xmpmeta" in xmp_data or b"xpacket" in xmp_data:
+                    meta["xmp"] = xmp_data
+                    result.warnings.append(f"sidecar-import: ingested {xmp_path.name}")
+            except OSError as e:
+                result.warnings.append(f"sidecar-import: failed to read {xmp_path.name} ({e})")
+            break
+
+    gp_candidates = [
+        src.parent / f"{src.name}.json",
+        src.with_suffix(".json"),
+    ]
+    for gp_path in gp_candidates:
+        if gp_path.is_file():
+            try:
+                gp_data = json.loads(gp_path.read_text(encoding="utf-8"))
+                if isinstance(gp_data, dict) and ("photoTakenTime" in gp_data or "title" in gp_data):
+                    meta["google_photos_sidecar"] = gp_data
+                    result.warnings.append(f"sidecar-import: ingested Google Photos {gp_path.name}")
+
+                    if HAS_EXIFTOOL and "photoTakenTime" in gp_data:
+                        ts = gp_data["photoTakenTime"].get("timestamp")
+                        if ts:
+                            meta.setdefault("_gp_timestamp", int(ts))
+            except (json.JSONDecodeError, OSError, KeyError) as e:
+                result.warnings.append(f"sidecar-import: failed to parse {gp_path.name} ({e})")
+            break
+
+    return meta
+
+
+def _apply_sidecar_metadata_via_exiftool(
+    src: Path, dst: Path, meta: dict, result: "ConvertResult",
+):
+    """Apply ingested sidecar metadata to output using ExifTool."""
+    if not HAS_EXIFTOOL:
+        return
+
+    gp_ts = meta.get("_gp_timestamp")
+    if gp_ts:
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromtimestamp(int(gp_ts), tz=timezone.utc)
+            date_str = dt.strftime("%Y:%m:%d %H:%M:%S")
+            proc = subprocess.run(
+                [EXIFTOOL_PATH, "-overwrite_original",
+                 f"-DateTimeOriginal={date_str}",
+                 f"-CreateDate={date_str}",
+                 str(dst)],
+                capture_output=True, text=True, timeout=15,
+            )
+            if proc.returncode == 0:
+                result.warnings.append(f"sidecar-apply: set DateTimeOriginal from Google Photos timestamp")
+        except Exception as e:
+            result.warnings.append(f"sidecar-apply: Google Photos timestamp failed ({e})")
+
+    gp_data = meta.get("google_photos_sidecar", {})
+    gp_desc = gp_data.get("description")
+    if gp_desc and isinstance(gp_desc, str) and gp_desc.strip():
+        try:
+            proc = subprocess.run(
+                [EXIFTOOL_PATH, "-overwrite_original",
+                 f"-ImageDescription={gp_desc.strip()}",
+                 str(dst)],
+                capture_output=True, text=True, timeout=15,
+            )
+            if proc.returncode == 0:
+                result.warnings.append("sidecar-apply: set ImageDescription from Google Photos")
+        except Exception:
+            pass
+
+    gp_geo = gp_data.get("geoData")
+    if gp_geo and isinstance(gp_geo, dict):
+        lat = gp_geo.get("latitude")
+        lon = gp_geo.get("longitude")
+        if lat and lon and (lat != 0.0 or lon != 0.0):
+            try:
+                lat_ref = "N" if lat >= 0 else "S"
+                lon_ref = "E" if lon >= 0 else "W"
+                proc = subprocess.run(
+                    [EXIFTOOL_PATH, "-overwrite_original",
+                     f"-GPSLatitude={abs(lat)}",
+                     f"-GPSLatitudeRef={lat_ref}",
+                     f"-GPSLongitude={abs(lon)}",
+                     f"-GPSLongitudeRef={lon_ref}",
+                     str(dst)],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if proc.returncode == 0:
+                    result.warnings.append("sidecar-apply: set GPS from Google Photos geoData")
+            except Exception:
+                pass
+
+
 def _run_sidecar_hooks(
     src: Path, out_path: Path, meta: dict,
     result: "ConvertResult", emit_xmp_sidecar: bool, in_place: bool,
@@ -2511,6 +2616,10 @@ def convert_file(
 
     try:
         img, meta = _open_image(src)
+
+        if preserve_metadata:
+            meta = _ingest_adjacent_sidecars(src, meta, result)
+
         result.metadata_report = {
             "before": _metadata_presence_from_image(img, meta, src),
             "after": {kind: False for kind in METADATA_KINDS},
@@ -3048,6 +3157,9 @@ def convert_file(
         # block; see post-loop verify in _run_cli.
 
         _run_sidecar_hooks(src, out_path, meta, result, emit_xmp_sidecar, in_place)
+
+        if preserve_metadata and meta.get("google_photos_sidecar"):
+            _apply_sidecar_metadata_via_exiftool(src, out_path, meta, result)
 
         # In-place mode: delete the original after successful conversion
         if in_place and result.success and not _same_resolved_path(out_path, src):
