@@ -945,6 +945,10 @@ def _recompress_jpeg_lossless(src: Path, dst: Path, strip_metadata: bool) -> tup
     return False, "no jpegoptim or jpegtran on PATH"
 
 
+# ── Metadata Operations (Part 1/2: stripping + ExifTool) ─────────────────────
+# Part 2 (presence detection, report finalization, sidecar ingestion) is below
+# the format-family definitions near METADATA_KINDS.
+
 STRIP_PRESETS = {
     "none":       frozenset(),
     "all":        frozenset({"all"}),
@@ -2261,6 +2265,10 @@ def count_frames(src: Path) -> int:
     except Exception:
         return 1
 
+
+# ── Metadata Operations (Part 2/2: presence, report, sidecar ingestion) ──────
+# Part 1 (STRIP_PRESETS, _strip_exif_fields, _run_exiftool_copy) is above the
+# PyQt6 imports near the format-specific constants.
 
 METADATA_KINDS = ("exif", "icc", "xmp", "iptc", "makernotes", "c2pa")
 
