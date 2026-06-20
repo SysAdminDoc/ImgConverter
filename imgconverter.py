@@ -2206,6 +2206,21 @@ def _binary_search_quality(
     return best_q, best_size, best_metric
 
 
+def _is_photographic(img: Image.Image) -> bool:
+    """Heuristic: photographic content has many unique colors in a small sample."""
+    try:
+        thumb = img.copy()
+        thumb.thumbnail((64, 64), Image.Resampling.NEAREST)
+        if thumb.mode not in ("RGB", "RGBA", "L"):
+            thumb = thumb.convert("RGB")
+        colors = thumb.getcolors(maxcolors=4096 + 1)
+        if colors is None:
+            return True
+        return len(colors) > 256
+    except Exception:
+        return True
+
+
 def has_transparency(img: Image.Image) -> bool:
     """Check if image has actual transparency data."""
     if img.mode in ("RGBA", "LA", "PA"):
@@ -2967,7 +2982,13 @@ def convert_file(
             plugin_encoder = PLUGIN_ENCODERS[fmt_key]
             out_fmt = fmt_key
         elif fmt == "auto":
-            out_fmt = "PNG" if has_transparency(img) else "JPEG"
+            if has_transparency(img):
+                out_fmt = "PNG"
+            else:
+                out_fmt = "JPEG"
+                if jpeg_quality == 92 and not _is_photographic(img):
+                    jpeg_quality = 85
+                    result.warnings.append("auto: graphic content detected, quality reduced to 85")
         elif fmt == "jpeg":
             out_fmt = "JPEG"
         elif fmt == "png":
