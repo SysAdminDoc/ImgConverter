@@ -297,11 +297,53 @@ BUTTERAUGLI_PATH = shutil.which("butteraugli")
 C2PATOOL_PATH = shutil.which("c2patool")
 FFPROBE_PATH = shutil.which("ffprobe")
 
+HAS_C2PA_PYTHON = False
+try:
+    import c2pa as _c2pa_mod
+    HAS_C2PA_PYTHON = True
+except ImportError:
+    _c2pa_mod = None
+
 
 def _verify_c2pa(path: Path) -> dict[str, object] | None:
-    """Verify C2PA manifest using c2patool. Returns structured result or None."""
-    if not C2PATOOL_PATH:
-        return None
+    """Verify C2PA manifest. Prefers c2pa-python SDK, falls back to c2patool subprocess."""
+    if HAS_C2PA_PYTHON:
+        return _verify_c2pa_sdk(path)
+    if C2PATOOL_PATH:
+        return _verify_c2pa_tool(path)
+    return None
+
+
+def _verify_c2pa_sdk(path: Path) -> dict[str, object] | None:
+    """Verify C2PA via the c2pa-python SDK (no subprocess)."""
+    try:
+        reader = _c2pa_mod.Reader.try_create(str(path))
+        if reader is None:
+            return {"status": "no-manifest"}
+        manifest_json = reader.json()
+        manifest = json.loads(manifest_json) if isinstance(manifest_json, str) else manifest_json
+        claim_gen = None
+        manifest_count = 0
+        if isinstance(manifest, dict):
+            active = manifest.get("active_manifest")
+            manifests = manifest.get("manifests", {})
+            manifest_count = len(manifests) if isinstance(manifests, dict) else 0
+            if active and isinstance(manifests, dict):
+                am = manifests.get(active, {})
+                claim_gen = am.get("claim_generator")
+        is_valid = reader.is_valid()
+        reader.close()
+        return {
+            "status": "verified" if is_valid else "invalid",
+            "claim_generator": _redact_text(claim_gen) if claim_gen else None,
+            "manifest_count": manifest_count,
+        }
+    except Exception as e:
+        return {"status": "not-verified", "error": _redact_text(str(e)[:200])}
+
+
+def _verify_c2pa_tool(path: Path) -> dict[str, object] | None:
+    """Verify C2PA via c2patool subprocess (fallback when c2pa-python not installed)."""
     try:
         proc = subprocess.run(
             [C2PATOOL_PATH, str(path), "--detailed"],
@@ -3996,6 +4038,10 @@ def _optional_tool_status() -> dict[str, dict[str, object]]:
             "available": path is not None,
             "path": _redact_text(path) if path else None,
         }
+    status["c2pa-python"] = {
+        "available": HAS_C2PA_PYTHON,
+        "version": getattr(_c2pa_mod, "__version__", None) if HAS_C2PA_PYTHON else None,
+    }
     return status
 
 
