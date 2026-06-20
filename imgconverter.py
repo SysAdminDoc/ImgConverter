@@ -51,10 +51,9 @@ DEP_FLOORS = {
     "PyQt6":        ("PyQt6",              "6.8"),
     "rawpy":        ("rawpy",              "0.27.0"),    # optional
     "pillow_jxl":   ("pillow-jxl-plugin",  "1.3.6"),     # optional
-    "qoi":          ("qoi",                "0.7"),       # optional
 }
 REQUIRED_DEPS = ("PIL", "pillow_heif", "PyQt6")
-OPTIONAL_DEPS = ("rawpy", "pillow_jxl", "qoi")
+OPTIONAL_DEPS = ("rawpy", "pillow_jxl")
 
 
 def _is_frozen() -> bool:
@@ -206,13 +205,6 @@ try:
 except ImportError:
     pass
 
-# Optional: QOI format support
-HAS_QOI = False
-try:
-    import qoi as qoi_lib
-    HAS_QOI = True
-except ImportError:
-    pass
 
 # Optional: ExifTool for full metadata transport (MakerNotes, GPS sub-IFDs, IPTC,
 # sidecar XMP, etc.) — Pillow's EXIF model drops these silently, which is the #1
@@ -1615,7 +1607,7 @@ FORMAT_FAMILIES = {
     "ICO/CUR":     (ICO_EXTS, True),
     "JPEG XL":     (JXL_EXTS, HAS_JXL),
     "Camera RAW":  (RAW_EXTS, HAS_RAWPY),
-    "QOI":         (QOI_EXTS, HAS_QOI),
+    "QOI":         (QOI_EXTS, True),
 }
 
 
@@ -1628,13 +1620,11 @@ def get_format_families() -> dict[str, tuple[set[str], bool]]:
 
 def get_supported_extensions() -> set[str]:
     """Return all input extensions we can currently decode."""
-    exts = JPEG_EXTS | PNG_EXTS | HEIC_EXTS | AVIF_EXTS | WEBP_EXTS | TIFF_EXTS | BMP_EXTS | JP2_EXTS | ICO_EXTS
+    exts = JPEG_EXTS | PNG_EXTS | HEIC_EXTS | AVIF_EXTS | WEBP_EXTS | TIFF_EXTS | BMP_EXTS | JP2_EXTS | ICO_EXTS | QOI_EXTS
     if HAS_JXL:
         exts |= JXL_EXTS
     if HAS_RAWPY:
         exts |= RAW_EXTS
-    if HAS_QOI:
-        exts |= QOI_EXTS
     exts |= set(PLUGIN_DECODERS)
     return exts
 
@@ -1642,12 +1632,11 @@ def get_supported_extensions() -> set[str]:
 def get_format_support_summary() -> str:
     """Human-readable list of supported format families."""
     families = ["JPEG", "PNG", "HEIC/HEIF", "AVIF", "WebP", "TIFF", "BMP", "JPEG 2000", "ICO/CUR"]
+    families.append("QOI")
     if HAS_JXL:
         families.append("JPEG XL")
     if HAS_RAWPY:
         families.append("Camera RAW")
-    if HAS_QOI:
-        families.append("QOI")
     if plugin_summary := get_plugin_capability_summary():
         families.append(plugin_summary)
     return ", ".join(families)
@@ -2301,11 +2290,6 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
         raw.close()
         img = Image.fromarray(rgb)
         # RAW files don't carry EXIF through rawpy — metadata not available
-        return img, meta
-
-    if suffix in QOI_EXTS and HAS_QOI:
-        arr = qoi_lib.read(str(src))
-        img = Image.fromarray(arr)
         return img, meta
 
     # Everything else goes through Pillow (+ plugins: pillow-heif, pillow-jxl)
@@ -4882,8 +4866,6 @@ class MainWindow(QMainWindow):
             opt_vers.append(f"rawpy {getattr(rawpy, '__version__', '?')}")
         if HAS_JXL:
             opt_vers.append(f"pillow-jxl {getattr(pillow_jxl, '__version__', '?')}")
-        if HAS_QOI:
-            opt_vers.append(f"qoi {getattr(qoi_lib, '__version__', '?')}")
         if opt_vers:
             _diag_log(f"Optional dependencies: {', '.join(opt_vers)}")
         self._log(f"Input formats ready: {get_format_support_summary()}")
@@ -4892,8 +4874,6 @@ class MainWindow(QMainWindow):
             missing.append("JPEG XL (pip install pillow-jxl-plugin)")
         if not HAS_RAWPY:
             missing.append("Camera RAW (pip install rawpy)")
-        if not HAS_QOI:
-            missing.append("QOI (pip install qoi)")
         if missing:
             self._log(f"Optional add-ons unavailable: {', '.join(missing)}")
         if HAS_EXIFTOOL:
@@ -7276,8 +7256,6 @@ def _log_dep_versions_cli():
         opt_vers.append(f"rawpy {getattr(rawpy, '__version__', '?')}")
     if HAS_JXL:
         opt_vers.append(f"pillow-jxl {getattr(pillow_jxl, '__version__', '?')}")
-    if HAS_QOI:
-        opt_vers.append(f"qoi {getattr(qoi_lib, '__version__', '?')}")
     if HAS_EXIFTOOL:
         opt_vers.append(f"exiftool ({EXIFTOOL_PATH})")
     if opt_vers:
