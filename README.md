@@ -213,6 +213,8 @@ python imgconverter.py --support-bundle ./imgconverter_support.zip
 | `--support-bundle PATH` | Write a redacted diagnostic zip, then exit |
 | `--preset NAME` | Load a built-in or `~/.imgconverter/presets/NAME.json` preset before applying other flags |
 | `--list-presets` | List built-in and user presets, then exit |
+| `--export-preset NAME PATH` | Export a preset as a shareable JSON bundle with metadata and CLI equivalent |
+| `--import-preset PATH` | Import a preset bundle JSON file into `~/.imgconverter/presets/` |
 | `--exclude PATTERN` | Glob pattern to exclude from scan (repeatable) |
 | `--no-exiftool` | Skip the ExifTool tag-copy pass (use Pillow's EXIF/ICC/XMP only) |
 | `--install-deps` | Install/upgrade all required + optional Python deps, then exit |

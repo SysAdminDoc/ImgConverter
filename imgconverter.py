@@ -4285,6 +4285,63 @@ def list_presets() -> dict[str, dict]:
     return merged
 
 
+def export_preset_bundle(name: str, path: Path) -> bool:
+    """Export a preset as a shareable JSON bundle with metadata."""
+    preset = load_preset(name)
+    if preset is None:
+        return False
+    normalized = normalize_preset(preset)
+    cli_parts = ["imgconverter"]
+    fmt_map = {0: "auto", 1: "jpeg", 2: "png", 3: "webp", 4: "avif", 5: "tiff", 6: "jxl"}
+    fmt_val = normalized.get("format") or normalized.get("fmt", "auto")
+    if isinstance(fmt_val, int):
+        fmt_val = fmt_map.get(fmt_val, "auto")
+    if fmt_val != "auto":
+        cli_parts.append(f"--format {fmt_val}")
+    quality = normalized.get("quality", 92)
+    if quality != 92:
+        cli_parts.append(f"--quality {quality}")
+    if normalized.get("progressive"):
+        cli_parts.append("--progressive")
+    if normalized.get("srgb") or normalized.get("convert_to_srgb"):
+        cli_parts.append("--srgb")
+
+    bundle = {
+        "imgconverter_preset_bundle": True,
+        "schema_version": PRESET_SCHEMA_VERSION,
+        "name": name,
+        "app_version": APP_VERSION,
+        "cli_equivalent": " ".join(cli_parts) + " --input <dir>",
+        "preset": normalized,
+    }
+    _write_text_atomic(path, json.dumps(bundle, indent=2, default=str) + "\n")
+    return True
+
+
+def import_preset_bundle(path: Path) -> tuple[bool, str]:
+    """Import a preset bundle JSON file into the user preset directory."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return False, f"failed to read bundle: {e}"
+    if not isinstance(data, dict) or not data.get("imgconverter_preset_bundle"):
+        return False, "not a valid ImgConverter preset bundle"
+    sv = data.get("schema_version", 0)
+    if sv > PRESET_SCHEMA_VERSION:
+        return False, f"bundle schema version {sv} is newer than supported ({PRESET_SCHEMA_VERSION})"
+    name = data.get("name", Path(path).stem)
+    preset = data.get("preset", {})
+    if not preset:
+        return False, "bundle contains no preset data"
+    preset["name"] = name
+    preset["schema_version"] = PRESET_SCHEMA_VERSION
+    slug = name.lower().replace(" ", "-").replace("/", "-")
+    target = USER_PRESET_DIR / f"{slug}.json"
+    USER_PRESET_DIR.mkdir(parents=True, exist_ok=True)
+    _write_text_atomic(target, json.dumps(preset, indent=2, default=str) + "\n")
+    return True, f"imported preset '{name}' to {target}"
+
+
 def load_preset(name: str) -> dict | None:
     """Resolve ``name`` against built-ins + user dir; return preset dict or None."""
     presets = list_presets()
@@ -7426,6 +7483,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Load preset from ~/.imgconverter/presets/NAME.json before applying other flags")
     p.add_argument("--list-presets", action="store_true",
                    help="List available presets (built-ins + ~/.imgconverter/presets/*.json) and exit")
+    p.add_argument("--export-preset", nargs=2, default=None, metavar=("NAME", "PATH"),
+                   help="Export a preset as a shareable JSON bundle, then exit")
+    p.add_argument("--import-preset", type=str, default=None, metavar="PATH",
+                   help="Import a preset bundle JSON file into ~/.imgconverter/presets/, then exit")
     p.add_argument("--list-plugins", action="store_true",
                    help="List plugin files with trust status without loading them, then exit")
     p.add_argument("--trust-plugin", type=str, default=None, metavar="PATH",
@@ -7579,6 +7640,8 @@ CLI_FLAG_PARITY = {
     "--support-bundle": {"surface": "admin-only", "gui": ("export_support_btn",), "readme": True, "note": "Redacted diagnostics export"},
     "--preset": {"surface": "gui", "gui": ("_preset_btn",), "readme": True, "note": "Preset loader"},
     "--list-presets": {"surface": "cli-only", "gui": ("_preset_btn",), "readme": True, "note": "CLI preset inventory; GUI preset menu"},
+    "--export-preset": {"surface": "cli-only", "gui": (), "readme": True, "note": "Export preset as shareable bundle"},
+    "--import-preset": {"surface": "cli-only", "gui": (), "readme": True, "note": "Import preset bundle"},
     "--list-plugins": {"surface": "admin-only", "gui": (), "readme": True, "note": "Trust-safe plugin inventory"},
     "--trust-plugin": {"surface": "admin-only", "gui": (), "readme": True, "note": "Plugin trust manifest write"},
     "--untrust-plugin": {"surface": "admin-only", "gui": (), "readme": True, "note": "Plugin trust manifest removal"},
@@ -9006,6 +9069,21 @@ def main():
             for k, v in sorted(payload.items()):
                 print(f"      {k}: {v}")
         sys.exit(EXIT_OK)
+
+    if getattr(args, "export_preset", None):
+        _seed_user_preset_dir()
+        name, path = args.export_preset
+        if export_preset_bundle(name, Path(path)):
+            print(f"[preset] exported '{name}' to {path}")
+            sys.exit(EXIT_OK)
+        else:
+            print(f"[preset] unknown preset: {name}", file=sys.stderr)
+            sys.exit(EXIT_INPUT_ERROR)
+
+    if getattr(args, "import_preset", None):
+        ok, msg = import_preset_bundle(Path(args.import_preset))
+        print(f"[preset] {msg}", file=sys.stderr if not ok else sys.stdout)
+        sys.exit(EXIT_OK if ok else EXIT_INPUT_ERROR)
 
     if getattr(args, "list_plugins", False):
         sys.exit(_list_plugins())
