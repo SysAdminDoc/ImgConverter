@@ -5778,6 +5778,35 @@ class MainWindow(QMainWindow):
 
         scroll_layout.addWidget(stats_frame)
 
+        # ── Scan review table ──
+        self._review_toggle = QToolButton()
+        self._review_toggle.setObjectName("advancedToggle")
+        self._review_toggle.setCheckable(True)
+        self._review_toggle.setChecked(False)
+        self._review_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._review_toggle.setText("Show scan review table")
+        self._review_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._review_toggle.setToolTip("Toggle file-level scan results table")
+        self._review_toggle.toggled.connect(self._toggle_review_table)
+        self._review_toggle.setVisible(False)
+        scroll_layout.addWidget(self._review_toggle)
+
+        self._review_table = QTableWidget(0, 5)
+        self._review_table.setHorizontalHeaderLabels(["File", "Format", "Size", "Output", "Warnings"])
+        self._review_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for c in range(1, 5):
+            self._review_table.horizontalHeader().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.ResizeToContents)
+        self._review_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._review_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._review_table.setSortingEnabled(True)
+        self._review_table.setAlternatingRowColors(True)
+        self._review_table.setAccessibleName("Scan review table")
+        self._review_table.setAccessibleDescription("File-level scan results with format, size, and warnings")
+        self._review_table.setVisible(False)
+        self._review_table.setMaximumHeight(220)
+        scroll_layout.addWidget(self._review_table)
+
         # ── Progress ──
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
@@ -5886,6 +5915,73 @@ class MainWindow(QMainWindow):
         self.filter_toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
         self.filter_toggle.setText(
             "Hide input format filters" if checked else "Show input format filters"
+        )
+
+    def _toggle_review_table(self, checked: bool):
+        self._review_table.setVisible(checked)
+        self._review_toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+        self._review_toggle.setText(
+            "Hide scan review table" if checked else "Show scan review table"
+        )
+
+    def _populate_review_table(self, files: list[Path]):
+        fmt = self._fmt_values[self.fmt_combo.currentIndex()] if hasattr(self, "_fmt_values") else "auto"
+        ext_map = {"jpeg": "JPEG", "png": "PNG", "webp": "WebP",
+                   "avif": "AVIF", "tiff": "TIFF", "jxl": "JXL", "auto": "Auto"}
+        out_label = ext_map.get(fmt, fmt.upper())
+
+        self._review_table.setSortingEnabled(False)
+        self._review_table.setRowCount(len(files))
+        for i, f in enumerate(files):
+            warnings = []
+            suffix = f.suffix.lower()
+            try:
+                size = f.stat().st_size
+            except OSError:
+                size = 0
+            if suffix in RAW_EXTS:
+                warnings.append("no EXIF passthrough (RAW)")
+            if suffix in QOI_EXTS:
+                warnings.append("no metadata (QOI)")
+            if suffix in (".bmp",):
+                warnings.append("no EXIF/XMP")
+            if suffix in (".ico", ".cur"):
+                warnings.append("no EXIF/XMP")
+            if fmt == "auto" and suffix in JPEG_EXTS | PNG_EXTS | WEBP_EXTS:
+                if fmt == "auto" and suffix in JPEG_EXTS:
+                    warnings.append("same-format skip likely")
+
+            family = "?"
+            for name, (exts, _avail) in FORMAT_FAMILIES.items():
+                if suffix in exts:
+                    family = name
+                    break
+
+            name_item = QTableWidgetItem(f.name)
+            name_item.setToolTip(str(f))
+            self._review_table.setItem(i, 0, name_item)
+
+            fmt_item = QTableWidgetItem(family)
+            self._review_table.setItem(i, 1, fmt_item)
+
+            size_item = QTableWidgetItem(_fmt_size(size))
+            size_item.setData(Qt.ItemDataRole.UserRole, size)
+            self._review_table.setItem(i, 2, size_item)
+
+            out_item = QTableWidgetItem(out_label)
+            self._review_table.setItem(i, 3, out_item)
+
+            warn_text = "; ".join(warnings) if warnings else ""
+            warn_item = QTableWidgetItem(warn_text)
+            if warnings:
+                warn_item.setForeground(QColor(CAT["yellow"]))
+            self._review_table.setItem(i, 4, warn_item)
+
+        self._review_table.setSortingEnabled(True)
+        self._review_toggle.setVisible(True)
+        self._review_toggle.setText(
+            f"{'Hide' if self._review_toggle.isChecked() else 'Show'} scan review table "
+            f"({len(files)} files)"
         )
 
     def _set_workflow_state(self, state: str, message: str | None = None, tone: str | None = None):
@@ -6360,6 +6456,8 @@ class MainWindow(QMainWindow):
         self._update_title()
         self.scan_btn.setEnabled(False)
         self.convert_btn.setEnabled(False)
+        self._review_table.setRowCount(0)
+        self._review_toggle.setVisible(False)
         self._set_workflow_state("Scanning", "Scanning source folder...")
         self._log(f"[SCAN] {src}")
 
@@ -6457,6 +6555,7 @@ class MainWindow(QMainWindow):
                 "Ready to convert",
                 f"Found {len(result.files)} files ({_fmt_size(result.total_size)}). Ready to convert."
             )
+            self._populate_review_table(result.files)
         else:
             self.convert_btn.setEnabled(False)
             self.progress_bar.setFormat("No files found")
