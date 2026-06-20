@@ -7408,6 +7408,8 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
     supported = get_supported_extensions()
     pending_files: set[Path] = set()
     pending_lock = threading.Lock()
+    retry_queue: dict[Path, tuple[int, float]] = {}
+    MAX_RETRIES = 3
 
     try:
         from watchdog.observers import Observer
@@ -7489,23 +7491,49 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                 else:
                     seen_sizes[p] = size
 
+            retry_now = [p for p, (count, due) in retry_queue.items()
+                         if time.time() >= due and p not in converted]
+            for p in retry_now:
+                if p not in current:
+                    current.append(p)
+
             for f in current:
                 seq = len(converted) + 1
+                attempt, _ = retry_queue.get(f, (0, 0))
                 try:
                     r = convert_file(
                         f, output_dir, seq=seq,
                         opts=watch_opts,
                     )
                     if r.success:
-                        print(f"[watch] OK  {f.name} -> {r.dst.name}")
+                        tag = f" (retry {attempt})" if attempt else ""
+                        print(f"[watch] OK  {f.name} -> {r.dst.name}{tag}")
+                        converted.add(f)
+                        retry_queue.pop(f, None)
                     elif r.skipped:
                         print(f"[watch] SKIP {f.name}")
+                        converted.add(f)
+                        retry_queue.pop(f, None)
                     else:
-                        print(f"[watch] FAIL {f.name}: {r.error}")
-                    converted.add(f)
-                    seen_sizes.pop(f, None)
+                        is_transient = r.error_code is not None
+                        if is_transient and attempt < MAX_RETRIES:
+                            delay = interval * (2 ** attempt)
+                            retry_queue[f] = (attempt + 1, time.time() + delay)
+                            print(f"[watch] FAIL {f.name}: {r.error} (retry {attempt + 1}/{MAX_RETRIES} in {delay:.0f}s)")
+                        else:
+                            print(f"[watch] FAIL {f.name}: {r.error}")
+                            converted.add(f)
+                            retry_queue.pop(f, None)
                 except Exception as e:
-                    print(f"[watch] error on {f.name}: {e}")
+                    if attempt < MAX_RETRIES:
+                        delay = interval * (2 ** attempt)
+                        retry_queue[f] = (attempt + 1, time.time() + delay)
+                        print(f"[watch] error on {f.name}: {e} (retry {attempt + 1}/{MAX_RETRIES} in {delay:.0f}s)")
+                    else:
+                        print(f"[watch] error on {f.name}: {e}")
+                        converted.add(f)
+                        retry_queue.pop(f, None)
+                seen_sizes.pop(f, None)
 
             time.sleep(interval)
     except KeyboardInterrupt:
