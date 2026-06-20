@@ -196,6 +196,7 @@ python imgconverter.py --support-bundle ./imgconverter_support.zip
 | `--recursive` | Scan subdirectories (default) |
 | `--no-recursive` | Only scan top-level directory |
 | `--dry-run` | List files and exit without converting |
+| `--proof N` | Convert N representative files to a temp folder, report size deltas, then exit |
 | `--strip-metadata` | Remove all EXIF/ICC/XMP from output |
 | `--strip-gps` | Strip GPS/location data while preserving copyright and color profiles |
 | `--strip-device` | Strip camera make/model/serial numbers (combine with `--strip-gps` for full privacy) |

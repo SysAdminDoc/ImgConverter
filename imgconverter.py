@@ -7368,6 +7368,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-recursive", action="store_false", dest="recursive",
                    help="Only scan top-level directory")
     p.add_argument("--dry-run", action="store_true", help="List files that would be converted, then exit")
+    p.add_argument("--proof", type=int, default=None, metavar="N",
+                   help="Convert N representative files to a temp folder, report size deltas, then exit. "
+                        "Proof outputs are cleaned up unless --output is set.")
     p.add_argument("--strip-metadata", action="store_true", help="Remove all metadata from output files")
     p.add_argument("--strip-gps", action="store_true",
                    help="Strip GPS/location data while preserving copyright and color profiles")
@@ -7551,6 +7554,7 @@ CLI_FLAG_PARITY = {
     "--recursive": {"surface": "gui", "gui": ("recursive_chk",), "readme": True, "note": "Recursive scan toggle"},
     "--no-recursive": {"surface": "gui", "gui": ("recursive_chk",), "readme": True, "note": "Recursive scan toggle inverse"},
     "--dry-run": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless preview"},
+    "--proof": {"surface": "cli-only", "gui": (), "readme": True, "note": "Sample proof run"},
     "--strip-metadata": {"surface": "gui", "gui": ("meta_combo",), "readme": True, "note": "Metadata removal (meta_combo index 3)"},
     "--strip-gps": {"surface": "gui", "gui": ("meta_combo",), "readme": True, "note": "GPS/location privacy strip"},
     "--strip-device": {"surface": "gui", "gui": ("meta_combo",), "readme": True, "note": "Camera make/model/serial privacy strip"},
@@ -8609,6 +8613,40 @@ def _run_cli(args):
         print(f"\n[DRY RUN] Would convert {len(scan.files)} files:")
         for f in sorted(scan.files):
             print(f"  {f}")
+        sys.exit(EXIT_OK)
+
+    # Proof run — convert N representative files to temp, report, exit
+    proof_n = getattr(args, "proof", None)
+    if proof_n is not None and proof_n > 0:
+        proof_files = scan.files[:proof_n]
+        use_temp = not args.output
+        if use_temp:
+            proof_dir = Path(tempfile.mkdtemp(prefix="imgconverter-proof-"))
+        else:
+            proof_dir = output_dir
+            proof_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n[PROOF] Converting {len(proof_files)} of {len(scan.files)} files to {proof_dir}\n")
+        proof_opts = _build_convert_options(args, resize_mode=resize_mode,
+                                             resize_value=resize_value,
+                                             input_dir=input_dir)
+        total_in = 0
+        total_out = 0
+        for seq_i, f in enumerate(proof_files, start=1):
+            r = convert_file(f, proof_dir, seq=seq_i, opts=proof_opts)
+            total_in += r.size_before
+            total_out += r.size_after if r.success else 0
+            status = "OK" if r.success else ("SKIP" if r.skipped else "FAIL")
+            ratio = f" ({r.size_after / r.size_before * 100:.0f}%)" if r.success and r.size_before else ""
+            print(f"  [{status}] {f.name}: {_fmt_size(r.size_before)} -> {_fmt_size(r.size_after)}{ratio}")
+            for warn in r.warnings:
+                print(f"    [WARN] {warn}")
+        print(f"\n[PROOF] Summary: {_fmt_size(total_in)} -> {_fmt_size(total_out)}")
+        if total_in:
+            print(f"  Ratio: {total_out / total_in * 100:.1f}% of original")
+        print(f"  Settings: format={args.format}, quality={args.quality}")
+        if use_temp:
+            print(f"  Proof output: {proof_dir}")
+            print(f"  (temp folder — delete manually or re-run with --output to keep)")
         sys.exit(EXIT_OK)
 
     # Disk space check
