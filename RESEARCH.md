@@ -43,7 +43,7 @@ Top 5 new opportunities from this pass:
 
 **Czkawka** (31.6k stars, Rust, MIT): Duplicate/similar image finder with 6 perceptual hash algorithms. Not a converter, but the dedup pre-pass concept maps to ImgConverter's scan phase. ImgConverter has CLI dedup; the GUI review panel (existing P2 roadmap item) completes the story.
 
-**Converseen** (Qt/C++, 1,036 stars): Recently updated (0.15.2.5, June 2026). 100+ formats via ImageMagick. Minimal metadata handling. Code-signed Windows binaries via SignPath.io (free signing service worth investigating for ImgConverter).
+**Converseen** (Qt/C++, 1,036 stars): Recently updated (0.15.2.5, June 2026). 100+ formats via ImageMagick. Minimal metadata handling. Code-signed Windows binaries via SignPath.io — a free code-signing service for open-source projects that could unblock ImgConverter's unsigned-binary distribution problem (currently in Roadmap_Blocked).
 
 **Dinky** (443 stars, Swift/SwiftUI, macOS-only, 2026): Fastest-growing new competitor. Has smart quality detection (auto-detects photo vs graphic), per-preset watch folders, CLI + local API, URL compress, before/after preview, binary-search file size targeting. 35 MB installed. ImgConverter should learn from the smart quality detection concept and the per-preset watch folder model. Avoid: Apple-only, no metadata preservation story.
 
@@ -150,6 +150,8 @@ ImgConverter is the only surveyed tool offering selective metadata stripping (`-
 - https://www.w3.org/TR/wcag2ict-22/
 - https://doc.qt.io/qt-6/accessible-qwidget.html
 - https://forum.qt.io/topic/159776/accessibility-issue-with-radio-buttons-in-pyqt6-setting
+- https://signpath.io/ (free code signing for OSS — used by Converseen)
+- https://github.com/MLT-solutions/Py2MSIX (MSIX packaging reduces AV false positives)
 
 ### Performance benchmarks
 - https://catskull.net/libaom-vs-svtav1-vs-rav1e-2025.html
@@ -163,6 +165,8 @@ ImgConverter is the only surveyed tool offering selective metadata stripping (`-
 - **Jpegli has moved to google/jpegli**: Dedicated repo, still no PyPI wheel. Access via `imagecodecs` package or subprocess wrapping of `cjpegli`/`djpegli` binaries.
 - **AVIF 1.2.0 spec** (Oct 2025): Sample transforms for >12-bit, gain map signaling for HDR. SVT-AV1 4.1 (March 2026) improved still image coding efficiency.
 - **PNG 3.0** (June 2025): cICP chunk for HDR, native APNG, EXIF chunks. No Pillow support yet — blocked on libpng upstream.
+- **SignPath.io**: Free code signing for open-source projects. Converseen uses it for Windows binaries. Could unblock ImgConverter's unsigned-binary problem without the $300+/yr Authenticode cost currently listed in Roadmap_Blocked.
+- **Py2MSIX**: GUI tool for wrapping PyInstaller builds into signed MSIX packages. Significantly reduces AV false positives vs raw .exe. $19 one-time Microsoft Store developer account handles signing.
 
 ## Open Questions
 
