@@ -4912,6 +4912,75 @@ WORKFLOW_TONE_BY_STATE = {
 }
 
 
+class DuplicateReviewDialog(QDialog):
+    def __init__(self, groups: list[list[Path]], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Duplicate Review")
+        self.resize(780, 500)
+        self.skip_set: set[Path] = set()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        total_files = sum(len(g) for g in groups)
+        hint = QLabel(f"{len(groups)} duplicate group{'s' if len(groups) != 1 else ''}, "
+                      f"{total_files} total files. Select files to skip during conversion.")
+        hint.setObjectName("dialogHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Group", "File", "Size", "Action"])
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for c in (0, 2, 3):
+            self.table.horizontalHeader().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setAccessibleName("Duplicate image groups")
+        layout.addWidget(self.table)
+
+        row_idx = 0
+        for gi, group in enumerate(groups, start=1):
+            sorted_group = sorted(group, key=lambda p: p.stat().st_size if p.exists() else 0, reverse=True)
+            for fi, f in enumerate(sorted_group):
+                self.table.insertRow(row_idx)
+                self.table.setItem(row_idx, 0, QTableWidgetItem(f"#{gi}"))
+                name_item = QTableWidgetItem(f.name)
+                name_item.setToolTip(str(f))
+                self.table.setItem(row_idx, 1, name_item)
+                try:
+                    size = f.stat().st_size
+                except OSError:
+                    size = 0
+                self.table.setItem(row_idx, 2, QTableWidgetItem(_fmt_size(size)))
+                action = "Convert" if fi == 0 else "Skip (smaller)"
+                action_item = QTableWidgetItem(action)
+                if fi > 0:
+                    action_item.setForeground(QColor(CAT["yellow"]))
+                    self.skip_set.add(f)
+                self.table.setItem(row_idx, 3, action_item)
+                row_idx += 1
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
+        skip_label = QLabel(f"{len(self.skip_set)} file{'s' if len(self.skip_set) != 1 else ''} "
+                            f"marked for skip")
+        skip_label.setObjectName("dialogHint")
+        buttons.addWidget(skip_label)
+        buttons.addStretch()
+        apply_btn = QPushButton("Apply Skips")
+        apply_btn.setObjectName("primaryBtn")
+        apply_btn.clicked.connect(self.accept)
+        buttons.addWidget(apply_btn)
+        cancel_btn = QPushButton("Convert All")
+        cancel_btn.setObjectName("secondaryBtn")
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+
 class ShellIntegrationDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -5977,6 +6046,15 @@ class MainWindow(QMainWindow):
         self.shell_btn.clicked.connect(self._open_shell_integration)
         secondary_actions.addWidget(self.shell_btn)
 
+        self.dedup_btn = QPushButton("Duplicates")
+        self.dedup_btn.setObjectName("secondaryBtn")
+        self.dedup_btn.setToolTip("Check for near-duplicate images in the scanned files")
+        self.dedup_btn.setAccessibleName("Duplicate review")
+        self.dedup_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView))
+        self.dedup_btn.setEnabled(False)
+        self.dedup_btn.clicked.connect(self._check_duplicates)
+        secondary_actions.addWidget(self.dedup_btn)
+
         self.auto_open_chk = QCheckBox("Auto-open output")
         self.auto_open_chk.setChecked(False)
         self.auto_open_chk.setToolTip("Automatically open the output folder when conversion finishes")
@@ -6306,6 +6384,36 @@ class MainWindow(QMainWindow):
     def _open_shell_integration(self):
         dialog = ShellIntegrationDialog(self)
         dialog.exec()
+
+    def _check_duplicates(self):
+        if not self._scan_result or not self._scan_result.files:
+            return
+        self._log("[dedup] Scanning for near-duplicate images...")
+        try:
+            dupes = _dedup_scan(self._scan_result.files)
+        except Exception as e:
+            self._log(f"[dedup] Error: {e}")
+            return
+        if not dupes:
+            self._log("[dedup] No near-duplicates found.")
+            return
+        groups = _dedup_groups(dupes)
+        self._log(f"[dedup] Found {len(dupes)} pair(s) in {len(groups)} group(s).")
+        dialog = DuplicateReviewDialog(groups, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.skip_set:
+            pre = len(self._scan_result.files)
+            self._scan_result.files = [
+                f for f in self._scan_result.files if f not in dialog.skip_set
+            ]
+            removed = pre - len(self._scan_result.files)
+            self._scan_result.total_size = sum(
+                f.stat().st_size for f in self._scan_result.files
+            )
+            self._set_stat_value(self.stat_files, str(len(self._scan_result.files)))
+            self._set_stat_value(self.stat_size, _fmt_size(self._scan_result.total_size))
+            self._populate_review_table(self._scan_result.files)
+            self._log(f"[dedup] Skipped {removed} near-duplicate(s); "
+                      f"{len(self._scan_result.files)} files remain.")
 
     # ── Drag & Drop ──
     def dragEnterEvent(self, event: QDragEnterEvent):
@@ -6813,6 +6921,7 @@ class MainWindow(QMainWindow):
                 f"Found {len(result.files)} files ({_fmt_size(result.total_size)}). Ready to convert."
             )
             self._populate_review_table(result.files)
+            self.dedup_btn.setEnabled(True)
         else:
             self.convert_btn.setEnabled(False)
             self.progress_bar.setFormat("No files found")

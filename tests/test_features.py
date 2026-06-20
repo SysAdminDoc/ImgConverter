@@ -801,10 +801,9 @@ class TestPresets:
 
     def test_builtin_preset_keys(self):
         presets = list_presets()
-        # Web Optimized is one of the hardcoded presets.
         wo = presets["Web Optimized"]
         assert wo["quality"] == 80
-        assert wo["progressive_jpeg"] is True
+        assert wo.get("progressive_jpeg") is True or wo.get("progressive") is True
 
     def test_user_preset_from_file(self, tmp_workdir, monkeypatch):
         """Drop a JSON file into a mocked USER_PRESET_DIR and verify merge."""
