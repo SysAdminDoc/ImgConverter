@@ -180,10 +180,6 @@ try:
 except ImportError:
     HAS_AVIF = False
 
-# libheif memory cap — a hostile HEIC/AVIF can otherwise OOM the host via
-# the SAO heap-overflow path (CVE-2025-29482, fixed in libheif 1.19.7+).
-# 4 GB ceiling is generous for legitimate gigapixel scans, fatal for fuzz inputs.
-HEIF_MAX_DECODE_BYTES = 4 * 1024 * 1024 * 1024
 try:
     _opts = pillow_heif.options
     if hasattr(_opts, "DECODE_THREADS"):
@@ -2363,6 +2359,8 @@ def _convert_animated_or_sequence(
     extract_frames: bool,
     base_dir: Path | None = None,
     preserve_structure: bool = False,
+    jpeg_quality: int = 92,
+    strip_metadata: bool = False,
 ) -> ConvertResult:
     """Multi-frame / sequence handling.
 
@@ -2386,6 +2384,13 @@ def _convert_animated_or_sequence(
         ext = ext_map.get(fmt, ".jpg")
 
         with Image.open(str(src)) as img:
+            meta = {}
+            if not strip_metadata:
+                if "exif" in img.info:
+                    meta["exif"] = img.info["exif"]
+                if "icc_profile" in img.info:
+                    meta["icc_profile"] = img.info["icc_profile"]
+
             n = getattr(img, "n_frames", 1)
             if extract_frames or fmt_pil not in ("WEBP", "GIF", "PNG"):
                 pad_width = max(3, len(str(n)))
@@ -2394,9 +2399,14 @@ def _convert_animated_or_sequence(
                     seq_str = str(i).zfill(pad_width)
                     dst = dest_dir / f"{src.stem}.{seq_str}{ext}"
                     frame_save = frame.convert("RGB") if fmt_pil == "JPEG" else frame.copy()
-                    save_kwargs = {}
+                    save_kwargs: dict = {}
                     if fmt_pil in ("JPEG", "WEBP", "AVIF", "JXL"):
-                        save_kwargs["quality"] = 92
+                        save_kwargs["quality"] = jpeg_quality
+                    if not strip_metadata:
+                        if "exif" in meta and fmt_pil in ("JPEG", "PNG", "WEBP", "TIFF"):
+                            save_kwargs["exif"] = meta["exif"]
+                        if "icc_profile" in meta:
+                            save_kwargs["icc_profile"] = meta["icc_profile"]
                     frame_save.save(str(dst), fmt_pil, **save_kwargs)
                     written.append(dst)
                 result.dst = written[0] if written else None
@@ -2412,8 +2422,8 @@ def _convert_animated_or_sequence(
                                 "append_images": frames[1:] if len(frames) > 1 else [],
                                 "duration": img.info.get("duration", 100),
                                 "loop": img.info.get("loop", 0)}
-                if fmt_pil == "WEBP":
-                    save_kwargs["quality"] = 90
+                if fmt_pil in ("WEBP", "AVIF", "JXL"):
+                    save_kwargs["quality"] = jpeg_quality
                 frames[0].save(str(dst), fmt_pil, **save_kwargs)
                 result.dst = dst
                 result.size_after = dst.stat().st_size
@@ -3458,6 +3468,8 @@ class ConvertWorker(QThread):
                         extract_frames=(self.frames == "all"),
                         base_dir=self.opts.base_dir,
                         preserve_structure=self.opts.preserve_structure,
+                        jpeg_quality=self.opts.jpeg_quality,
+                        strip_metadata=not self.opts.preserve_metadata,
                     )
                     results.append(r)
                     done += 1
@@ -3468,7 +3480,8 @@ class ConvertWorker(QThread):
                         self.log.emit(f"[OK*] {f.name}: {r.warnings[-1] if r.warnings else 'ok'}")
                     else:
                         self.log.emit(f"[FAIL*] {f.name}: {r.error}")
-                self.files = [f for f in self.files if f not in animated_files]
+                animated_set = set(animated_files)
+                self.files = [f for f in self.files if f not in animated_set]
                 total = len(self.files) + done
 
         max_inflight = self.workers * 2
@@ -8229,6 +8242,8 @@ def _run_cli(args):
                     extract_frames=(args.frames == "all"),
                     base_dir=input_dir,
                     preserve_structure=not args.no_structure,
+                    jpeg_quality=args.quality,
+                    strip_metadata=args.strip_metadata,
                 )
                 if r.success:
                     ok_count += 1
@@ -8236,7 +8251,8 @@ def _run_cli(args):
                 else:
                     fail_count += 1
                     print(f"[FAIL*] {f.name}: {r.error}")
-            scan.files = [f for f in scan.files if f not in animated_files]
+            animated_set = set(animated_files)
+            scan.files = [f for f in scan.files if f not in animated_set]
             total = len(scan.files)
 
     all_results: list[ConvertResult] = []
@@ -8289,136 +8305,149 @@ def _run_cli(args):
     done_paths: set[str] = set()
     failed_paths: set[str] = set()
 
+    max_inflight = args.workers * 2
+    file_iter = iter(enumerate(scan.files, start=1))
+
     with Executor(max_workers=args.workers) as pool:
-        futures = {}
-        for seq_i, f in enumerate(scan.files, start=1):
-            fut = pool.submit(
-                convert_file, f, output_dir, seq=seq_i,
-                opts=cli_opts,
-            )
-            futures[fut] = f
+        futures: dict = {}
 
-        for fut in as_completed(futures):
-            try:
-                result = fut.result()
-            except Exception as exc:
-                f = futures[fut]
-                result = ConvertResult(src=f, size_before=0)
-                result.error = str(exc)
-            all_results.append(result)
-            done_count += 1
-            if result.skipped:
-                skip_count += 1
-                done_paths.add(str(result.src))
-                print(f"[SKIP] ({done_count}/{total}) {result.src.name}")
-            elif result.success:
-                ok_count += 1
-                saved = result.size_before - result.size_after
-                pct = (saved / result.size_before * 100) if result.size_before else 0
-                deleted_tag = "  [source deleted]" if result.src_deleted else ""
-                print(
-                    f"[OK] ({done_count}/{total}) {result.src.name} -> {result.dst.name}  "
-                    f"({_fmt_size(result.size_before)} -> {_fmt_size(result.size_after)}, "
-                    f"{pct:+.1f}%)  [{result.elapsed:.2f}s]{deleted_tag}"
+        def _cli_submit_batch():
+            while len(futures) < max_inflight:
+                try:
+                    seq_i, f = next(file_iter)
+                except StopIteration:
+                    return
+                fut = pool.submit(
+                    convert_file, f, output_dir, seq=seq_i,
+                    opts=cli_opts,
                 )
-            else:
-                fail_count += 1
-                failed_paths.add(str(result.src))
-                print(f"[FAIL] ({done_count}/{total}) {result.src.name}: {result.error}")
+                futures[fut] = f
 
-            _emit_progress("file_done", {
-                "file": str(result.src),
-                "status": "ok" if result.success else ("skip" if result.skipped else "fail"),
-                "size_before": result.size_before,
-                "size_after": result.size_after,
-                "elapsed": round(result.elapsed, 3),
-                "current": done_count,
-                "total": total,
-            }, enabled=_progress_on)
+        _cli_submit_batch()
 
-            if _mem_threshold is not None and done_count % max(1, args.workers) == 0:
-                free_pct = _get_free_memory_pct()
-                if free_pct is not None and free_pct < _mem_threshold:
-                    print(f"[WARN] memory pressure: {free_pct:.0f}% free < {_mem_threshold}% threshold")
+        while futures:
+            completed = [fut for fut in list(futures) if fut.done()]
+            if not completed:
+                time.sleep(0.02)
+                continue
 
-            if result.success and not result.skipped:
-                done_paths.add(str(result.src))
-                # Quality verification — butteraugli / ffmpeg-quality-metrics.
-                if getattr(args, "verify_quality", False):
-                    qline = _verify_quality(result.src, result.dst)
-                    if qline:
-                        print(f"[verify] {result.src.name}: {qline}")
-                        result.warnings.append(f"verify: {qline}")
-                # Sidecar JSON history — darktable pattern. Captures source
-                # hash, the full conversion preset, and timestamp so the
-                # output is reproducible from the metadata.
-                if getattr(args, "sidecar_history", False) and result.dst:
-                    try:
-                        sidecar = result.dst.with_suffix(result.dst.suffix + ".imgconverter.json")
-                        _write_text_atomic(sidecar, json.dumps({
-                            "version": APP_VERSION,
-                            "timestamp": int(time.time()),
-                            "src": str(result.src),
-                            "src_hash": _file_sha256(result.src) if not result.src_deleted else "deleted",
-                            "dst_hash": _file_sha256(result.dst) if result.dst and result.dst.exists() else "",
-                            "preset": {
-                                "format": args.format,
-                                "quality": args.quality,
-                                "workers": args.workers,
-                                "resize": args.resize,
-                                "prefix": args.prefix,
-                                "suffix": args.suffix,
-                                "template": getattr(args, "template", None),
-                                "in_place": args.in_place,
-                                "strip_metadata": args.strip_metadata,
-                                "progressive": args.progressive,
-                                "chroma_420": args.chroma_420,
-                                "lossless": args.lossless,
-                                "srgb": args.srgb,
-                                "tiff_compression": args.tiff_compression,
-                                "png_level": args.png_level,
-                                "icc": getattr(args, "icc", None),
-                                "watermark": getattr(args, "watermark", None),
-                                "canvas": getattr(args, "canvas", None),
-                                "tone_map": getattr(args, "tone_map", "none"),
-                                "dpi": getattr(args, "dpi", None),
-                                "target_kb": getattr(args, "target_kb", None),
-                                "target_psnr": getattr(args, "target_psnr", None),
-                            },
-                            "result": {
-                                "size_in": result.size_before,
-                                "size_out": result.size_after,
-                                "warnings": list(result.warnings),
-                            },
-                        }, indent=2, default=str) + "\n")
-                    except OSError:
-                        pass
-                # Persist into hash cache for future --use-cache runs.
-                if cache_conn:
-                    try:
-                        cache_conn.execute(
-                            "INSERT OR REPLACE INTO seen "
-                            "(src_hash, preset_hash, dst_hash, dst_size, ts) "
-                            "VALUES (?, ?, ?, ?, ?)",
-                            (_file_sha256(result.src) if not result.src_deleted else "",
-                             cache_preset_key,
-                             _file_sha256(result.dst) if result.dst and result.dst.exists() else "",
-                             result.size_after, int(time.time())),
-                        )
-                    except Exception as e:
-                        _diag_log(f"cache persist failed for {result.src.name}: {e}", level="WARNING")
+            for fut in completed:
+                try:
+                    result = fut.result()
+                except Exception as exc:
+                    f = futures[fut]
+                    result = ConvertResult(src=f, size_before=0)
+                    result.error = str(exc)
+                del futures[fut]
+                all_results.append(result)
+                done_count += 1
+                if result.skipped:
+                    skip_count += 1
+                    done_paths.add(str(result.src))
+                    print(f"[SKIP] ({done_count}/{total}) {result.src.name}")
+                elif result.success:
+                    ok_count += 1
+                    saved = result.size_before - result.size_after
+                    pct = (saved / result.size_before * 100) if result.size_before else 0
+                    deleted_tag = "  [source deleted]" if result.src_deleted else ""
+                    print(
+                        f"[OK] ({done_count}/{total}) {result.src.name} -> {result.dst.name}  "
+                        f"({_fmt_size(result.size_before)} -> {_fmt_size(result.size_after)}, "
+                        f"{pct:+.1f}%)  [{result.elapsed:.2f}s]{deleted_tag}"
+                    )
+                else:
+                    fail_count += 1
+                    failed_paths.add(str(result.src))
+                    print(f"[FAIL] ({done_count}/{total}) {result.src.name}: {result.error}")
 
-            # Persist queue state every 5 completions so a power cycle
-            # doesn't lose more than a handful of converts.
-            if done_count % 5 == 0:
-                _save_queue_state(input_dir, output_dir, args,
-                                   pending=[fp for fp in scan.files
-                                            if str(fp) not in done_paths
-                                            and str(fp) not in failed_paths],
-                                   done=done_paths, failed=failed_paths)
+                _emit_progress("file_done", {
+                    "file": str(result.src),
+                    "status": "ok" if result.success else ("skip" if result.skipped else "fail"),
+                    "size_before": result.size_before,
+                    "size_after": result.size_after,
+                    "elapsed": round(result.elapsed, 3),
+                    "current": done_count,
+                    "total": total,
+                }, enabled=_progress_on)
 
-            for warn in result.warnings:
-                print(f"[WARN] {result.src.name}: {warn}")
+                if _mem_threshold is not None and done_count % max(1, args.workers) == 0:
+                    free_pct = _get_free_memory_pct()
+                    if free_pct is not None and free_pct < _mem_threshold:
+                        print(f"[WARN] memory pressure: {free_pct:.0f}% free < {_mem_threshold}% threshold")
+
+                if result.success and not result.skipped:
+                    done_paths.add(str(result.src))
+                    if getattr(args, "verify_quality", False):
+                        qline = _verify_quality(result.src, result.dst)
+                        if qline:
+                            print(f"[verify] {result.src.name}: {qline}")
+                            result.warnings.append(f"verify: {qline}")
+                    if getattr(args, "sidecar_history", False) and result.dst:
+                        try:
+                            sidecar = result.dst.with_suffix(result.dst.suffix + ".imgconverter.json")
+                            _write_text_atomic(sidecar, json.dumps({
+                                "version": APP_VERSION,
+                                "timestamp": int(time.time()),
+                                "src": str(result.src),
+                                "src_hash": _file_sha256(result.src) if not result.src_deleted else "deleted",
+                                "dst_hash": _file_sha256(result.dst) if result.dst and result.dst.exists() else "",
+                                "preset": {
+                                    "format": args.format,
+                                    "quality": args.quality,
+                                    "workers": args.workers,
+                                    "resize": args.resize,
+                                    "prefix": args.prefix,
+                                    "suffix": args.suffix,
+                                    "template": getattr(args, "template", None),
+                                    "in_place": args.in_place,
+                                    "strip_metadata": args.strip_metadata,
+                                    "progressive": args.progressive,
+                                    "chroma_420": args.chroma_420,
+                                    "lossless": args.lossless,
+                                    "srgb": args.srgb,
+                                    "tiff_compression": args.tiff_compression,
+                                    "png_level": args.png_level,
+                                    "icc": getattr(args, "icc", None),
+                                    "watermark": getattr(args, "watermark", None),
+                                    "canvas": getattr(args, "canvas", None),
+                                    "tone_map": getattr(args, "tone_map", "none"),
+                                    "dpi": getattr(args, "dpi", None),
+                                    "target_kb": getattr(args, "target_kb", None),
+                                    "target_psnr": getattr(args, "target_psnr", None),
+                                },
+                                "result": {
+                                    "size_in": result.size_before,
+                                    "size_out": result.size_after,
+                                    "warnings": list(result.warnings),
+                                },
+                            }, indent=2, default=str) + "\n")
+                        except OSError:
+                            pass
+                    if cache_conn:
+                        try:
+                            cache_conn.execute(
+                                "INSERT OR REPLACE INTO seen "
+                                "(src_hash, preset_hash, dst_hash, dst_size, ts) "
+                                "VALUES (?, ?, ?, ?, ?)",
+                                (_file_sha256(result.src) if not result.src_deleted else "",
+                                 cache_preset_key,
+                                 _file_sha256(result.dst) if result.dst and result.dst.exists() else "",
+                                 result.size_after, int(time.time())),
+                            )
+                        except Exception as e:
+                            _diag_log(f"cache persist failed for {result.src.name}: {e}", level="WARNING")
+
+                if done_count % 5 == 0:
+                    _save_queue_state(input_dir, output_dir, args,
+                                       pending=[fp for fp in scan.files
+                                                if str(fp) not in done_paths
+                                                and str(fp) not in failed_paths],
+                                       done=done_paths, failed=failed_paths)
+
+                for warn in result.warnings:
+                    print(f"[WARN] {result.src.name}: {warn}")
+
+            _cli_submit_batch()
 
     if cache_conn:
         try:

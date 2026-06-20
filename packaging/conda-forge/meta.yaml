@@ -7,9 +7,9 @@ package:
 
 source:
   url: https://github.com/SysAdminDoc/ImgConverter/archive/refs/tags/v{{ version }}.tar.gz
-  # Update sha256 on each release; can be regenerated with:
-  #   curl -sSL <url> | sha256sum
-  sha256: 0000000000000000000000000000000000000000000000000000000000000000
+  # Replace with actual sha256 when submitting to conda-forge:
+  #   curl -sSL https://github.com/SysAdminDoc/ImgConverter/archive/refs/tags/v{{ version }}.tar.gz | sha256sum
+  sha256: REPLACE_WITH_ACTUAL_HASH_BEFORE_CONDA_FORGE_PR
 
 build:
   noarch: python
