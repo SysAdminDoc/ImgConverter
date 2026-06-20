@@ -127,3 +127,118 @@ Worth exploring; not committed.
 
 - **Command palette for power workflows** (Effort 3, Impact 3) - add a keyboard-first GUI command palette for scan, add folder, choose preset, run proof, start conversion, open support bundle, and reveal output. This improves discoverability without adding visual clutter.
   - Acceptance: Ctrl+K opens a searchable command list, actions expose disabled reasons, and every command maps to an existing button/menu workflow.
+
+## Research-Driven Additions (2026-06-19 pass 2)
+
+### P0
+
+- [ ] P0 — **CLI bounded future scheduling**
+  Why: `_run_cli` submits all futures at once (`pool.submit()` in a tight loop at line 8292), unlike the GUI's bounded `_submit_batch()` with `max_inflight = workers * 2`. On 10k+ file batches, this queues thousands of futures and their argument closures in memory, causing memory pressure before any conversion starts.
+  Evidence: Code inspection at `imgconverter.py:8292-8299` vs GUI's bounded scheduling at `imgconverter.py:3474-3548`. HandBrake and reaConverter both use bounded queues.
+  Touches: `_run_cli()` in `imgconverter.py`
+  Acceptance: CLI uses the same bounded `max_inflight` pattern as the GUI; memory footprint during 10k+ file batches stays proportional to `workers * 2`, not total file count.
+  Complexity: S
+
+- [ ] P0 — **Multi-frame conversion respects ConvertOptions**
+  Why: `_convert_animated_or_sequence` hardcodes quality=92, ignores metadata preservation, resize, strip_fields, and all other ConvertOptions fields. Multi-frame output silently drops user settings.
+  Evidence: Code inspection at `imgconverter.py:2359-2427` — `save_kwargs["quality"] = 92` on line 2399, no metadata/resize/strip logic.
+  Touches: `_convert_animated_or_sequence()` in `imgconverter.py`
+  Acceptance: Multi-frame output respects the same ConvertOptions as single-frame: quality slider, metadata handling, resize, strip fields. Test coverage for at least quality and metadata.
+  Complexity: M
+
+- [ ] P0 — **Dead code cleanup: pillow-heif 1.4 and unused constants**
+  Why: `HEIF_MAX_DECODE_BYTES` (line 186) is defined but never used. The `ALLOW_INCORRECT_HEADERS` hasattr guard (line 189 area) references an attribute removed in pillow-heif 1.4.0. Both are harmless dead code but confusing.
+  Evidence: Code inspection at `imgconverter.py:186-195`. pillow-heif 1.4.0 changelog confirms `ALLOW_INCORRECT_HEADERS` removal.
+  Touches: Module-level constants in `imgconverter.py`
+  Acceptance: Dead code removed. No behavioral change. Tests pass.
+  Complexity: S
+
+### P1
+
+- [ ] P1 — **Animated file set should use set lookup**
+  Why: `animated_files` membership check in ConvertWorker.run (line 3471) uses `not in` against a list — O(n) per file, O(n²) total for large batches with many animated files.
+  Evidence: Code inspection at `imgconverter.py:3471`. Same pattern was already fixed for `done_paths`/`failed_paths` in v3.1.1.
+  Touches: `ConvertWorker.run()` in `imgconverter.py`
+  Acceptance: `animated_files` converted to a set before membership checks. No behavioral change.
+  Complexity: S
+
+- [ ] P1 — **Pillow 13 deprecation prep**
+  Why: Pillow 13 (Oct 2026) removes `ImageCms.ImageCmsProfile.product_name`, `product_info`, and `Image.getdata()`. ImgConverter's test suite already migrated off `getdata()` (v3.1.1), but the `ImageCms` removals need verification that no transitive usage exists in the ICC conversion path.
+  Evidence: Pillow deprecation docs (https://pillow.readthedocs.io/en/stable/deprecations.html). ImgConverter uses `ImageCms.profileToProfile()` and `ImageCms.ImageCmsProfile()` in convert_file.
+  Touches: ICC handling in `convert_file()`, test suite, CI matrix (add Pillow 13 dev job when wheels ship)
+  Acceptance: `grep -r product_name imgconverter.py` returns zero hits; CI job with Pillow 13 pre-release passes; pyproject.toml classifiers updated.
+  Complexity: S
+
+- [ ] P1 — **c2pa-python native integration**
+  Why: Current C2PA verification shells out to `c2patool` binary. The `c2pa-python` SDK (v0.5.0, pip-installable, Apache 2.0/MIT) provides native signing/verification without subprocess overhead, with structured Python objects instead of JSON parsing.
+  Evidence: https://opensource.contentauthenticity.org/docs/c2pa-python/. Samsung Galaxy S25 and Google Pixel 10 embed C2PA in camera output — the format is going mainstream.
+  Touches: `_verify_c2pa()` in `imgconverter.py`, optional dependency in `pyproject.toml`
+  Acceptance: `c2pa-python` used when installed, falls back to `c2patool` subprocess, falls back to no verification. Structured result replaces JSON parsing. Test for both paths.
+  Complexity: M
+
+- [ ] P1 — **Drop redundant `qoi` optional dependency for write**
+  Why: Pillow 11.3+ (July 2025) ships native QOI write support. Pillow 9.5+ ships native QOI read. Since ImgConverter's floor is Pillow 12.2, the `qoi` package is fully redundant — both read and write are native.
+  Evidence: Pillow 11.3.0 release notes (https://pillow.readthedocs.io/en/stable/releasenotes/11.3.0.html). ImgConverter `pyproject.toml` still lists `qoi>=0.7` as optional.
+  Touches: `pyproject.toml`, `requirements.txt`, `HAS_QOI` detection in `imgconverter.py`, `FORMAT_FAMILIES`, README optional tools table, `--install-deps`
+  Acceptance: QOI input/output works without the `qoi` package installed. `qoi` optional dep removed from all manifests. Format filter still shows QOI. Tests pass.
+  Complexity: M
+
+### P2
+
+- [ ] P2 — **Watch mode integration test**
+  Why: Watch mode has zero automated tests. The watch handler, debounce logic, watchdog vs polling fallback, and ConvertOptions forwarding are all untested. This is the largest untested code path.
+  Evidence: `tests/` directory has no test file for watch mode. Watch mode is ~125 lines (`imgconverter.py:7384-7508`).
+  Touches: New test in `tests/test_features.py` or new `tests/test_watch.py`
+  Acceptance: At least 3 tests: (1) new file detected and converted, (2) debounce prevents partial-write processing, (3) ConvertOptions forwarded correctly. Can use a mock Observer or short polling interval.
+  Complexity: M
+
+- [ ] P2 — **vips backend test coverage**
+  Why: The vips backend has zero tests. It's flagged experimental but ships in the main binary. Basic regression coverage would catch breakage from refactors.
+  Evidence: `tests/` has no vips-related tests. vips backend is ~105 lines (`imgconverter.py:2616-2722`).
+  Touches: New test in `tests/test_features.py`, conditional skip when pyvips not installed
+  Acceptance: At least 2 tests: (1) basic JPEG conversion through vips backend, (2) vips rejects unsupported options (resize, metadata). Skipped when pyvips not installed.
+  Complexity: S
+
+- [ ] P2 — **conda-forge recipe sha256 placeholder**
+  Why: `packaging/conda-forge/meta.yaml` has a placeholder sha256 (`0000...`). While it won't affect users until a conda-forge PR is submitted, it's confusing and could cause a failed build if someone copies it.
+  Evidence: `packaging/conda-forge/meta.yaml:12`
+  Touches: `packaging/conda-forge/meta.yaml`, optionally a CI step to auto-compute hash on release
+  Acceptance: sha256 either computed from the actual release tarball or replaced with a comment explaining the manual step. Recipe-level test passes.
+  Complexity: S
+
+- [ ] P2 — **convert_file dual-interface consolidation**
+  Why: `convert_file()` accepts 35 keyword args AND an `opts=ConvertOptions` object. When `opts` is provided, 33 lines (2771-2805) manually unpack every field from opts into local variables. Every new ConvertOptions field requires updating both the kwargs signature and the unpacking block — root cause of parity drift.
+  Evidence: Code inspection at `imgconverter.py:2724-2805`. The ConvertOptions dataclass was introduced to solve this but the legacy kwargs remain for backward compat.
+  Touches: `convert_file()` signature, all callers (ConvertWorker, _run_cli, tests)
+  Acceptance: `convert_file()` accepts only `(src, output_dir, *, opts, seq)`. Legacy kwargs removed. All callers pass ConvertOptions. Tests updated.
+  Complexity: L
+
+- [ ] P2 — **CONTRIBUTING.md test count stale**
+  Why: CONTRIBUTING.md says "19+ tests" but the actual count is 128. Stale documentation undermines contributor confidence.
+  Evidence: `CONTRIBUTING.md:27` says "19+ tests"; `grep -c "def test_" tests/*.py` shows 128.
+  Touches: `CONTRIBUTING.md`
+  Acceptance: Test count updated to reflect reality. CI matrix description updated (mentions 3.11/3.12 but CI actually tests 3.11-3.14 + 3.14t).
+  Complexity: S
+
+### P3
+
+- [ ] P3 — **Metadata extraction module consolidation**
+  Why: Metadata handling (presence detection, selective stripping, ExifTool integration, report generation) is scattered across 6+ functions: `_open_image()`, `convert_file()`, `_metadata_presence_from_image()`, `_metadata_presence_from_path()`, `_strip_exif_fields()`, `_finalize_metadata_report()`, `_run_exiftool_copy()`. Consolidating into a coherent module would reduce the chance of metadata bugs.
+  Evidence: Architecture assessment in RESEARCH.md. The GPS zero-coordinate bug (v3.1.1) and same-format strip-fields skip (v3.1.1) both originated from scattered metadata logic.
+  Touches: 6+ functions in `imgconverter.py`, potentially extracted to a helper module
+  Acceptance: Metadata operations go through a single coherent API surface. Existing tests still pass. No new features — pure refactor.
+  Complexity: L
+
+- [ ] P3 — **Smart quality detection for auto mode**
+  Why: When output format is "auto", ImgConverter already selects JPEG vs PNG based on alpha. Dinky (macOS competitor, 443 stars, 2026) adds a second axis: detecting photo vs graphic content and adjusting quality accordingly. Photos get higher quality (92+), graphics/screenshots get lower quality (80-85) with lossless WebP consideration. This would improve auto mode's compression ratio without user configuration.
+  Evidence: Dinky app feature set (https://github.com/heyderekj/dinky). XL Converter issue #140 also requests quality-aware auto settings.
+  Touches: `convert_file()` auto-format detection path in `imgconverter.py`, new heuristic function
+  Acceptance: Auto mode detects photo vs graphic content (histogram analysis or edge density) and adjusts quality. CLI `--format auto` gets the same behavior. No regression in existing auto-mode tests.
+  Complexity: M
+
+- [ ] P3 — **Retry failed conversions in watch mode**
+  Why: Watch mode currently treats all failures as permanent — `converted.add(f)` is called even on failure (line 7496), so the file is never retried. For transient failures (file locked, disk full then freed, network drive hiccup), a retry queue with backoff would improve automation reliability.
+  Evidence: Code inspection at `imgconverter.py:7483-7498`. reaConverter and BatchPhoto both retry transient failures in watch mode.
+  Touches: `_watch_directory()` in `imgconverter.py`
+  Acceptance: Failed files are retried up to 3 times with exponential backoff. Permanent failures (unsupported format, corrupt file) still marked as done. Watch mode log distinguishes retries from first attempts.
+  Complexity: M
