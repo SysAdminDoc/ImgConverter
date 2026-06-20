@@ -1052,7 +1052,7 @@ try:
     )
     from PyQt6.QtGui import (
         QFont, QColor, QPalette, QIcon, QPixmap, QPainter, QAction,
-        QDragEnterEvent, QDropEvent,
+        QDragEnterEvent, QDropEvent, QShortcut, QKeySequence,
     )
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -1083,7 +1083,7 @@ except ImportError:
     pyqtSignal = _signal_stub
     Qt = QSettings = QSize = QUrl = _Stub
     QFont = QColor = QPalette = QIcon = QPixmap = QPainter = QAction = _Stub
-    QDragEnterEvent = QDropEvent = _Stub
+    QDragEnterEvent = QDropEvent = QShortcut = QKeySequence = _Stub
     QApplication = QVBoxLayout = QHBoxLayout = _Stub
     QLabel = QPushButton = QFileDialog = QComboBox = QSpinBox = QSlider = _Stub
     QProgressBar = QPlainTextEdit = QCheckBox = QGroupBox = QGridLayout = _Stub
@@ -4981,6 +4981,93 @@ class DuplicateReviewDialog(QDialog):
         layout.addLayout(buttons)
 
 
+class CommandPaletteDialog(QDialog):
+    command_selected = pyqtSignal(str)
+
+    def __init__(self, commands: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Command Palette")
+        self.resize(500, 380)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        self._commands = commands
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Type to filter commands...")
+        self._search.setAccessibleName("Command search")
+        self._search.textChanged.connect(self._filter)
+        layout.addWidget(self._search)
+
+        self._list = QTableWidget(0, 2)
+        self._list.setHorizontalHeaderLabels(["Command", "Status"])
+        self._list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._list.verticalHeader().setVisible(False)
+        self._list.setShowGrid(False)
+        self._list.doubleClicked.connect(self._on_activate)
+        self._list.setAccessibleName("Available commands")
+        layout.addWidget(self._list)
+
+        self._populate(commands)
+        self._search.setFocus()
+
+    def _populate(self, commands: list[dict]):
+        self._list.setRowCount(len(commands))
+        for i, cmd in enumerate(commands):
+            name_item = QTableWidgetItem(cmd["name"])
+            name_item.setData(Qt.ItemDataRole.UserRole, cmd["key"])
+            name_item.setToolTip(cmd.get("tooltip", ""))
+            self._list.setItem(i, 0, name_item)
+
+            status = cmd.get("status", "")
+            status_item = QTableWidgetItem(status)
+            if "disabled" in status.lower():
+                status_item.setForeground(QColor(CAT["overlay0"]))
+                name_item.setForeground(QColor(CAT["overlay0"]))
+            self._list.setItem(i, 1, status_item)
+
+    def _filter(self, text: str):
+        needle = text.lower()
+        for row in range(self._list.rowCount()):
+            item = self._list.item(row, 0)
+            match = needle in (item.text().lower() if item else "")
+            self._list.setRowHidden(row, not match)
+
+    def _on_activate(self, index):
+        item = self._list.item(index.row(), 0)
+        if item:
+            key = item.data(Qt.ItemDataRole.UserRole)
+            status = self._list.item(index.row(), 1)
+            if status and "disabled" in (status.text() or "").lower():
+                return
+            self.command_selected.emit(key)
+            self.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            current = self._list.currentRow()
+            if current >= 0 and not self._list.isRowHidden(current):
+                item = self._list.item(current, 0)
+                status = self._list.item(current, 1)
+                if item and not (status and "disabled" in (status.text() or "").lower()):
+                    self.command_selected.emit(item.data(Qt.ItemDataRole.UserRole))
+                    self.accept()
+                    return
+        if event.key() == Qt.Key.Key_Escape:
+            self.reject()
+            return
+        if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+            self._list.setFocus()
+            self._list.keyPressEvent(event)
+            return
+        super().keyPressEvent(event)
+
+
 class ShellIntegrationDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -5217,6 +5304,73 @@ class MainWindow(QMainWindow):
         _diag_log(f"ImgConverter v{APP_VERSION} started (GUI mode)")
         # Optional update check — defer so we don't block startup paint.
         QTimer.singleShot(2000, self._maybe_check_for_update)
+
+        shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        shortcut.activated.connect(self._open_command_palette)
+
+    def _open_command_palette(self):
+        has_scan = self._scan_result is not None and bool(self._scan_result.files)
+        is_converting = self._worker is not None and self._worker.isRunning()
+        commands = [
+            {"key": "scan", "name": "Scan Source",
+             "tooltip": "Scan the source folder for supported image files",
+             "status": "" if not is_converting else "Disabled (converting)"},
+            {"key": "convert", "name": "Convert Batch",
+             "tooltip": "Convert all scanned files",
+             "status": "" if has_scan and not is_converting else "Disabled (no scan)" if not has_scan else "Disabled (converting)"},
+            {"key": "open_output", "name": "Open Output Folder",
+             "tooltip": "Open the output folder in the file manager",
+             "status": "" if self._last_ok_dst else "Disabled (no output yet)"},
+            {"key": "paste", "name": "Paste Clipboard Image",
+             "tooltip": "Paste an image from the clipboard",
+             "status": ""},
+            {"key": "plugins", "name": "Manage Plugins",
+             "tooltip": "Review plugin trust status",
+             "status": ""},
+            {"key": "watch", "name": "Watch Folder Profiles",
+             "tooltip": "Manage hot-folder watch profiles",
+             "status": ""},
+            {"key": "shell", "name": "Shell Integration",
+             "tooltip": "Manage context-menu integration",
+             "status": ""},
+            {"key": "duplicates", "name": "Check Duplicates",
+             "tooltip": "Find near-duplicate images",
+             "status": "" if has_scan else "Disabled (scan first)"},
+            {"key": "export_log", "name": "Export Log",
+             "tooltip": "Save the activity log to a file",
+             "status": ""},
+            {"key": "export_csv", "name": "Export CSV Report",
+             "tooltip": "Export conversion results as CSV",
+             "status": ""},
+            {"key": "support", "name": "Export Support Bundle",
+             "tooltip": "Save redacted diagnostics",
+             "status": ""},
+            {"key": "clear_log", "name": "Clear Log",
+             "tooltip": "Clear the activity log",
+             "status": ""},
+        ]
+        dialog = CommandPaletteDialog(commands, self)
+        dialog.command_selected.connect(self._run_palette_command)
+        dialog.exec()
+
+    def _run_palette_command(self, key: str):
+        dispatch = {
+            "scan": self._scan,
+            "convert": self._convert,
+            "open_output": self._open_output,
+            "paste": self._paste_clipboard,
+            "plugins": self._open_plugin_trust,
+            "watch": self._open_watch_folders,
+            "shell": self._open_shell_integration,
+            "duplicates": self._check_duplicates,
+            "export_log": self._export_log,
+            "export_csv": self._export_csv,
+            "support": self._export_support_bundle,
+            "clear_log": self._clear_log,
+        }
+        handler = dispatch.get(key)
+        if handler:
+            handler()
 
     def _apply_accessibility_labels(self):
         """Attach screen-reader-friendly accessible names + status tips.
