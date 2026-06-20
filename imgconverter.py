@@ -4632,8 +4632,11 @@ class WatchFolderDialog(QDialog):
         self.empty_label.setVisible(False)
         layout.addWidget(self.empty_label)
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Source Folder", "Output Folder", "Preset", "Enabled", "Status"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels([
+            "Source Folder", "Output Folder", "Preset", "Enabled",
+            "Last Run", "Converted", "Status",
+        ])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAccessibleName("Watch folder profiles")
@@ -4648,14 +4651,18 @@ class WatchFolderDialog(QDialog):
         self.add_btn = QPushButton("Add Profile")
         self.remove_btn = QPushButton("Remove")
         self.toggle_btn = QPushButton("Enable")
+        self.run_now_btn = QPushButton("Run Now")
         self.close_btn = QPushButton("Close")
         self.add_btn.setObjectName("primaryBtn")
         self.remove_btn.setObjectName("dangerBtn")
+        self.run_now_btn.setObjectName("secondaryBtn")
         self.close_btn.setObjectName("secondaryBtn")
         self.add_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
         self.remove_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
         self.toggle_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.run_now_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         buttons.addWidget(self.add_btn)
+        buttons.addWidget(self.run_now_btn)
         buttons.addStretch()
         buttons.addWidget(self.toggle_btn)
         buttons.addWidget(self.remove_btn)
@@ -4665,11 +4672,13 @@ class WatchFolderDialog(QDialog):
         self.add_btn.clicked.connect(self._add_profile)
         self.remove_btn.clicked.connect(self._remove_selected)
         self.toggle_btn.clicked.connect(self._toggle_selected)
+        self.run_now_btn.clicked.connect(self._run_now)
         self.close_btn.clicked.connect(self.accept)
         for button, name, desc in (
             (self.add_btn, "Add watch profile", "Create a local folder watch profile"),
             (self.remove_btn, "Remove watch profile", "Remove the selected watch profile"),
             (self.toggle_btn, "Toggle watch profile", "Enable or disable the selected watch profile"),
+            (self.run_now_btn, "Run now", "Run a one-shot conversion for the selected profile"),
             (self.close_btn, "Close watch profiles", "Close the watch folder profiles dialog"),
         ):
             button.setAccessibleName(name)
@@ -4686,15 +4695,20 @@ class WatchFolderDialog(QDialog):
                 p.get("output", ""),
                 p.get("preset", "Default"),
                 "Enabled" if p.get("enabled") else "Paused",
+                p.get("last_run") or "Never",
+                str(p.get("last_count", 0)),
             )
             for col, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 item.setToolTip(str(value))
                 self.table.setItem(i, col, item)
-            status = p.get("last_error") or p.get("last_run") or "Never run"
-            item = QTableWidgetItem(str(status))
-            item.setToolTip(str(status))
-            self.table.setItem(i, 4, item)
+            error = p.get("last_error")
+            status_text = error if error else ("OK" if p.get("last_run") else "Ready")
+            item = QTableWidgetItem(status_text)
+            item.setToolTip(status_text)
+            if error:
+                item.setForeground(QColor(CAT["red"]))
+            self.table.setItem(i, 6, item)
         self.table.resizeColumnsToContents()
         enabled = sum(1 for p in self._profiles if p.get("enabled"))
         total = len(self._profiles)
@@ -4718,6 +4732,7 @@ class WatchFolderDialog(QDialog):
         has_selection = profile is not None
         self.remove_btn.setEnabled(has_selection)
         self.toggle_btn.setEnabled(has_selection)
+        self.run_now_btn.setEnabled(has_selection)
         if profile is None:
             self.toggle_btn.setText("Enable")
             self.toggle_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
@@ -4772,6 +4787,51 @@ class WatchFolderDialog(QDialog):
             self._profiles[row]["enabled"] = not self._profiles[row].get("enabled", True)
             _save_watch_profiles(self._profiles)
             self._refresh()
+
+    def _run_now(self):
+        row, profile = self._selected_profile()
+        if row is None or profile is None:
+            return
+        src = profile.get("source", "")
+        out = profile.get("output", "")
+        preset_name = profile.get("preset", "Default")
+        if not src or not Path(src).is_dir():
+            self.status_label.setText(f"Source folder not found: {src}")
+            return
+        self.run_now_btn.setEnabled(False)
+        self.status_label.setText(f"Running one-shot conversion for {Path(src).name}...")
+
+        preset = load_preset(preset_name)
+        opts = ConvertOptions(
+            fmt=preset.get("format", "auto") if preset else "auto",
+            jpeg_quality=int(preset.get("quality", 92)) if preset else 92,
+        )
+        if not out:
+            out = str(Path(src) / "converted")
+        output_dir = Path(out)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        scan = scan_directory(Path(src), recursive=True)
+        ok_count = 0
+        fail_count = 0
+        from datetime import datetime
+        for seq_i, f in enumerate(scan.files, start=1):
+            r = convert_file(f, output_dir, seq=seq_i, opts=opts)
+            if r.success:
+                ok_count += 1
+            elif not r.skipped:
+                fail_count += 1
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        self._profiles[row]["last_run"] = now_str
+        self._profiles[row]["last_count"] = ok_count
+        self._profiles[row]["last_error"] = f"{fail_count} failed" if fail_count else None
+        _save_watch_profiles(self._profiles)
+        self._refresh()
+        self.status_label.setText(
+            f"Run complete: {ok_count} converted, {fail_count} failed, "
+            f"{len(scan.files) - ok_count - fail_count} skipped."
+        )
 
 
 WORKFLOW_TONE_BY_STATE = {
