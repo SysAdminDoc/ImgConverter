@@ -4795,6 +4795,134 @@ WORKFLOW_TONE_BY_STATE = {
 }
 
 
+class ShellIntegrationDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Shell Integration")
+        self.resize(640, 340)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        self.status_label = QLabel()
+        self.status_label.setObjectName("dialogHint")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        cmd_label = QLabel("Commands that will be registered:")
+        cmd_label.setObjectName("fieldLabel")
+        layout.addWidget(cmd_label)
+
+        self.cmd_view = QPlainTextEdit()
+        self.cmd_view.setReadOnly(True)
+        self.cmd_view.setMaximumHeight(90)
+        exe = sys.executable
+        script = str(Path(__file__).resolve())
+        self.cmd_view.setPlainText(
+            f'Files:   "{exe}" "{script}" --files %*\n'
+            f'Folders: "{exe}" "{script}" --input "%1"'
+        )
+        layout.addWidget(self.cmd_view)
+
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(8)
+        preset_label = QLabel("Default preset:")
+        preset_label.setObjectName("fieldLabel")
+        preset_row.addWidget(preset_label)
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItem("(none)")
+        for name in sorted(list_presets().keys()):
+            self.preset_combo.addItem(name)
+        self.preset_combo.setToolTip("Preset applied when converting via shell context menu")
+        self.preset_combo.setFixedWidth(180)
+        preset_row.addWidget(self.preset_combo)
+        preset_row.addStretch()
+        layout.addLayout(preset_row)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        self.install_btn = QPushButton("Install Shell Integration")
+        self.install_btn.setObjectName("primaryBtn")
+        self.install_btn.clicked.connect(self._install)
+        btn_row.addWidget(self.install_btn)
+
+        self.uninstall_btn = QPushButton("Uninstall")
+        self.uninstall_btn.setObjectName("secondaryBtn")
+        self.uninstall_btn.clicked.connect(self._uninstall)
+        btn_row.addWidget(self.uninstall_btn)
+
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("secondaryBtn")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        self.result_label = QLabel("")
+        self.result_label.setWordWrap(True)
+        layout.addWidget(self.result_label)
+        layout.addStretch()
+
+        self._detect_state()
+
+    def _detect_state(self):
+        system = platform.system()
+        installed = False
+        if system == "Windows":
+            try:
+                import winreg
+                winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Classes\*\shell\ImgConverter",
+                    0, winreg.KEY_READ,
+                ).Close()
+                installed = True
+            except (FileNotFoundError, OSError, ImportError):
+                pass
+        elif system == "Linux":
+            installed = (Path.home() / ".local/share/applications/imgconverter.desktop").exists()
+        elif system == "Darwin":
+            self.status_label.setText(
+                "macOS: Shell integration uses Automator Quick Actions.\n"
+                "See the command preview below for the script to paste into Automator."
+            )
+            self.install_btn.setEnabled(False)
+            self.uninstall_btn.setEnabled(False)
+            return
+
+        if installed:
+            self.status_label.setText(
+                f"Shell integration is currently installed ({system}).\n"
+                "Right-click images or folders in your file manager to convert them."
+            )
+        else:
+            self.status_label.setText(
+                f"Shell integration is not installed ({system}).\n"
+                "Click Install to add context-menu entries for image conversion."
+            )
+
+    def _install(self):
+        rc = _install_shell_integration(uninstall=False)
+        if rc == EXIT_OK:
+            self.result_label.setText("Shell integration installed successfully.")
+            self.result_label.setStyleSheet(f"color: {CAT['green']};")
+        else:
+            self.result_label.setText("Installation failed. Check permissions.")
+            self.result_label.setStyleSheet(f"color: {CAT['red']};")
+        self._detect_state()
+
+    def _uninstall(self):
+        rc = _install_shell_integration(uninstall=True)
+        if rc == EXIT_OK:
+            self.result_label.setText("Shell integration removed.")
+            self.result_label.setStyleSheet(f"color: {CAT['green']};")
+        else:
+            self.result_label.setText("Removal failed.")
+            self.result_label.setStyleSheet(f"color: {CAT['red']};")
+        self._detect_state()
+
+
 def _refresh_widget_style(widget):
     """Force Qt to re-evaluate dynamic-property stylesheet selectors."""
     try:
@@ -5724,6 +5852,14 @@ class MainWindow(QMainWindow):
         self.watch_folders_btn.clicked.connect(self._open_watch_folders)
         secondary_actions.addWidget(self.watch_folders_btn)
 
+        self.shell_btn = QPushButton("Shell")
+        self.shell_btn.setObjectName("secondaryBtn")
+        self.shell_btn.setToolTip("Manage file-manager context-menu integration")
+        self.shell_btn.setAccessibleName("Shell integration")
+        self.shell_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon))
+        self.shell_btn.clicked.connect(self._open_shell_integration)
+        secondary_actions.addWidget(self.shell_btn)
+
         self.auto_open_chk = QCheckBox("Auto-open output")
         self.auto_open_chk.setChecked(False)
         self.auto_open_chk.setToolTip("Automatically open the output folder when conversion finishes")
@@ -6049,6 +6185,10 @@ class MainWindow(QMainWindow):
         profiles = _load_watch_profiles()
         enabled = sum(1 for p in profiles if p.get("enabled"))
         self._log(f"Watch folder profiles: {len(profiles)} total, {enabled} enabled")
+
+    def _open_shell_integration(self):
+        dialog = ShellIntegrationDialog(self)
+        dialog.exec()
 
     # ── Drag & Drop ──
     def dragEnterEvent(self, event: QDragEnterEvent):
