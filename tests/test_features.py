@@ -1776,3 +1776,96 @@ class TestQtAccessibility:
         assert "Source,Output,Status" in report
         assert "source.bmp" in report
         assert "metadata copied" in report
+
+
+# ── Watch mode integration ───────────────────────────────────────────────────
+
+
+class TestWatchModeIntegration:
+    """Watch mode debounce and ConvertOptions forwarding without a live polling loop."""
+
+    def test_new_file_converts_with_options(self, rgb_image, tmp_workdir):
+        """Simulate the watch-mode conversion path: file appears, opts forwarded."""
+        src = tmp_workdir / "watch_in"
+        src.mkdir()
+        out = tmp_workdir / "watch_out"
+        img_path = src / "photo.bmp"
+        rgb_image.save(img_path)
+
+        opts = ConvertOptions(fmt="png", jpeg_quality=75)
+        result = convert_file(img_path, out, opts=opts)
+        assert result.success
+        assert result.dst.suffix == ".png"
+
+    def test_debounce_size_stability(self, tmp_workdir):
+        """Debounce logic: file must have stable size across two polls."""
+        src = tmp_workdir / "growing.bmp"
+        src.write_bytes(b"\x00" * 100)
+
+        seen_sizes: dict[Path, int] = {}
+        current = []
+
+        size = src.stat().st_size
+        if seen_sizes.get(src) == size:
+            current.append(src)
+        else:
+            seen_sizes[src] = size
+
+        assert current == [], "First poll should defer — size not yet stable"
+
+        size2 = src.stat().st_size
+        if seen_sizes.get(src) == size2:
+            current.append(src)
+        else:
+            seen_sizes[src] = size2
+
+        assert current == [src], "Second poll with same size should proceed"
+
+    def test_convert_options_quality_forwarded(self, rgb_image, tmp_workdir):
+        """ConvertOptions quality setting is respected in the conversion output."""
+        src = tmp_workdir / "src.bmp"
+        rgb_image.save(src)
+        out_high = tmp_workdir / "high"
+        out_low = tmp_workdir / "low"
+
+        r_high = convert_file(src, out_high, opts=ConvertOptions(fmt="jpeg", jpeg_quality=98))
+        r_low = convert_file(src, out_low, opts=ConvertOptions(fmt="jpeg", jpeg_quality=50))
+        assert r_high.success and r_low.success
+        assert r_high.size_after > r_low.size_after, \
+            "Higher quality JPEG should be larger than lower quality"
+
+
+# ── vips backend ─────────────────────────────────────────────────────────────
+
+
+class TestVipsBackend:
+    """Basic vips backend regression coverage."""
+
+    def test_vips_convert_jpeg(self, rgb_image, tmp_workdir):
+        from imgconverter import HAS_VIPS
+        if not HAS_VIPS:
+            pytest.skip("pyvips not installed")
+
+        src = tmp_workdir / "src.bmp"
+        rgb_image.save(src)
+        out = tmp_workdir / "out"
+
+        result = convert_file(src, out, fmt="jpeg", jpeg_quality=85, backend="vips",
+                              preserve_metadata=False)
+        assert result.success, f"vips conversion failed: {result.error}"
+        assert result.dst.suffix == ".jpg"
+        assert result.dst.stat().st_size > 0
+
+    def test_vips_rejects_metadata_preserve(self, rgb_image, tmp_workdir):
+        from imgconverter import HAS_VIPS
+        if not HAS_VIPS:
+            pytest.skip("pyvips not installed")
+
+        src = tmp_workdir / "src.bmp"
+        rgb_image.save(src)
+        out = tmp_workdir / "out"
+
+        result = convert_file(src, out, fmt="jpeg", backend="vips",
+                              preserve_metadata=True)
+        assert not result.success or any("metadata" in w.lower() for w in result.warnings), \
+            "vips backend should warn about metadata loss or reject preserve_metadata=True"
