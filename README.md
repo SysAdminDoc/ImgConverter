@@ -249,6 +249,7 @@ python imgconverter.py --support-bundle ./imgconverter_support.zip
 | `--backend BACKEND` | Select `pillow` or experimental `vips` backend |
 | `--backend-info` | Print backend capability JSON, then exit |
 | `--backend-benchmark PATH` | With `--backend-info`, benchmark each available backend against one image |
+| `--format-matrix` | Print input/output format capability matrix as JSON (support, metadata caveats, install hints), then exit |
 | `--verify-quality` | Run optional external quality metrics after conversion |
 | `--progress` | Emit JSON Lines per-file events to stderr for machine consumption |
 | `--when-done ACTION` | Action after a clean batch: `nothing` (default), `close`, `sleep`, `shutdown`; skipped when any file fails so exit codes stay truthful |

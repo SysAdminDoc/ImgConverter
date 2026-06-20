@@ -1028,7 +1028,7 @@ def _run_exiftool_copy(src: Path, dst: Path,
         return False, str(e)
 
 _CLI_ONLY = any(a in sys.argv for a in ("--input", "-i", "--files", "--support-bundle",
-                                         "--backend-info", "--backend-benchmark",
+                                         "--backend-info", "--backend-benchmark", "--format-matrix",
                                          "--install-deps", "--version", "--list-presets",
                                          "--list-plugins", "--help", "-h"))
 try:
@@ -4049,6 +4049,59 @@ def _format_support_payload() -> list[dict[str, object]]:
     ]
 
 
+def build_format_capability_matrix() -> list[dict[str, object]]:
+    """Full input/output capability matrix with dependency and metadata info."""
+    output_fmts = {"JPEG", "PNG", "WebP", "TIFF"}
+    if HAS_AVIF:
+        output_fmts.add("AVIF")
+    if HAS_JXL:
+        output_fmts.add("JPEG XL")
+
+    matrix = []
+    for name, (exts, available) in sorted(get_format_families().items()):
+        entry: dict[str, object] = {
+            "family": name,
+            "extensions": sorted(exts),
+            "input": available,
+            "output": name in output_fmts,
+            "support": "built-in" if available else "unavailable",
+            "metadata": "full",
+            "install_hint": None,
+        }
+        if name == "Camera RAW":
+            entry["support"] = "optional" if available else "unavailable"
+            entry["install_hint"] = "pip install rawpy" if not available else None
+            entry["metadata"] = "none (rawpy demosaics, no EXIF passthrough)"
+        elif name == "JPEG XL":
+            entry["support"] = "optional" if available else "unavailable"
+            entry["install_hint"] = "pip install pillow-jxl-plugin" if not available else None
+        elif name == "QOI":
+            entry["metadata"] = "none (format does not support metadata)"
+        elif name in ("BMP", "ICO/CUR"):
+            entry["metadata"] = "limited (no EXIF/XMP)"
+        elif name == "JPEG 2000":
+            entry["metadata"] = "limited (ICC only, no EXIF via Pillow)"
+        elif name == "AVIF":
+            entry["output"] = HAS_AVIF
+            if not HAS_AVIF:
+                entry["install_hint"] = "pip install Pillow>=11.3 (native AVIF)"
+        if name == "Plugins" and available:
+            entry["support"] = "plugin"
+            entry["metadata"] = "varies by plugin"
+        matrix.append(entry)
+
+    matrix.append({
+        "family": "ExifTool",
+        "extensions": [],
+        "input": False,
+        "output": False,
+        "support": "available" if HAS_EXIFTOOL else "unavailable",
+        "metadata": "full tag-copy (MakerNotes, GPS sub-IFDs, IPTC, XMP)",
+        "install_hint": "https://exiftool.org/" if not HAS_EXIFTOOL else None,
+    })
+    return matrix
+
+
 def _plugin_trust_payload() -> list[dict[str, object]]:
     rows = []
     for row in get_plugin_trust_rows():
@@ -4102,6 +4155,7 @@ def _build_support_bundle_payload(settings_snapshot: dict | None = None) -> dict
         "optional_tools": _optional_tool_status(),
         "backends": build_backend_info(),
         "formats": _format_support_payload(),
+        "format_capability_matrix": build_format_capability_matrix(),
         "plugins": {
             "trust_rows": _plugin_trust_payload(),
             "loaded_capabilities": PLUGIN_CAPABILITIES,
@@ -7145,6 +7199,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Print backend capability JSON for Pillow and vips, then exit")
     p.add_argument("--backend-benchmark", type=str, default=None, metavar="PATH",
                    help="With --backend-info, benchmark each available backend against one image")
+    p.add_argument("--format-matrix", action="store_true",
+                   help="Print input/output format capability matrix as JSON, then exit")
     p.add_argument("--verify-quality", action="store_true",
                    help="After each conversion, run butteraugli (preferred) or "
                         "ffmpeg-quality-metrics if available, logging PSNR/SSIM "
@@ -7235,6 +7291,7 @@ CLI_FLAG_PARITY = {
     "--backend": {"surface": "cli-only", "gui": (), "readme": True, "note": "Experimental backend selection"},
     "--backend-info": {"surface": "admin-only", "gui": (), "readme": True, "note": "Backend capability report"},
     "--backend-benchmark": {"surface": "admin-only", "gui": (), "readme": True, "note": "Optional backend benchmark input"},
+    "--format-matrix": {"surface": "admin-only", "gui": (), "readme": True, "note": "Input/output format capability matrix"},
     "--verify-quality": {"surface": "cli-only", "gui": (), "readme": True, "note": "External quality metric checks"},
     "--progress": {"surface": "cli-only", "gui": (), "readme": True, "note": "JSON Lines machine-readable progress events"},
     "--when-done": {"surface": "gui", "gui": ("when_done_combo",), "readme": True, "note": "Post-batch action"},
@@ -8621,6 +8678,10 @@ def main():
         except OSError as e:
             print(f"[backend-info] failed: {e}", file=sys.stderr)
             sys.exit(EXIT_INPUT_ERROR)
+
+    if getattr(args, "format_matrix", False):
+        print(json.dumps(build_format_capability_matrix(), indent=2))
+        sys.exit(EXIT_OK)
 
     if getattr(args, "register_shell", False):
         sys.exit(_install_shell_integration(uninstall=False))
