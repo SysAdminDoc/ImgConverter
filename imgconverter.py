@@ -467,6 +467,21 @@ def build_backend_info(benchmark_path: Path | None = None) -> dict[str, object]:
     return report
 
 
+def recommend_backend(file_count: int, total_bytes: int, fmt: str,
+                      preserve_metadata: bool) -> str | None:
+    """Return a calm one-line advisory or None when the default is fine."""
+    if file_count < 50:
+        return None
+    megapixels_est = total_bytes / (3 * 1024 * 1024)
+    if HAS_VIPS and not preserve_metadata and fmt in ("jpeg", "png", "webp") and megapixels_est > 500:
+        return (f"Tip: {file_count} files (~{megapixels_est:.0f} estimated MP). "
+                f"--backend vips may be faster for large images when metadata is not needed.")
+    if file_count > 500 and not HAS_EXIFTOOL:
+        return (f"Tip: {file_count} files queued. ExifTool extends metadata recovery "
+                f"(MakerNotes, GPS sub-IFDs, IPTC). Install from https://exiftool.org/")
+    return None
+
+
 def _benchmark_backends(src: Path) -> dict[str, object]:
     src = Path(src).expanduser().resolve()
     if not src.is_file():
@@ -8329,6 +8344,11 @@ def _run_cli(args):
     done_count = 0
 
     print(f"\nConverting {total} files with {args.workers} workers...\n")
+
+    advice = recommend_backend(total, scan.total_size, args.format,
+                               not args.strip_metadata)
+    if advice:
+        print(f"[advisor] {advice}\n")
 
     t0 = time.perf_counter()
 
