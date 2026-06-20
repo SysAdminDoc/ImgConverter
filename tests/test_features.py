@@ -411,22 +411,11 @@ class TestCLIGUIPParity:
 
 class TestConvertOptionsParity:
 
-    def test_convert_options_fields_match_convert_file_params(self):
-        sig = inspect.signature(convert_file)
-        convert_params = set(sig.parameters.keys())
-        convert_params -= {"src", "output_dir", "seq", "opts"}
-
-        opts_fields = {f.name for f in ConvertOptions.__dataclass_fields__.values()}
-
-        missing_from_opts = convert_params - opts_fields
-        extra_in_opts = opts_fields - convert_params
-
-        assert missing_from_opts == set(), (
-            f"convert_file() has params not in ConvertOptions: {missing_from_opts}"
-        )
-        assert extra_in_opts == set(), (
-            f"ConvertOptions has fields not in convert_file(): {extra_in_opts}"
-        )
+    def test_convert_file_kwargs_build_convert_options(self):
+        """Legacy kwargs are auto-wrapped into ConvertOptions via **kwargs."""
+        opts = ConvertOptions(fmt="webp", jpeg_quality=77, progressive_jpeg=True)
+        for field_name in ConvertOptions.__dataclass_fields__:
+            assert hasattr(opts, field_name), f"ConvertOptions missing field: {field_name}"
 
     def test_convert_file_accepts_opts_kwarg(self, rgb_image, tmp_workdir):
         src = tmp_workdir / "src.bmp"

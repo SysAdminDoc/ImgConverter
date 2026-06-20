@@ -2760,85 +2760,57 @@ def _convert_file_vips(
 def convert_file(
     src: Path,
     output_dir: Path,
-    fmt: str = "auto",
-    jpeg_quality: int = 92,
-    preserve_metadata: bool = True,
-    preserve_structure: bool = False,
-    base_dir: Path | None = None,
-    in_place: bool = False,
-    skip_existing: bool = False,
-    resize_mode: str = "none",
-    resize_value: int = 1920,
-    prefix: str = "",
-    suffix: str = "",
-    lossless_webp: bool = False,
-    progressive_jpeg: bool = False,
-    chroma_subsampling: bool = False,
-    convert_to_srgb: bool = False,
-    tiff_compression: str = "none",
-    png_compress_level: int = 6,
-    use_exiftool: bool = True,
-    name_template: str | None = None,
     seq: int = 1,
-    only_if_smaller_pct: float | None = None,
-    dpi: tuple[int, int] | None = None,
-    icc_override: str | None = None,
-    emit_xmp_sidecar: bool = False,
-    recompress_lossless: bool = False,
-    quality_mode: tuple[str, float] | None = None,  # ("target-kb", N) or ("target-psnr", DB)
-    watermark: str | None = None,
-    canvas: tuple[int, int] | None = None,
-    canvas_bg: str = "transparent",
-    tone_map: str = "none",
-    avif_speed: int = 6,
-    avif_codec: str = "auto",
-    png_lossy: bool = False,
-    backend: str = "pillow",
-    strip_fields: frozenset[str] | None = None,
     *,
     opts: "ConvertOptions | None" = None,
+    **kwargs,
 ) -> ConvertResult:
     """Convert a single image file. Thread-safe.
 
-    Accepts either individual keyword arguments (legacy) or a single
-    ``opts=ConvertOptions(...)`` object. When ``opts`` is provided,
-    its fields take precedence over positional defaults.
+    Pass ``opts=ConvertOptions(...)`` for the canonical interface. Legacy
+    keyword arguments (fmt, jpeg_quality, ...) are accepted for backward
+    compatibility and auto-wrapped into a ConvertOptions — new code should
+    use ``opts`` directly.
     """
-    if opts is not None:
-        fmt = opts.fmt
-        jpeg_quality = opts.jpeg_quality
-        preserve_metadata = opts.preserve_metadata
-        preserve_structure = opts.preserve_structure
-        base_dir = opts.base_dir
-        in_place = opts.in_place
-        skip_existing = opts.skip_existing
-        resize_mode = opts.resize_mode
-        resize_value = opts.resize_value
-        prefix = opts.prefix
-        suffix = opts.suffix
-        lossless_webp = opts.lossless_webp
-        progressive_jpeg = opts.progressive_jpeg
-        chroma_subsampling = opts.chroma_subsampling
-        convert_to_srgb = opts.convert_to_srgb
-        tiff_compression = opts.tiff_compression
-        png_compress_level = opts.png_compress_level
-        use_exiftool = opts.use_exiftool
-        name_template = opts.name_template
-        only_if_smaller_pct = opts.only_if_smaller_pct
-        dpi = opts.dpi
-        icc_override = opts.icc_override
-        emit_xmp_sidecar = opts.emit_xmp_sidecar
-        recompress_lossless = opts.recompress_lossless
-        quality_mode = opts.quality_mode
-        watermark = opts.watermark
-        canvas = opts.canvas
-        canvas_bg = opts.canvas_bg
-        tone_map = opts.tone_map
-        avif_speed = opts.avif_speed
-        avif_codec = opts.avif_codec
-        png_lossy = opts.png_lossy
-        backend = opts.backend
-        strip_fields = opts.strip_fields
+    if opts is None:
+        opts = ConvertOptions(**{
+            k: v for k, v in kwargs.items()
+            if k in ConvertOptions.__dataclass_fields__
+        })
+    fmt = opts.fmt
+    jpeg_quality = opts.jpeg_quality
+    preserve_metadata = opts.preserve_metadata
+    preserve_structure = opts.preserve_structure
+    base_dir = opts.base_dir
+    in_place = opts.in_place
+    skip_existing = opts.skip_existing
+    resize_mode = opts.resize_mode
+    resize_value = opts.resize_value
+    prefix = opts.prefix
+    suffix = opts.suffix
+    lossless_webp = opts.lossless_webp
+    progressive_jpeg = opts.progressive_jpeg
+    chroma_subsampling = opts.chroma_subsampling
+    convert_to_srgb = opts.convert_to_srgb
+    tiff_compression = opts.tiff_compression
+    png_compress_level = opts.png_compress_level
+    use_exiftool = opts.use_exiftool
+    name_template = opts.name_template
+    only_if_smaller_pct = opts.only_if_smaller_pct
+    dpi = opts.dpi
+    icc_override = opts.icc_override
+    emit_xmp_sidecar = opts.emit_xmp_sidecar
+    recompress_lossless = opts.recompress_lossless
+    quality_mode = opts.quality_mode
+    watermark = opts.watermark
+    canvas = opts.canvas
+    canvas_bg = opts.canvas_bg
+    tone_map = opts.tone_map
+    avif_speed = opts.avif_speed
+    avif_codec = opts.avif_codec
+    png_lossy = opts.png_lossy
+    backend = opts.backend
+    strip_fields = opts.strip_fields
     if backend == "vips":
         return _convert_file_vips(
             src=src,
