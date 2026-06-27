@@ -2,6 +2,17 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.3.1] — 2026-06-27
+
+### Fixed
+
+- **Multi-frame ConvertOptions parity**: `--frames all` / `--frames animate` now routes through `ConvertOptions`, so quality, resize, compression, DPI, and metadata choices are honored consistently with single-frame conversion.
+
+### Changed
+
+- Drained `ROADMAP.md` to actionable-only state and kept true blockers in `Roadmap_Blocked.md`.
+- Synced docs with local-build-only releases and Pillow-native QOI support.
+
 ## [v3.3.0] — 2026-06-19
 
 ### Improved

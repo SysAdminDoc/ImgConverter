@@ -2,7 +2,7 @@
 
 Universal image batch converter with a modern, local-first GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
 
-![Version](https://img.shields.io/badge/Version-3.3.0-blue)
+![Version](https://img.shields.io/badge/Version-3.3.1-blue)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
@@ -38,7 +38,7 @@ Most image converters get the details wrong — they strip metadata, mangle colo
 | ICO/CUR | `.ico` `.cur` | Pillow | Required |
 | JPEG XL | `.jxl` | pillow-jxl-plugin | Optional |
 | Camera RAW | `.cr2` `.cr3` `.nef` `.arw` `.dng` `.orf` `.rw2` `.raf` | rawpy/libraw | Optional |
-| QOI | `.qoi` | qoi | Optional |
+| QOI | `.qoi` | Pillow | Required |
 
 **Output formats:** JPEG, PNG, WebP, AVIF, TIFF, JPEG XL
 
@@ -48,9 +48,9 @@ Most image converters get the details wrong — they strip metadata, mangle colo
 |---|---|---|
 | `pillow-jxl-plugin` | JPEG XL input + output | `pip install pillow-jxl-plugin` |
 | `rawpy` | Camera RAW | `pip install rawpy` |
-| `qoi` | QOI input | `pip install qoi` |
 | `exiftool` | Recovers MakerNotes / GPS sub-IFDs / IPTC / sidecar XMP that Pillow drops silently | [exiftool.org](https://exiftool.org/) |
 | `watchdog` | Lower-latency filesystem events for `--watch` mode; polling remains the fallback | `pip install watchdog` |
+| `c2pa-python` | Native C2PA manifest verification before falling back to `c2patool` | `pip install c2pa-python` |
 
 Run `imgconverter --install-deps` to install all required + optional Python packages, or `pip install -r requirements.txt`. If a format-specific decoder is missing, that family is skipped gracefully and the app logs which are unavailable. `exiftool` is detected automatically when present on `PATH`; pass `--no-exiftool` to disable the tag-copy pass.
 
@@ -315,7 +315,7 @@ Source Directory          ImgConverter                 Output
   ├─ IMG_002.avif   ──→  Pillow processing      ──→    ├─ IMG_002.jpg
   ├─ shot.webp      ──→  EXIF/ICC passthrough   ──→    ├─ shot.jpg
   ├─ photo.cr2      ──→  rawpy demosaic         ──→    ├─ photo.jpg
-  └─ render.qoi     ──→  qoi decoder            ──→    └─ render.jpg
+  └─ render.qoi     ──→  Pillow QOI decoder     ──→    └─ render.jpg
 ```
 
 ## Tech Stack
@@ -323,8 +323,7 @@ Source Directory          ImgConverter                 Output
 - **[pillow-heif](https://github.com/bigcat88/pillow_heif)** — HEIC/HEIF/AVIF decoding
 - **[pillow-jxl-plugin](https://github.com/niclas-niclas/pillow-jxl-plugin)** — JPEG XL decoding (optional)
 - **[rawpy](https://github.com/letmaik/rawpy)** — Camera RAW demosaicing via libraw (optional)
-- **[qoi](https://github.com/kodonnell/qoi)** — QOI format decoding (optional)
-- **[Pillow](https://python-pillow.org/)** — image processing, WebP/TIFF/BMP/JP2/ICO decoding, output encoding
+- **[Pillow](https://python-pillow.org/)** — image processing, WebP/TIFF/BMP/JP2/ICO/QOI decoding, output encoding
 - **[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)** — GUI framework
 
 ## Known Limitations

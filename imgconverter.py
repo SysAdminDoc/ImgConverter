@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.3.0 - Universal image batch converter
+ImgConverter v3.3.1 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
 images with transparency, JPEG for photos. Preserves EXIF, ICC, and
-XMP. CLI + GUI parity. See ROADMAP.md for in-flight work.
+XMP. CLI + GUI parity. See ROADMAP.md for current planning state.
 """
 
 import multiprocessing
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.3.1"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -43,7 +43,7 @@ EXIT_DISK_FULL       = 4   # output medium ran out of space mid-run
 EXIT_CANCELLED       = 5   # user pressed Ctrl-C / Cancel button
 EXIT_TOTAL_FAILURE   = 6   # every file in batch failed
 
-# Dependency floors — see requirements.txt / ROADMAP Appendix A6 for CVE rationale.
+# Dependency floors — see requirements.txt / RESEARCH.md for CVE rationale.
 # Older versions of these expose users to known libheif / libjxl / Pillow RCEs.
 DEP_FLOORS = {
     "PIL":          ("Pillow",             "12.2.0"),
@@ -140,7 +140,7 @@ def _warn_below_floor():
                 print(
                     f"[imgconverter] WARNING: {pkg} {installed} is below the documented "
                     f"floor of {floor}. Older versions have known CVEs — see "
-                    f"ROADMAP.md Appendix A6. Run: imgconverter --install-deps",
+                    f"RESEARCH.md. Run: imgconverter --install-deps",
                     file=sys.stderr,
                 )
         except Exception:
@@ -2416,6 +2416,190 @@ def _requires_bigtiff(img: Image.Image) -> bool:
     return _estimated_raw_bytes(img) > 4 * 1024 * 1024 * 1024
 
 
+def _apply_multiframe_transforms(
+    img: Image.Image,
+    meta: dict,
+    opts: ConvertOptions,
+    result: ConvertResult,
+) -> Image.Image:
+    """Apply ConvertOptions that are safe for per-frame sequence handling."""
+    frame = img.copy()
+
+    if opts.tone_map and opts.tone_map != "none":
+        hdr_kind = _detect_hdr(frame, meta.get("icc_profile"))
+        if hdr_kind:
+            frame = _tone_map_hdr(frame, opts.tone_map)
+
+    if opts.icc_override and not opts.convert_to_srgb:
+        try:
+            profile_name = opts.icc_override.lower()
+            if profile_name in ("srgb", "srgb-v4"):
+                dst_profile = ImageCms.createProfile("sRGB")
+            else:
+                p = Path(opts.icc_override)
+                if not p.is_file():
+                    raise ValueError(f"unknown profile preset or missing .icc file: {opts.icc_override}")
+                dst_profile = ImageCms.ImageCmsProfile(str(p))
+            src_data = meta.get("icc_profile")
+            if src_data:
+                src_profile = ImageCms.ImageCmsProfile(io.BytesIO(src_data))
+                frame = ImageCms.profileToProfile(frame, src_profile, dst_profile, outputMode="RGB")
+            meta["icc_profile"] = ImageCms.ImageCmsProfile(dst_profile).tobytes()
+        except Exception as e:
+            result.warnings.append(f"icc-override failed: {e}")
+
+    if opts.convert_to_srgb and "icc_profile" in meta:
+        try:
+            src_profile = ImageCms.ImageCmsProfile(io.BytesIO(meta["icc_profile"]))
+            dst_profile = ImageCms.createProfile("sRGB")
+            frame = ImageCms.profileToProfile(frame, src_profile, dst_profile, outputMode="RGB")
+            meta["icc_profile"] = ImageCms.ImageCmsProfile(dst_profile).tobytes()
+        except Exception as e:
+            result.warnings.append(f"sRGB conversion failed: {e}")
+
+    if opts.resize_mode == "max_dim" and opts.resize_value > 0:
+        w, h = frame.size
+        if max(w, h) > opts.resize_value:
+            if w >= h:
+                new_w = opts.resize_value
+                new_h = max(1, int(h * (opts.resize_value / w)))
+            else:
+                new_h = opts.resize_value
+                new_w = max(1, int(w * (opts.resize_value / h)))
+            frame = frame.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    elif opts.resize_mode == "scale" and opts.resize_value != 100:
+        w, h = frame.size
+        factor = opts.resize_value / 100
+        frame = frame.resize(
+            (max(1, int(w * factor)), max(1, int(h * factor))),
+            Image.Resampling.LANCZOS,
+        )
+
+    if opts.canvas:
+        bg_spec = opts.canvas_bg or "transparent"
+        if bg_spec == "transparent":
+            bg = (0, 0, 0, 0)
+        elif bg_spec.startswith("#"):
+            hex_str = bg_spec.lstrip("#")
+            if len(hex_str) == 6:
+                bg = tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4)) + (255,)
+            elif len(hex_str) == 8:
+                bg = tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4, 6))
+            else:
+                bg = (0, 0, 0, 0)
+        else:
+            bg = bg_spec
+        frame = _apply_canvas(frame, opts.canvas, bg)
+
+    if opts.watermark:
+        try:
+            frame = _apply_watermark(frame, opts.watermark)
+        except Exception as e:
+            result.warnings.append(f"watermark failed: {e}")
+
+    return frame
+
+
+def _multiframe_save_kwargs(
+    frame: Image.Image,
+    fmt_pil: str,
+    meta: dict,
+    opts: ConvertOptions,
+    result: ConvertResult,
+    src: Path,
+) -> dict:
+    save_kwargs: dict = {}
+    active_strip = opts.strip_fields or frozenset()
+
+    if opts.preserve_metadata and meta and "all" not in active_strip:
+        if "exif" in meta and fmt_pil in ("JPEG", "PNG", "WEBP", "TIFF"):
+            exif_data = meta["exif"]
+            if active_strip:
+                exif_data = _strip_exif_fields(exif_data, active_strip)
+            save_kwargs["exif"] = exif_data
+        if "icc_profile" in meta:
+            save_kwargs["icc_profile"] = meta["icc_profile"]
+        if "xmp" in meta and fmt_pil in ("JPEG", "WEBP", "TIFF", "AVIF", "JXL"):
+            save_kwargs["xmp"] = meta["xmp"]
+        if active_strip:
+            result.warnings.append(
+                f"metadata: selectively stripped {', '.join(sorted(active_strip))}"
+            )
+
+    if fmt_pil == "JPEG":
+        save_kwargs["quality"] = opts.jpeg_quality
+        save_kwargs["subsampling"] = 2 if opts.chroma_subsampling else 0
+        save_kwargs["optimize"] = True
+        if opts.progressive_jpeg:
+            save_kwargs["progressive"] = True
+    elif fmt_pil == "PNG":
+        save_kwargs["optimize"] = True
+        save_kwargs["compress_level"] = opts.png_compress_level
+    elif fmt_pil == "WEBP":
+        if opts.lossless_webp:
+            save_kwargs["lossless"] = True
+        else:
+            save_kwargs["quality"] = opts.jpeg_quality
+        save_kwargs["method"] = 4
+    elif fmt_pil == "TIFF":
+        if opts.tiff_compression == "lzw":
+            save_kwargs["compression"] = "tiff_lzw"
+        elif opts.tiff_compression == "deflate":
+            save_kwargs["compression"] = "tiff_deflate"
+        if _requires_bigtiff(frame):
+            save_kwargs["big_tiff"] = True
+    elif fmt_pil == "AVIF":
+        save_kwargs["quality"] = opts.jpeg_quality
+        save_kwargs["speed"] = opts.avif_speed
+        if opts.avif_codec and opts.avif_codec != "auto":
+            save_kwargs["codec"] = opts.avif_codec
+    elif fmt_pil == "JXL":
+        save_kwargs["quality"] = opts.jpeg_quality
+        save_kwargs["effort"] = 7
+        if src.suffix.lower() in JPEG_EXTS:
+            save_kwargs["lossless_jpeg"] = True
+
+    if opts.dpi and fmt_pil in ("JPEG", "PNG", "TIFF"):
+        save_kwargs["dpi"] = opts.dpi
+
+    if opts.quality_mode and fmt_pil in ("JPEG", "WEBP", "AVIF", "JXL"):
+        mode_name, target_val = opts.quality_mode
+        best_q, _, _ = _binary_search_quality(frame, fmt_pil, target_val, mode_name, save_kwargs)
+        save_kwargs["quality"] = best_q
+
+    return save_kwargs
+
+
+def _multiframe_output_path(
+    src: Path,
+    dest_dir: Path,
+    ext: str,
+    opts: ConvertOptions,
+    seq: int,
+    size: tuple[int, int],
+) -> Path:
+    if opts.name_template:
+        applied = _apply_output_template(
+            opts.name_template, src, opts.base_dir, size[0], size[1],
+            opts.fmt, ext, seq,
+        )
+        cand = Path(applied)
+        if cand.is_absolute():
+            cand = Path(cand.name)
+        out_path = dest_dir / cand
+        try:
+            if not out_path.resolve().is_relative_to(dest_dir.resolve()):
+                out_path = dest_dir / out_path.name
+        except OSError:
+            out_path = dest_dir / out_path.name
+        if out_path.suffix.lower() != ext.lower():
+            out_path = out_path.with_suffix(ext)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        return out_path
+    stem = f"{opts.prefix}{src.stem}{opts.suffix}"
+    return dest_dir / f"{stem}.{seq:03d}{ext}"
+
+
 def _convert_animated_or_sequence(
     src: Path,
     output_dir: Path,
@@ -2425,6 +2609,7 @@ def _convert_animated_or_sequence(
     preserve_structure: bool = False,
     jpeg_quality: int = 92,
     strip_metadata: bool = False,
+    opts: ConvertOptions | None = None,
 ) -> ConvertResult:
     """Multi-frame / sequence handling.
 
@@ -2434,6 +2619,20 @@ def _convert_animated_or_sequence(
                           Falls back to first-frame-only when target can't
                           carry animation.
     """
+    if opts is None:
+        opts = ConvertOptions(
+            fmt=fmt,
+            jpeg_quality=jpeg_quality,
+            preserve_metadata=not strip_metadata,
+            preserve_structure=preserve_structure,
+            base_dir=base_dir,
+        )
+    fmt = opts.fmt
+    jpeg_quality = opts.jpeg_quality
+    preserve_structure = opts.preserve_structure
+    base_dir = opts.base_dir
+    strip_metadata = not opts.preserve_metadata
+
     t0 = time.perf_counter()
     result = ConvertResult(src=src, size_before=src.stat().st_size)
     try:
@@ -2452,25 +2651,45 @@ def _convert_animated_or_sequence(
             if not strip_metadata:
                 if "exif" in img.info:
                     meta["exif"] = img.info["exif"]
+                else:
+                    try:
+                        exif = img.getexif()
+                        if exif:
+                            meta["exif"] = exif.tobytes()
+                    except Exception:
+                        pass
                 if "icc_profile" in img.info:
                     meta["icc_profile"] = img.info["icc_profile"]
+                if xmp := img.info.get("xmp"):
+                    meta["xmp"] = xmp
+                elif xmp := img.info.get("XML:com.adobe.xmp"):
+                    meta["xmp"] = xmp
+
+            result.metadata_report = {
+                "before": _metadata_presence_from_image(img, meta, src),
+                "after": {kind: False for kind in METADATA_KINDS},
+                "dropped": [],
+                "preserve_requested": bool(opts.preserve_metadata),
+            }
 
             n = getattr(img, "n_frames", 1)
             if extract_frames or fmt_pil not in ("WEBP", "GIF", "PNG"):
                 pad_width = max(3, len(str(n)))
                 written = []
                 for i, frame in enumerate(ImageSequence.Iterator(img), start=1):
-                    seq_str = str(i).zfill(pad_width)
-                    dst = dest_dir / f"{src.stem}.{seq_str}{ext}"
-                    frame_save = frame.convert("RGB") if fmt_pil == "JPEG" else frame.copy()
-                    save_kwargs: dict = {}
-                    if fmt_pil in ("JPEG", "WEBP", "AVIF", "JXL"):
-                        save_kwargs["quality"] = jpeg_quality
-                    if not strip_metadata:
-                        if "exif" in meta and fmt_pil in ("JPEG", "PNG", "WEBP", "TIFF"):
-                            save_kwargs["exif"] = meta["exif"]
-                        if "icc_profile" in meta:
-                            save_kwargs["icc_profile"] = meta["icc_profile"]
+                    frame_meta = dict(meta)
+                    frame_save = _apply_multiframe_transforms(frame, frame_meta, opts, result)
+                    dst = _multiframe_output_path(src, dest_dir, ext, opts, i, frame_save.size)
+                    if opts.name_template is None:
+                        dst = dest_dir / f"{opts.prefix}{src.stem}{opts.suffix}.{str(i).zfill(pad_width)}{ext}"
+                    if opts.skip_existing and dst.exists():
+                        written.append(dst)
+                        continue
+                    if fmt_pil == "JPEG" and frame_save.mode in ("RGBA", "LA", "PA", "P", "CMYK"):
+                        frame_save = frame_save.convert("RGB")
+                    save_kwargs = _multiframe_save_kwargs(
+                        frame_save, fmt_pil, frame_meta, opts, result, src,
+                    )
                     frame_save.save(str(dst), fmt_pil, **save_kwargs)
                     written.append(dst)
                 result.dst = written[0] if written else None
@@ -2480,19 +2699,55 @@ def _convert_animated_or_sequence(
                     f"multi-frame: exported {len(written)} frames as {pad_width}-digit sequence"
                 )
             else:
-                frames = [f.copy() for f in ImageSequence.Iterator(img)]
+                frames = [
+                    _apply_multiframe_transforms(f, dict(meta), opts, result)
+                    for f in ImageSequence.Iterator(img)
+                ]
                 dst = dest_dir / f"{src.stem}{ext}"
+                if opts.name_template:
+                    dst = _multiframe_output_path(src, dest_dir, ext, opts, 1, frames[0].size)
+                else:
+                    dst = dest_dir / f"{opts.prefix}{src.stem}{opts.suffix}{ext}"
+                if opts.skip_existing and dst.exists():
+                    result.skipped = True
+                    result.dst = dst
+                    result.size_after = dst.stat().st_size
+                    result.elapsed = time.perf_counter() - t0
+                    return result
                 save_kwargs = {"save_all": True,
                                 "append_images": frames[1:] if len(frames) > 1 else [],
                                 "duration": img.info.get("duration", 100),
                                 "loop": img.info.get("loop", 0)}
-                if fmt_pil in ("WEBP", "AVIF", "JXL"):
-                    save_kwargs["quality"] = jpeg_quality
+                save_kwargs.update(_multiframe_save_kwargs(
+                    frames[0], fmt_pil, meta, opts, result, src,
+                ))
                 frames[0].save(str(dst), fmt_pil, **save_kwargs)
                 result.dst = dst
                 result.size_after = dst.stat().st_size
                 result.success = True
                 result.warnings.append(f"multi-frame: animated {fmt_pil} with {len(frames)} frames")
+            if opts.only_if_smaller_pct is not None and opts.only_if_smaller_pct > 0:
+                threshold_ratio = (100.0 - opts.only_if_smaller_pct) / 100.0
+                if result.size_before > 0 and (result.size_after / result.size_before) > threshold_ratio:
+                    targets = written if extract_frames or fmt_pil not in ("WEBP", "GIF", "PNG") else [result.dst]
+                    for target in targets:
+                        try:
+                            if target:
+                                target.unlink()
+                        except OSError:
+                            pass
+                    result.dst = None
+                    result.success = False
+                    result.skipped = True
+                    result.warnings.append("only-if-smaller: multi-frame output discarded, keeping original")
+            if result.dst:
+                _finalize_metadata_report(
+                    result,
+                    _metadata_presence_from_path(result.dst),
+                    opts.preserve_metadata,
+                    src=src,
+                    dst=result.dst,
+                )
     except Exception as e:
         result.error = f"multi-frame: {e}"
         if isinstance(e, OSError) and e.errno is not None:
@@ -3512,6 +3767,7 @@ class ConvertWorker(QThread):
                         preserve_structure=self.opts.preserve_structure,
                         jpeg_quality=self.opts.jpeg_quality,
                         strip_metadata=not self.opts.preserve_metadata,
+                        opts=self.opts,
                     )
                     results.append(r)
                     done += 1
@@ -9037,6 +9293,7 @@ def _run_cli(args):
                     preserve_structure=not args.no_structure,
                     jpeg_quality=args.quality,
                     strip_metadata=args.strip_metadata,
+                    opts=cli_opts,
                 )
                 if r.success:
                     ok_count += 1

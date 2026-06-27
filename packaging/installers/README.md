@@ -1,7 +1,6 @@
 # Packaging installers
 
-PyInstaller binaries (built by `.github/workflows/build.yml`) are the
-canonical install. These scripts wrap those binaries into platform-native
+Locally built PyInstaller binaries are the canonical install. These scripts wrap those binaries into platform-native
 installers when a more polished install path is wanted.
 
 ## Status
@@ -20,7 +19,7 @@ All stubs need a signing identity and platform tooling installed to
 produce shippable artifacts. Today the PyInstaller `.exe` / `.app` /
 ELF binary attached to each GitHub release is what users grab.
 
-## Why these aren't built in CI yet
+## Why these aren't shipped as native installers yet
 
 - Windows MSI signing needs an EV / Authenticode cert (~$300/yr).
   Without it, SmartScreen shows "Unknown Publisher" on every install.
@@ -41,7 +40,7 @@ Every PyInstaller release asset is accompanied by:
 - `<artifact>.dependencies.txt` — sorted `pip freeze --all` for the build.
 - `<artifact>.sbom.json` — minimal dependency SBOM with package names,
   versions, and PyPI purl values where available.
-- `<artifact>.provenance.json` — repository, commit, Actions run, runner OS,
+- `<artifact>.provenance.json` — repository, commit, build OS,
   PyInstaller args, unsigned flag, and binary hash.
 - `SHA256SUMS` — release-level checksum manifest for all uploaded binaries.
 
@@ -66,4 +65,3 @@ On each release:
 
 - [requirements.txt](../../requirements.txt) — pinned runtime floors
 - [pyproject.toml](../../pyproject.toml) — package metadata + entry point
-- [.github/workflows/build.yml](../../.github/workflows/build.yml) — CI builds

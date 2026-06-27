@@ -2,32 +2,38 @@
 
 ## Executive Summary
 
+### 2026-06-27 roadmap drain update
+
+ImgConverter v3.3.1 drained the actionable backlog from the 2026-06-19 pass. CLI bounded scheduling, dead code cleanup, animated-file set lookups, native C2PA fallback, QOI dependency removal, watch/vips regression coverage, conda-forge sha guidance, smart auto quality, watch retries, scan/shell/watch/proof/advisor/preset/duplicate/matrix/palette GUI additions, and multi-frame `ConvertOptions` parity have shipped. `ROADMAP.md` is now actionable-only with no open codeable items; true external/design/test-infrastructure blockers remain in `Roadmap_Blocked.md`.
+
+The latest functional fix is multi-frame conversion parity: `--frames all` / `--frames animate` now receives the same `ConvertOptions` object as single-frame conversion, covering quality, resize, compression, DPI, and metadata behavior, with tests for quality, resize, and EXIF preservation/stripping.
+
 ### 2026-06-19 competitive refresh (pass 2)
 
-ImgConverter v3.3.0 is the most metadata-correct open-source batch converter surveyed: 4:4:4 chroma, ICC passthrough, selective GPS/device stripping, ExifTool tag-copy, atomic writes, CLI/GUI parity tests, plugin trust gates, and release provenance artifacts. At 8,610 lines in a single file with 128 tests across a 3-OS × 4-Python CI matrix (including free-threaded 3.14t), it ships more fidelity controls than any competing OSS tool.
+ImgConverter v3.3.0 was the most metadata-correct open-source batch converter surveyed: 4:4:4 chroma, ICC passthrough, selective GPS/device stripping, ExifTool tag-copy, atomic writes, CLI/GUI parity tests, plugin trust gates, and release provenance artifacts. At 8,610 lines in a single file with 128 tests, it shipped more fidelity controls than any competing OSS tool.
 
-The prior research pass (v3.1.0 baseline) identified selective metadata stripping, Python 3.14 free-threading, post-batch actions, taskbar progress, machine-readable CLI output, perceptual dedup, RAM monitoring, and watchdog watch mode as the top 10 opportunities. **All 10 have shipped** in v3.2.0–v3.3.0. The first competitive refresh added GUI scan review, watch-folder cockpit, lossless JXL transcode, and 6 more items — all still valid and unimplemented.
+The prior research pass (v3.1.0 baseline) identified selective metadata stripping, Python 3.14 free-threading, post-batch actions, taskbar progress, machine-readable CLI output, perceptual dedup, RAM monitoring, and watchdog watch mode as the top 10 opportunities. **All 10 shipped** in v3.2.0–v3.3.0. The first competitive refresh added GUI scan review, watch-folder cockpit, proof runs, backend advice, preset bundles, duplicate review, format matrix, and command palette work; the codeable pieces are shipped as of v3.3.1.
 
 This pass focuses on three areas the prior refresh didn't cover deeply enough:
 
 1. **Security posture**: pillow-heif 1.4.0 upgraded to libheif 1.23.0 and libde265 1.1.0, covering all 18+ CVEs from the June 2026 wave. The current floor is adequate, but ongoing monitoring is needed.
-2. **CLI bounded scheduling**: The GUI uses bounded `_submit_batch()` with `max_inflight`, but the CLI (`_run_cli`) still submits all futures at once — memory pressure on 10k+ file batches.
-3. **Test coverage gaps**: Watch mode, ExifTool fidelity, and multi-frame animation have zero automated tests. The 128-test suite covers core conversion well but has structural gaps.
+2. **CLI bounded scheduling**: Fixed in v3.2/v3.3 drain work; CLI conversion now uses a bounded `max_inflight` queue.
+3. **Test coverage gaps**: Watch mode, vips, and multi-frame coverage were added. ExifTool fidelity remains blocked on a local binary plus stable fixtures.
 
 Top 5 new opportunities from this pass:
 
 1. Security floor is adequate (pillow-heif 1.4.0 bundles libheif 1.23.0 + libde265 1.1.0).
-2. CLI bounded future scheduling (parity with GUI's `_submit_batch`).
-3. Dead code cleanup: `ALLOW_INCORRECT_HEADERS` guard, `HEIF_MAX_DECODE_BYTES` unused constant.
-4. `_convert_animated_or_sequence` doesn't respect `ConvertOptions` — quality, metadata, resize all hardcoded.
-5. Pillow 13 deprecation prep: `ImageCms.ImageCmsProfile.product_name` removal (Oct 2026).
+2. CLI bounded future scheduling (shipped).
+3. Dead code cleanup: `ALLOW_INCORRECT_HEADERS` guard, `HEIF_MAX_DECODE_BYTES` unused constant (shipped).
+4. `_convert_animated_or_sequence` `ConvertOptions` parity (shipped in v3.3.1).
+5. Pillow 13 deprecation prep: no direct `product_name` / `product_info` usage found; keep checking with prerelease Pillow wheels when available.
 
 ## Product Map
 
 - **Core workflows**: drag/drop or CLI intake → recursive scan/filter → convert with fidelity controls → validate/log/report → resume/cache/watch for repeatable automation.
 - **User personas**: phone-photo users converting HEIC/AVIF; web developers generating WebP/AVIF/JXL assets; archivists preserving metadata, ICC, and provenance; sysadmins running repeatable local batches; privacy-conscious users stripping GPS/device data.
-- **Platforms and distribution**: Windows/macOS/Linux; PyQt6 GUI; argparse CLI; PyInstaller CI artifacts (unsigned); conda-forge recipe scaffold; shell integration (Windows registry, Linux .desktop).
-- **Key integrations**: Pillow 12.2+, pillow-heif 1.4/libheif 1.23.0, PyQt6 6.8+, optional rawpy/LibRaw, pillow-jxl/libjxl, qoi, ExifTool 13.55+, jpegoptim/jpegtran/pngquant, butteraugli/ffmpeg-quality-metrics, optional pyvips/libvips 8.18, watchdog 4.0+, imagehash.
+- **Platforms and distribution**: Windows/macOS/Linux; PyQt6 GUI; argparse CLI; locally built PyInstaller artifacts (unsigned); conda-forge recipe scaffold; shell integration (Windows registry, Linux .desktop).
+- **Key integrations**: Pillow 12.2+, pillow-heif 1.4/libheif 1.23.0, PyQt6 6.8+, optional rawpy/LibRaw, pillow-jxl/libjxl, ExifTool 13.55+, jpegoptim/jpegtran/pngquant, butteraugli/ffmpeg-quality-metrics, optional pyvips/libvips 8.18, watchdog 4.0+, imagehash, c2pa-python.
 
 ## Competitive Landscape
 
@@ -64,18 +70,17 @@ pillow-heif 1.4.0 updated its bundled libheif from 1.21.2 to 1.23.0 and libde265
 CVE-2026-42308 (font glyph overflow), CVE-2026-40192 (FITS decompression bomb), CVE-2026-25990 (PSD tile OOB write) all fixed. No newer CVEs at time of writing.
 
 **Pillow 13 deprecations (Oct 2026):**
-`ImageCms.ImageCmsProfile.product_name` and `product_info` will be removed. ImgConverter doesn't use these directly but should verify no transitive usage exists and add a Pillow 13 CI job when pre-release wheels ship.
+`ImageCms.ImageCmsProfile.product_name` and `product_info` will be removed. ImgConverter doesn't use these directly. Re-run the local test suite against Pillow 13 prerelease wheels when they are available.
 
 **Python 3.14 free-threading:**
-PEP 779 moves free-threaded builds to officially supported. 2.83x speedup benchmarked on image processing workloads. ImgConverter's CI already tests 3.14t successfully. The 5-10% single-thread penalty is acceptable given the parallel batch use case.
+PEP 779 moves free-threaded builds to officially supported. 2.83x speedup benchmarked on image processing workloads. Keep free-threaded Python in local release testing; the 5-10% single-thread penalty is acceptable given the parallel batch use case.
 
 **Code findings (verified):**
-- `imgconverter.py:186`: `HEIF_MAX_DECODE_BYTES` constant is defined but never used. The `set_security_limits` call on line 192 uses a pixel-count guard instead.
-- `imgconverter.py:189`: `ALLOW_INCORRECT_HEADERS` attribute check is dead code — removed in pillow-heif 1.4.0. The `hasattr` guard makes it harmless but it should be cleaned up.
-- `imgconverter.py:8292-8299`: CLI `_run_cli` submits all futures at once via `pool.submit()` in a tight loop, unlike the GUI's bounded `_submit_batch()` with `max_inflight = workers * 2`. On batches >10k files, this queues thousands of futures in memory.
-- `imgconverter.py:2359-2427`: `_convert_animated_or_sequence` hardcodes quality=92, ignores metadata, resize, strip_fields, and all ConvertOptions fields. Multi-frame output is quality-only.
-- `imgconverter.py:3471`: `animated_files` membership check uses `not in` against a list — O(n) per check. Should be a set.
-- `packaging/conda-forge/meta.yaml:12`: sha256 is a placeholder `0000...`. Won't affect users until a conda-forge PR is submitted, but it's confusing.
+- `HEIF_MAX_DECODE_BYTES` and the removed pillow-heif `ALLOW_INCORRECT_HEADERS` guard were removed.
+- CLI `_run_cli` now submits conversion futures through a bounded `max_inflight = workers * 2` queue.
+- `_convert_animated_or_sequence` now honors `ConvertOptions` for quality, resize, compression, DPI, and metadata handling.
+- `animated_files` membership checks now use a set after the multi-frame pre-pass.
+- `packaging/conda-forge/meta.yaml` keeps an explicit `REPLACE_WITH_ACTUAL_HASH_BEFORE_CONDA_FORGE_PR` placeholder plus release-time instructions.
 
 **Privacy position — strongest in category:**
 ImgConverter is the only surveyed tool offering selective metadata stripping (`--strip-gps`, `--strip-device`) that preserves copyright and color profiles. The 2026 Reddit/HEIC GPS leak incident (HackerOne #1069039 — HEIC uploads preserving GPS through re-encoding) validates this approach. Community signal from r/photography, konvrt.dev, and ExifTool forums confirms selective stripping is the #1 unmet metadata need.
@@ -85,8 +90,8 @@ ImgConverter is the only surveyed tool offering selective metadata stripping (`-
 - **Single-file deliberate**: 8,610 lines in `imgconverter.py` is intentional and works. Helper extraction has begun (`_run_sidecar_hooks`, `_write_text_atomic`). Next extraction candidate: metadata handling (presence detection, selective stripping, report generation) — currently scattered across `_open_image()`, `convert_file()`, `_metadata_presence_from_image()`, `_strip_exif_fields()`, and `_finalize_metadata_report()`.
 - **ConvertOptions boundary**: Exists and works. `convert_file()` still accepts 35 keyword args alongside `opts=` for backward compat. The dual interface is the root cause of parity drift — every new field requires updating both the dataclass and the kwargs-to-locals block (lines 2771-2805).
 - **Plugin registry**: Well-shaped for decoder/encoder/storage. Entry-point discovery (existing P2) is the natural next step. Trust-by-SHA-256 is correct for file-drop plugins.
-- **Test coverage**: 128 tests cover core conversion, CLI parsing, presets, templates, plugins, sidecars, and roundtrip well. Gaps: watch mode (0 tests), ExifTool fidelity (0 tests — blocked on test infra), animated/multi-frame conversion (0 tests), vips backend (0 tests), GUI event-loop behavior (in Roadmap_Blocked).
-- **CI matrix**: Solid. 3 OS × 4 Python + free-threaded = 13 jobs. pip-audit runs on every push. ExifTool installed on all 3 OS in CI but no test validates tag-copy output.
+- **Test coverage**: 150+ tests cover core conversion, CLI parsing, presets, templates, plugins, sidecars, roundtrip, watch-mode option forwarding, vips regressions, and multi-frame `ConvertOptions` parity. Remaining gap: ExifTool fidelity fixture coverage.
+- **Local release checks**: There is no GitHub Actions build/test pipeline. Run tests, packaging, and release verification locally before pushing or uploading artifacts.
 - **vips backend**: Correctly flagged experimental. Rejects unsupported options. metadata/resize/watermark/canvas/tone-map all explicitly unsupported. libvips 8.18's Camera RAW and UltraHDR JPEG support could expand utility but metadata parity must come first.
 
 ## Rejected Ideas
@@ -160,7 +165,7 @@ ImgConverter is the only surveyed tool offering selective metadata stripping (`-
 
 ## Ecosystem Notes
 
-- **QOI write support is native in Pillow 11.3+**: The optional `qoi` package is now only needed for QOI *input* on Pillow <11.3. Since ImgConverter's floor is Pillow 12.2, QOI write works natively. The `qoi` optional dep is still needed for QOI *decoding* (Pillow's native QOI read has been available since 9.5.0, so even read is covered). Consider dropping the `qoi` optional dependency in a future release.
+- **QOI support is native in Pillow**: Since ImgConverter's floor is Pillow 12.2, QOI read/write is covered by Pillow and the standalone `qoi` package is no longer needed.
 - **C2PA Python SDK v0.5.0**: `pip install c2pa-python` provides native signing/verification without shelling out to `c2patool`. Dual-licensed Apache 2.0/MIT. Could replace the subprocess-based `_verify_c2pa()` function for a more robust integration.
 - **Jpegli has moved to google/jpegli**: Dedicated repo, still no PyPI wheel. Access via `imagecodecs` package or subprocess wrapping of `cjpegli`/`djpegli` binaries.
 - **AVIF 1.2.0 spec** (Oct 2025): Sample transforms for >12-bit, gain map signaling for HDR. SVT-AV1 4.1 (March 2026) improved still image coding efficiency.

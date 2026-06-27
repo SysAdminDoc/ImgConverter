@@ -1631,6 +1631,65 @@ class TestMultiFrameExport:
         exported = list((out).glob("*.jpg"))
         assert len(exported) == 2
 
+    def test_extract_frames_respects_quality_option(self, tmp_workdir):
+        src = tmp_workdir / "quality.tiff"
+        frame1 = Image.effect_noise((160, 160), 80).convert("RGB")
+        frame2 = Image.effect_noise((160, 160), 90).convert("RGB")
+        frame1.save(src, save_all=True, append_images=[frame2])
+
+        high = _convert_animated_or_sequence(
+            src, tmp_workdir / "high", "jpeg", extract_frames=True,
+            opts=ConvertOptions(fmt="jpeg", jpeg_quality=96),
+        )
+        low = _convert_animated_or_sequence(
+            src, tmp_workdir / "low", "jpeg", extract_frames=True,
+            opts=ConvertOptions(fmt="jpeg", jpeg_quality=50),
+        )
+
+        assert high.success and low.success
+        assert high.size_after > low.size_after
+
+    def test_extract_frames_respects_resize_option(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "resize.tiff"
+        frame2 = Image.new("RGB", rgb_image.size, (255, 0, 0))
+        rgb_image.save(src, save_all=True, append_images=[frame2])
+
+        result = _convert_animated_or_sequence(
+            src, tmp_workdir / "out", "png", extract_frames=True,
+            opts=ConvertOptions(fmt="png", resize_mode="max_dim", resize_value=32),
+        )
+
+        assert result.success
+        with Image.open(result.dst) as out_img:
+            assert max(out_img.size) == 32
+
+    def test_extract_frames_respects_metadata_option(self, tmp_workdir):
+        src = tmp_workdir / "metadata.tiff"
+        frame = Image.new("RGB", (48, 48), (20, 80, 120))
+        exif = frame.getexif()
+        exif[0x010F] = "MultiFrameMake"
+        frame.save(
+            src,
+            save_all=True,
+            append_images=[Image.new("RGB", (48, 48), (120, 80, 20))],
+            exif=exif.tobytes(),
+        )
+
+        kept = _convert_animated_or_sequence(
+            src, tmp_workdir / "kept", "jpeg", extract_frames=True,
+            opts=ConvertOptions(fmt="jpeg", preserve_metadata=True),
+        )
+        stripped = _convert_animated_or_sequence(
+            src, tmp_workdir / "stripped", "jpeg", extract_frames=True,
+            opts=ConvertOptions(fmt="jpeg", preserve_metadata=False),
+        )
+
+        assert kept.success and stripped.success
+        with Image.open(kept.dst) as kept_img:
+            assert kept_img.getexif().get(0x010F) == "MultiFrameMake"
+        with Image.open(stripped.dst) as stripped_img:
+            assert stripped_img.getexif().get(0x010F) is None
+
 
 # ── 20. Qt event-loop accessibility and keyboard tests ─────────────────────
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "imgconverter"
-version = "3.3.0"
+version = "3.3.1"
 description = "Universal image batch converter (PyQt6 GUI + CLI) with metadata, ICC, and HDR fidelity."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,7 +31,7 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: Graphics Conversion",
 ]
 dependencies = [
-    # Floors pinned to close documented CVE matrix — see ROADMAP.md Appendix A6.
+    # Floors pinned to close the documented CVE matrix in RESEARCH.md.
     "Pillow>=12.2.0",
     "pillow-heif>=1.4.0",
     "PyQt6>=6.8",
