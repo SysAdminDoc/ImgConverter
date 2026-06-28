@@ -71,8 +71,6 @@ ImgConverter is a local-first Python 3.10+ PyQt6/Pillow batch image converter wi
 
 ### Project evidence
 - README.md
-- CLAUDE.md
-- AGENTS.md
 - CHANGELOG.md
 - ROADMAP.md
 - Roadmap_Blocked.md
