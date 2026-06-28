@@ -37,3 +37,11 @@ def rgba_image():
     d = ImageDraw.Draw(img)
     d.ellipse([10, 10, 90, 90], fill=(200, 100, 50, 200))
     return img
+
+
+@pytest.fixture(autouse=True)
+def isolated_batch_history(monkeypatch, tmp_path):
+    """Keep persistent batch-history tests away from the real user cache."""
+    import imgconverter
+
+    monkeypatch.setattr(imgconverter, "BATCH_HISTORY_PATH", tmp_path / "batch-history.json")

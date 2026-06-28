@@ -1,5 +1,5 @@
 {% set name = "imgconverter" %}
-{% set version = "3.3.3" %}
+{% set version = "3.3.4" %}
 
 package:
   name: {{ name|lower }}

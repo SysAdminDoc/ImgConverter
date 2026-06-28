@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.3.3 - Universal image batch converter
+ImgConverter v3.3.4 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.3.3"
+APP_VERSION = "3.3.4"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -1132,7 +1132,7 @@ def _run_exiftool_copy(src: Path, dst: Path,
 _CLI_ONLY = any(a in sys.argv for a in ("--input", "-i", "--files", "--support-bundle",
                                          "--backend-info", "--backend-benchmark", "--format-matrix",
                                          "--install-deps", "--version", "--list-presets",
-                                         "--list-plugins", "--help", "-h"))
+                                         "--list-plugins", "--history", "--help", "-h"))
 try:
     from PyQt6.QtCore import (
         Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QUrl,
@@ -4027,6 +4027,9 @@ USER_CACHE_DIR = Path.home() / ".cache" / "imgconverter"
 USER_CONFIG_DIR = Path.home() / ".imgconverter"
 USER_PRESET_DIR = USER_CONFIG_DIR / "presets"
 USER_LOG_PATH = USER_CACHE_DIR / "imgconverter.log"
+BATCH_HISTORY_PATH = USER_CACHE_DIR / "batch-history.json"
+BATCH_HISTORY_SCHEMA = 1
+BATCH_HISTORY_LIMIT = 200
 
 # QSettings shape version — bump when on-disk settings layout changes so the
 # migration in _maybe_migrate_settings() runs once on startup.
@@ -4265,6 +4268,222 @@ def _redact_text(value: str) -> str:
     for token, replacement in _redaction_replacements().items():
         text = text.replace(token, replacement)
     return text
+
+
+def _redact_history_path(value: str | Path | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        raw = Path(value)
+        text = _redact_text(str(raw))
+        if raw.is_absolute() and text == str(raw):
+            return f"<path>{os.sep}{raw.name}" if raw.name else "<path>"
+        return text
+    except Exception:
+        return _redact_text(str(value))
+
+
+def _load_batch_history() -> list[dict]:
+    try:
+        if not BATCH_HISTORY_PATH.is_file():
+            return []
+        data = json.loads(BATCH_HISTORY_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            records = data.get("records", [])
+        elif isinstance(data, list):
+            records = data
+        else:
+            records = []
+        return [r for r in records if isinstance(r, dict)]
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        _diag_log(f"batch history load failed: {e}", level="WARNING")
+        return []
+
+
+def _write_batch_history(records: list[dict]) -> None:
+    trimmed = list(records)[-BATCH_HISTORY_LIMIT:]
+    payload = {
+        "schema_version": BATCH_HISTORY_SCHEMA,
+        "records": trimmed,
+    }
+    BATCH_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _write_text_atomic(
+        BATCH_HISTORY_PATH,
+        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+    )
+
+
+def _batch_history_payload() -> dict[str, object]:
+    return {
+        "schema_version": BATCH_HISTORY_SCHEMA,
+        "path": _redact_history_path(BATCH_HISTORY_PATH),
+        "records": _load_batch_history(),
+    }
+
+
+def _append_batch_history(record: dict) -> tuple[bool, str | None]:
+    try:
+        records = _load_batch_history()
+        records.append(record)
+        _write_batch_history(records)
+        return True, None
+    except OSError as e:
+        _diag_log(f"batch history write failed: {e}", level="WARNING")
+        return False, str(e)
+
+
+def _update_batch_history_artifact(record_id: str | None, artifact: str, path: str | Path) -> bool:
+    if not record_id or artifact not in {"report", "support_bundle"}:
+        return False
+    try:
+        records = _load_batch_history()
+        for record in reversed(records):
+            if record.get("id") == record_id:
+                record.setdefault("artifacts", {})[artifact] = _redact_history_path(path)
+                from datetime import datetime, timezone
+                record["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                _write_batch_history(records)
+                return True
+    except OSError as e:
+        _diag_log(f"batch history artifact update failed: {e}", level="WARNING")
+    return False
+
+
+def _metadata_mode_from_flags(strip_all: bool, strip_gps: bool = False, strip_device: bool = False) -> str:
+    if strip_all:
+        return "strip_all"
+    if strip_gps and strip_device:
+        return "strip_gps_device"
+    if strip_gps:
+        return "strip_gps"
+    if strip_device:
+        return "strip_device"
+    return "preserve"
+
+
+def _clean_history_options(options: dict) -> dict:
+    cleaned: dict[str, object] = {}
+    for key, value in options.items():
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, Path):
+            cleaned[key] = _redact_history_path(value)
+        elif isinstance(value, dict):
+            nested = _clean_history_options(value)
+            if nested:
+                cleaned[key] = nested
+        elif isinstance(value, (list, tuple, set)):
+            cleaned[key] = [
+                _redact_text(str(v)) if isinstance(v, str) else v
+                for v in value
+                if v not in (None, "")
+            ]
+        elif isinstance(value, str):
+            cleaned[key] = _redact_text(value)[:500]
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
+def _build_batch_history_record(
+    *,
+    surface: str,
+    results: list[ConvertResult],
+    options: dict,
+    preset_name: str | None = None,
+    wall_seconds: float | None = None,
+    report_path: str | Path | None = None,
+    support_bundle_path: str | Path | None = None,
+) -> dict:
+    from datetime import datetime, timezone
+    import uuid
+
+    converted = sum(1 for r in results if r.success)
+    skipped = sum(1 for r in results if r.skipped)
+    failed = sum(1 for r in results if not r.success and not r.skipped)
+    bytes_before = sum(max(0, int(r.size_before or 0)) for r in results)
+    bytes_after = sum(max(0, int(r.size_after or 0)) for r in results if r.success)
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return {
+        "id": f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}",
+        "timestamp": timestamp,
+        "app_version": APP_VERSION,
+        "surface": surface,
+        "preset": preset_name or "Manual",
+        "options": _clean_history_options(options),
+        "counts": {
+            "total": len(results),
+            "converted": converted,
+            "skipped": skipped,
+            "failed": failed,
+            "failure_count": failed,
+        },
+        "bytes": {
+            "before": bytes_before,
+            "after": bytes_after,
+            "delta": bytes_before - bytes_after,
+        },
+        "timing": {
+            "wall_seconds": round(float(wall_seconds or 0.0), 3),
+        },
+        "artifacts": {
+            "report": _redact_history_path(report_path),
+            "support_bundle": _redact_history_path(support_bundle_path),
+        },
+        "privacy": {
+            "source_images_stored": False,
+            "source_paths_stored": False,
+            "full_private_paths_stored": False,
+        },
+    }
+
+
+def _cli_history_options(args, resize_mode: str, resize_value: int) -> dict:
+    resize = f"{resize_mode}:{resize_value}" if resize_mode != "none" else None
+    icc = getattr(args, "icc", None)
+    if icc and str(icc).lower() != "srgb":
+        icc = "custom"
+    return {
+        "format": args.format,
+        "quality": int(args.quality),
+        "workers": int(args.workers),
+        "recursive": bool(args.recursive),
+        "preserve_structure": not bool(args.no_structure),
+        "in_place": bool(args.in_place),
+        "skip_existing": bool(args.skip_existing),
+        "metadata_mode": _metadata_mode_from_flags(
+            bool(args.strip_metadata),
+            bool(getattr(args, "strip_gps", False)),
+            bool(getattr(args, "strip_device", False)),
+        ),
+        "resize": resize,
+        "frames": getattr(args, "frames", "first"),
+        "backend": getattr(args, "backend", "pillow"),
+        "progressive": bool(args.progressive),
+        "chroma_420": bool(args.chroma_420),
+        "lossless": bool(args.lossless),
+        "srgb": bool(args.srgb),
+        "tiff_compression": args.tiff_compression,
+        "png_level": int(args.png_level),
+        "png_lossy": bool(getattr(args, "png_lossy", False)),
+        "xmp_sidecar": bool(getattr(args, "xmp_sidecar", False)),
+        "recompress": bool(getattr(args, "recompress", False)),
+        "icc": icc,
+        "watermark": bool(getattr(args, "watermark", None)),
+        "canvas": getattr(args, "canvas", None),
+        "dpi": getattr(args, "dpi", None),
+        "target_kb": getattr(args, "target_kb", None),
+        "target_psnr": getattr(args, "target_psnr", None),
+        "only_if_smaller": getattr(args, "only_if_smaller", None),
+        "use_cache": bool(getattr(args, "use_cache", False)),
+        "resume": bool(getattr(args, "resume", False)),
+        "sidecar_history": bool(getattr(args, "sidecar_history", False)),
+        "verify_quality": bool(getattr(args, "verify_quality", False)),
+        "when_done": getattr(args, "when_done", "nothing"),
+        "prefix_set": bool(args.prefix),
+        "suffix_set": bool(args.suffix),
+        "template_set": bool(getattr(args, "template", None)),
+    }
 
 
 def _tail_text(path: Path, max_lines: int = 200, max_bytes: int = 128_000) -> str:
@@ -4968,6 +5187,124 @@ class PluginTrustDialog(QDialog):
         self._refresh()
 
 
+class BatchHistoryDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Batch History")
+        self.resize(920, 460)
+        self._records: list[dict] = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        self.status_label = QLabel("Loading batch history...")
+        self.status_label.setObjectName("dialogHint")
+        self.status_label.setAccessibleName("Batch history summary")
+        layout.addWidget(self.status_label)
+
+        self.empty_label = QLabel("No completed batch sessions have been recorded yet.")
+        self.empty_label.setObjectName("emptyState")
+        self.empty_label.setWordWrap(True)
+        self.empty_label.setVisible(False)
+        layout.addWidget(self.empty_label)
+
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels([
+            "Started", "Surface", "Preset", "Options", "Result", "Bytes", "Artifacts",
+        ])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAccessibleName("Batch session history")
+        self.table.setAccessibleDescription("Read-only completed batch summaries without source paths")
+        _configure_inventory_table(self.table)
+        layout.addWidget(self.table)
+
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(8)
+        self.refresh_btn = QPushButton("Refresh")
+        self.close_btn = QPushButton("Close")
+        self.refresh_btn.setObjectName("secondaryBtn")
+        self.close_btn.setObjectName("secondaryBtn")
+        self.refresh_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        buttons.addWidget(self.refresh_btn)
+        buttons.addStretch()
+        buttons.addWidget(self.close_btn)
+        layout.addLayout(buttons)
+
+        self.refresh_btn.clicked.connect(self._refresh)
+        self.close_btn.clicked.connect(self.accept)
+        for button, name, desc in (
+            (self.refresh_btn, "Refresh batch history", "Reload local batch history from disk"),
+            (self.close_btn, "Close batch history", "Close the batch history dialog"),
+        ):
+            button.setAccessibleName(name)
+            button.setAccessibleDescription(desc)
+            button.setStatusTip(desc)
+        self._refresh()
+
+    def _refresh(self):
+        self._records = list(reversed(_load_batch_history()))
+        self.table.setRowCount(len(self._records))
+        for row_idx, record in enumerate(self._records):
+            values = self._row_values(record)
+            for col_idx, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(value)
+                self.table.setItem(row_idx, col_idx, item)
+        self.table.resizeColumnsToContents()
+        total = len(self._records)
+        failed = sum(1 for r in self._records if r.get("counts", {}).get("failed", 0))
+        if total == 0:
+            text = "No completed batch sessions recorded."
+        elif failed:
+            text = f"{total} batch session{'s' if total != 1 else ''}; {failed} with failures."
+        else:
+            text = f"{total} completed batch session{'s' if total != 1 else ''}."
+        self.status_label.setText(text)
+        self.empty_label.setVisible(total == 0)
+        self.table.setEnabled(total > 0)
+
+    def _row_values(self, record: dict) -> list[str]:
+        counts = record.get("counts", {}) if isinstance(record.get("counts"), dict) else {}
+        byte_info = record.get("bytes", {}) if isinstance(record.get("bytes"), dict) else {}
+        options = record.get("options", {}) if isinstance(record.get("options"), dict) else {}
+        artifacts = record.get("artifacts", {}) if isinstance(record.get("artifacts"), dict) else {}
+        option_bits = [
+            f"fmt={options.get('format', 'auto')}",
+            f"q={options.get('quality', '-')}",
+            f"workers={options.get('workers', '-')}",
+        ]
+        if options.get("resize"):
+            option_bits.append(f"resize={options.get('resize')}")
+        if options.get("metadata_mode") and options.get("metadata_mode") != "preserve":
+            option_bits.append(str(options.get("metadata_mode")))
+        result = (
+            f"{counts.get('converted', 0)} converted, "
+            f"{counts.get('skipped', 0)} skipped, "
+            f"{counts.get('failed', counts.get('failure_count', 0))} failed"
+        )
+        bytes_text = (
+            f"{_fmt_size(int(byte_info.get('before', 0) or 0))} -> "
+            f"{_fmt_size(int(byte_info.get('after', 0) or 0))}"
+        )
+        artifact_bits = []
+        if artifacts.get("report"):
+            artifact_bits.append(f"report: {artifacts['report']}")
+        if artifacts.get("support_bundle"):
+            artifact_bits.append(f"support: {artifacts['support_bundle']}")
+        return [
+            str(record.get("timestamp", "")),
+            str(record.get("surface", "")),
+            str(record.get("preset", "Manual")),
+            ", ".join(option_bits),
+            result,
+            bytes_text,
+            "; ".join(artifact_bits) if artifact_bits else "None",
+        ]
+
+
 WATCH_PROFILES_FILE = USER_CONFIG_DIR / "watch-profiles.json"
 
 
@@ -5605,6 +5942,7 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("paste_btn",           "Paste image",              "Paste an image from clipboard as input"),
     ("manage_plugins_btn",  "Plugin trust",             "Review plugin trust status and trust or untrust plugin files"),
     ("watch_folders_btn",   "Watch folder profiles",    "Manage local hot-folder conversion profiles"),
+    ("history_btn",         "Batch history",            "Review redacted local batch session history"),
     ("auto_open_chk",       "Auto-open output",         "Automatically open the output folder when conversion finishes"),
     ("when_done_combo",     "When done action",         "Choose what happens after conversion finishes"),
     ("open_output_btn",     "Open output folder",       "Open the most recent output folder"),
@@ -5634,6 +5972,8 @@ class MainWindow(QMainWindow):
         self._results: list[ConvertResult] = []
         self._convert_start_time: float = 0.0
         self._last_ok_dst: Path | None = None
+        self._last_history_id: str | None = None
+        self._current_preset_name = "Manual"
         self._ok_count = 0
         self._skip_count = 0
         self._fail_count = 0
@@ -5677,6 +6017,9 @@ class MainWindow(QMainWindow):
             {"key": "watch", "name": "Watch Folder Profiles",
              "tooltip": "Manage hot-folder watch profiles",
              "status": ""},
+            {"key": "history", "name": "Batch History",
+             "tooltip": "Review local batch history",
+             "status": ""},
             {"key": "shell", "name": "Shell Integration",
              "tooltip": "Manage context-menu integration",
              "status": ""},
@@ -5708,6 +6051,7 @@ class MainWindow(QMainWindow):
             "paste": self._paste_clipboard,
             "plugins": self._open_plugin_trust,
             "watch": self._open_watch_folders,
+            "history": self._open_batch_history,
             "shell": self._open_shell_integration,
             "duplicates": self._check_duplicates,
             "export_log": self._export_log,
@@ -6539,6 +6883,14 @@ class MainWindow(QMainWindow):
         self.watch_folders_btn.clicked.connect(self._open_watch_folders)
         secondary_actions.addWidget(self.watch_folders_btn)
 
+        self.history_btn = QPushButton("History")
+        self.history_btn.setObjectName("secondaryBtn")
+        self.history_btn.setToolTip("Review redacted local batch history")
+        self.history_btn.setAccessibleName("Batch history")
+        self.history_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        self.history_btn.clicked.connect(self._open_batch_history)
+        secondary_actions.addWidget(self.history_btn)
+
         self.shell_btn = QPushButton("Shell")
         self.shell_btn.setObjectName("secondaryBtn")
         self.shell_btn.setToolTip("Manage file-manager context-menu integration")
@@ -6849,7 +7201,7 @@ class MainWindow(QMainWindow):
             "exclude_edit", "max_file_size_edit",
             "xmp_sidecar_chk", "recompress_chk", "only_if_smaller_chk",
             "only_if_smaller_spin", "target_kb_spin", "png_lossy_chk",
-            "paste_btn", "manage_plugins_btn", "watch_folders_btn",
+            "paste_btn", "manage_plugins_btn", "watch_folders_btn", "history_btn",
             "auto_open_chk", "when_done_combo",
             "export_support_btn",
         ]:
@@ -6881,6 +7233,12 @@ class MainWindow(QMainWindow):
         profiles = _load_watch_profiles()
         enabled = sum(1 for p in profiles if p.get("enabled"))
         self._log(f"Watch folder profiles: {len(profiles)} total, {enabled} enabled")
+
+    def _open_batch_history(self):
+        dialog = BatchHistoryDialog(self)
+        dialog.exec()
+        records = _load_batch_history()
+        self._log(f"Batch history: {len(records)} completed session{'s' if len(records) != 1 else ''}")
 
     def _open_shell_integration(self):
         dialog = ShellIntegrationDialog(self)
@@ -7049,6 +7407,7 @@ class MainWindow(QMainWindow):
         if not preset:
             return
         _apply_preset_to_gui_controls(self, preset)
+        self._current_preset_name = name
         self._log(f"Preset applied: {name}")
 
     # ── In-place toggle ──
@@ -7250,6 +7609,7 @@ class MainWindow(QMainWindow):
                 self._log(f"[ERROR] Could not export CSV report: {e}")
                 self._set_workflow_state("Export failed", "Choose a writable folder and try again.")
                 return
+            _update_batch_history_artifact(self._last_history_id, "report", Path(path))
             self._log(f"CSV report exported to {path}")
 
     def _support_settings_snapshot(self) -> dict[str, object]:
@@ -7288,6 +7648,19 @@ class MainWindow(QMainWindow):
             },
         }
 
+    def _batch_history_options_snapshot(self) -> dict[str, object]:
+        snapshot = dict(self._support_settings_snapshot())
+        snapshot.update({
+            "prefix_set": bool(self.prefix_edit.text()),
+            "suffix_set": bool(self.suffix_edit.text()),
+            "template_set": bool(self.template_edit.text()),
+            "watermark": bool(self.watermark_edit.text()),
+            "canvas": self.canvas_edit.text() or None,
+            "icc": "sRGB" if self.icc_edit.text().strip().lower() == "srgb"
+                   else ("custom" if self.icc_edit.text().strip() else None),
+        })
+        return snapshot
+
     def _export_support_bundle(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Export Support Bundle", str(Path.home() / "imgconverter_support.zip"),
@@ -7301,6 +7674,7 @@ class MainWindow(QMainWindow):
                 settings_snapshot=self._support_settings_snapshot(),
                 recent_log=self.log_view.toPlainText(),
             )
+            _update_batch_history_artifact(self._last_history_id, "support_bundle", written)
             self._log(f"Support bundle exported to {written}")
             self._set_workflow_state("Support bundle exported", "Redacted diagnostics were saved.")
         except OSError as e:
@@ -7491,6 +7865,7 @@ class MainWindow(QMainWindow):
             resize_mode = "max_dim" if self.resize_combo.currentIndex() == 0 else "scale"
 
         self._results = []
+        self._last_history_id = None
         self._ok_count = 0
         self._skip_count = 0
         self._fail_count = 0
@@ -7681,6 +8056,21 @@ class MainWindow(QMainWindow):
             self._set_workflow_state("Review log", summary)
         else:
             self._set_workflow_state("Complete", summary)
+
+        history_record = _build_batch_history_record(
+            surface="gui",
+            results=list(results),
+            options=self._batch_history_options_snapshot(),
+            preset_name=self._current_preset_name,
+            wall_seconds=wall_time,
+        )
+        history_ok, history_error = _append_batch_history(history_record)
+        if history_ok:
+            self._last_history_id = str(history_record["id"])
+            self._log(f"[history] Recorded batch session {self._last_history_id}.")
+        else:
+            self._last_history_id = None
+            self._log(f"[WARN] Could not record batch history: {history_error}")
 
         # Screen reader announcement (Qt 6.8+)
         try:
@@ -8089,6 +8479,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--support-bundle", type=str, default=None, metavar="PATH",
                    help="Write a redacted diagnostic zip with app, platform, dependency, "
                         "optional-tool, plugin trust, settings schema, and recent log data, then exit")
+    p.add_argument("--history", action="store_true",
+                   help="Print redacted local batch-session history as JSON, then exit")
     p.add_argument("--preset", type=str, default=None, metavar="NAME",
                    help="Load preset from ~/.imgconverter/presets/NAME.json before applying other flags")
     p.add_argument("--list-presets", action="store_true",
@@ -8248,6 +8640,7 @@ CLI_FLAG_PARITY = {
     "--template": {"surface": "gui", "gui": ("template_edit",), "readme": True, "note": "Filename template"},
     "--report": {"surface": "cli-only", "gui": ("export_csv_btn",), "readme": True, "note": "CLI JSON report; GUI has CSV export"},
     "--support-bundle": {"surface": "admin-only", "gui": ("export_support_btn",), "readme": True, "note": "Redacted diagnostics export"},
+    "--history": {"surface": "gui", "gui": ("history_btn",), "readme": True, "note": "Redacted local batch history"},
     "--preset": {"surface": "gui", "gui": ("_preset_btn",), "readme": True, "note": "Preset loader"},
     "--list-presets": {"surface": "cli-only", "gui": ("_preset_btn",), "readme": True, "note": "CLI preset inventory; GUI preset menu"},
     "--export-preset": {"surface": "cli-only", "gui": (), "readme": True, "note": "Export preset as shareable bundle"},
@@ -9361,6 +9754,7 @@ def _run_cli(args):
         print(f"[advisor] {advice}\n")
 
     t0 = time.perf_counter()
+    all_results: list[ConvertResult] = []
 
     # Multi-frame handling — extract or animate when source has >1 frame.
     if getattr(args, "frames", "first") in ("all", "animate"):
@@ -9384,11 +9778,11 @@ def _run_cli(args):
                 else:
                     fail_count += 1
                     print(f"[FAIL*] {f.name}: {r.error}")
+                all_results.append(r)
             animated_set = set(animated_files)
             scan.files = [f for f in scan.files if f not in animated_set]
             total = len(scan.files)
 
-    all_results: list[ConvertResult] = []
     # Free-threaded Python: ThreadPoolExecutor scales linearly with cores.
     # Older Python: ProcessPoolExecutor bypasses the GIL at fork cost.
     Executor = ThreadPoolExecutor
@@ -9603,6 +9997,7 @@ def _run_cli(args):
     }, enabled=_progress_on)
 
     # JSON report — structured per-file output for CI / Ansible / cron pipelines.
+    report_path = None
     if getattr(args, "report", None):
         report = {
             "summary": {
@@ -9639,8 +10034,23 @@ def _run_cli(args):
         try:
             _write_text_atomic(Path(args.report), json.dumps(report, indent=2, default=str) + "\n")
             print(f"\n[report] wrote {args.report}")
+            report_path = Path(args.report)
         except OSError as e:
             print(f"[report] failed to write {args.report}: {e}", file=sys.stderr)
+
+    history_record = _build_batch_history_record(
+        surface="cli",
+        results=all_results,
+        options=_cli_history_options(args, resize_mode, resize_value),
+        preset_name=getattr(args, "preset", None) or "Manual",
+        wall_seconds=wall_time,
+        report_path=report_path,
+    )
+    history_ok, history_error = _append_batch_history(history_record)
+    if history_ok:
+        print(f"[history] recorded batch {history_record['id']}")
+    else:
+        print(f"[history] failed to record batch: {history_error}", file=sys.stderr)
 
     if fail_count == total and total > 0:
         exit_code = EXIT_TOTAL_FAILURE
@@ -9679,6 +10089,10 @@ def main():
             print(f"  {name}")
             for k, v in sorted(payload.items()):
                 print(f"      {k}: {v}")
+        sys.exit(EXIT_OK)
+
+    if getattr(args, "history", False):
+        print(json.dumps(_batch_history_payload(), indent=2, sort_keys=True, default=str))
         sys.exit(EXIT_OK)
 
     if getattr(args, "export_preset", None):

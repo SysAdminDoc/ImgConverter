@@ -1,8 +1,8 @@
 # ImgConverter Roadmap
 
-**Current version:** v3.3.3 (released 2026-06-28) · **Roadmap revision:** 2026-06-28
+**Current version:** v3.3.4 (released 2026-06-28) · **Roadmap revision:** 2026-06-28
 
-The v3.3.1 drain cleared the prior queue. Current actionable items are listed below.
+The v3.3.4 drain cleared the current queue. No active actionable items remain.
 
 ## Working Rules
 
@@ -13,11 +13,4 @@ The v3.3.1 drain cleared the prior queue. Current actionable items are listed be
 
 ## Research-Driven Additions
 
-### P1
-
-- [ ] P1 - Add persistent batch session history
-  Why: Competitors expose actionable past-session history, while ImgConverter only has per-output sidecar history and exportable reports; users cannot review previous batch totals without saved reports.
-  Evidence: Dinky session history, `README.md`, `imgconverter.py:9435`
-  Touches: `imgconverter.py`, `tests/test_features.py`, `README.md`
-  Acceptance: Completed GUI and CLI batches append a redacted local history record with timestamp, preset/options summary, counts, bytes before/after, failure count, and report/support-bundle pointers; GUI exposes a read-only history dialog; CLI can print history without source images or full private paths.
-  Complexity: M
+None.

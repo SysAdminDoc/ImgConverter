@@ -2,6 +2,12 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.3.4] — 2026-06-28
+
+### Added
+
+- **Persistent batch session history**: Completed GUI and CLI batches now append redacted local history records with option summaries, counts, byte totals, failure counts, and report/support-bundle pointers. The GUI exposes a read-only Batch History dialog, and `--history` prints the same redacted history as JSON.
+
 ## [v3.3.3] — 2026-06-28
 
 ### Fixed

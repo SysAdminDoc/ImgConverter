@@ -643,6 +643,146 @@ class TestWhenDoneCLI:
         assert "skipped 'close'" in capsys.readouterr().err
 
 
+class TestBatchHistory:
+
+    def test_history_record_summarizes_without_source_paths(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setenv("TEMP", str(tmp_workdir))
+        src = tmp_workdir / "private" / "photo.bmp"
+        dst = tmp_workdir / "out" / "photo.png"
+        result = ConvertResult(
+            src=src,
+            dst=dst,
+            success=True,
+            size_before=4096,
+            size_after=2048,
+            elapsed=0.25,
+        )
+
+        record = imgconverter._build_batch_history_record(
+            surface="cli",
+            results=[result],
+            options={"format": "png", "quality": 92, "workers": 2},
+            preset_name="Archive",
+            wall_seconds=0.5,
+            report_path=tmp_workdir / "reports" / "batch.json",
+            support_bundle_path=tmp_workdir / "support.zip",
+        )
+        blob = json.dumps(record)
+
+        assert record["counts"] == {
+            "total": 1,
+            "converted": 1,
+            "skipped": 0,
+            "failed": 0,
+            "failure_count": 0,
+        }
+        assert record["bytes"]["before"] == 4096
+        assert record["bytes"]["after"] == 2048
+        assert record["privacy"]["source_paths_stored"] is False
+        assert str(src) not in blob
+        assert "photo.bmp" not in blob
+        assert record["artifacts"]["report"].startswith("<temp>")
+        assert record["artifacts"]["support_bundle"].startswith("<temp>")
+
+    def test_history_append_recovers_corrupt_file_and_updates_artifact(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setenv("TEMP", str(tmp_workdir))
+        history_path = imgconverter.BATCH_HISTORY_PATH
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history_path.write_text("{not json", encoding="utf-8")
+        record = imgconverter._build_batch_history_record(
+            surface="gui",
+            results=[
+                ConvertResult(
+                    src=tmp_workdir / "a.bmp",
+                    dst=tmp_workdir / "out" / "a.png",
+                    success=True,
+                    size_before=100,
+                    size_after=80,
+                )
+            ],
+            options={"format": "png", "quality": 90},
+        )
+
+        ok, error = imgconverter._append_batch_history(record)
+        assert ok is True
+        assert error is None
+        assert len(imgconverter._load_batch_history()) == 1
+
+        updated = imgconverter._update_batch_history_artifact(
+            record["id"],
+            "support_bundle",
+            tmp_workdir / "support.zip",
+        )
+        records = imgconverter._load_batch_history()
+
+        assert updated is True
+        assert records[0]["artifacts"]["support_bundle"].startswith("<temp>")
+
+    def test_cli_conversion_appends_redacted_history(self, rgb_image, tmp_workdir):
+        import imgconverter
+
+        src = tmp_workdir / "photo.bmp"
+        out = tmp_workdir / "out"
+        report = tmp_workdir / "history-report.json"
+        rgb_image.save(src)
+
+        args = _build_parser().parse_args([
+            "--input", str(src),
+            "--output", str(out),
+            "--format", "png",
+            "--report", str(report),
+        ])
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        records = imgconverter._load_batch_history()
+        blob = json.dumps(records)
+
+        assert exc.value.code == EXIT_OK
+        assert len(records) == 1
+        assert records[0]["surface"] == "cli"
+        assert records[0]["counts"]["converted"] == 1
+        assert records[0]["artifacts"]["report"]
+        assert str(src) not in blob
+        assert "photo.bmp" not in blob
+
+    def test_cli_history_prints_redacted_payload(self, tmp_workdir, monkeypatch, capsys):
+        import imgconverter
+
+        record = imgconverter._build_batch_history_record(
+            surface="cli",
+            results=[
+                ConvertResult(
+                    src=tmp_workdir / "private" / "source.bmp",
+                    dst=tmp_workdir / "out" / "source.png",
+                    success=True,
+                    size_before=64,
+                    size_after=32,
+                )
+            ],
+            options={"format": "png", "quality": 92},
+            report_path=tmp_workdir / "report.json",
+        )
+        ok, _error = imgconverter._append_batch_history(record)
+        assert ok is True
+
+        monkeypatch.setattr(sys, "argv", ["imgconverter", "--history"])
+        with pytest.raises(SystemExit) as exc:
+            imgconverter.main()
+        output = capsys.readouterr().out
+        payload = json.loads(output)
+
+        assert exc.value.code == EXIT_OK
+        assert payload["schema_version"] == imgconverter.BATCH_HISTORY_SCHEMA
+        assert payload["records"][0]["id"] == record["id"]
+        assert str(tmp_workdir) not in output
+        assert "source.bmp" not in output
+
+
 class TestShellIntegration:
     """Verify generated shell entries route files through --files."""
 
@@ -1793,6 +1933,35 @@ class TestQtAccessibility:
 
         assert w.workflow_state.text() == "Export failed"
         assert "Could not export log" in w.log_view.toPlainText()
+
+    def test_batch_history_dialog_is_read_only(self, tmp_workdir):
+        import imgconverter
+
+        record = imgconverter._build_batch_history_record(
+            surface="gui",
+            results=[
+                ConvertResult(
+                    src=tmp_workdir / "source.bmp",
+                    dst=tmp_workdir / "out" / "source.png",
+                    success=True,
+                    size_before=256,
+                    size_after=128,
+                )
+            ],
+            options={"format": "png", "quality": 92, "workers": 4},
+            preset_name="Manual",
+        )
+        ok, _error = imgconverter._append_batch_history(record)
+        assert ok is True
+
+        dialog = imgconverter.BatchHistoryDialog(self.window)
+        try:
+            assert dialog.table.rowCount() == 1
+            assert dialog.table.item(0, 1).text() == "gui"
+            assert dialog.table.editTriggers() == imgconverter.QTableWidget.EditTrigger.NoEditTriggers
+        finally:
+            dialog.close()
+            dialog.deleteLater()
 
     def test_export_csv_writes_report(self, tmp_workdir, monkeypatch):
         import imgconverter

@@ -2,7 +2,7 @@
 
 Universal image batch converter with a modern, local-first GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
 
-![Version](https://img.shields.io/badge/Version-3.3.3-blue)
+![Version](https://img.shields.io/badge/Version-3.3.4-blue)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
@@ -62,6 +62,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **AVIF output** — next-gen AV1 codec via Pillow's native encoder, best compression ratio
 - **JPEG XL output** — next-gen JPEG replacement via pillow-jxl-plugin (quality + effort tuning)
 - **CSV export** — structured conversion report with per-file status, sizes, timing, and warnings
+- **Persistent batch history** — completed GUI and CLI batches append a redacted local summary with counts, byte deltas, options, and report/support-bundle pointers
 - **CLI mode** — headless conversion via `--input` flag with full feature parity (all GUI options exposed as flags)
 - **Plugin trust manager** — GUI inventory for trusted, changed, missing, and untrusted file or package entry-point plugins without executing them
 - **In-place conversion** — convert next to the original and delete the source file
@@ -135,7 +136,7 @@ Toggle **"Convert in place after verified output"** to save output next to each 
 
 Enable **"Skip files that already have output"** to resume interrupted batches without re-converting.
 
-The log panel shows per-file results with size before/after and conversion time. Logs can be exported to a text file, CSV report, or redacted support bundle. CSV and JSON reports include metadata/provenance presence checks for EXIF, ICC, XMP, IPTC, MakerNotes, and C2PA; warnings call out fields that were detected before conversion but missing afterward. Support bundles include app/platform/dependency/tool diagnostics and recent redacted logs, but never include source images.
+The log panel shows per-file results with size before/after and conversion time. Logs can be exported to a text file, CSV report, or redacted support bundle. Completed batches are also recorded in the local Batch History dialog without source images or full private paths. CSV and JSON reports include metadata/provenance presence checks for EXIF, ICC, XMP, IPTC, MakerNotes, and C2PA; warnings call out fields that were detected before conversion but missing afterward. Support bundles include app/platform/dependency/tool diagnostics and recent redacted logs, but never include source images.
 
 ## CLI Usage
 
@@ -180,6 +181,9 @@ python imgconverter.py --version
 
 # Export redacted diagnostics for support
 python imgconverter.py --support-bundle ./imgconverter_support.zip
+
+# Print redacted local batch history
+python imgconverter.py --history
 ```
 
 **CLI flags:**
@@ -211,6 +215,7 @@ python imgconverter.py --support-bundle ./imgconverter_support.zip
 | `--template STR` | Output filename template with tokens (overrides prefix/suffix). Tokens: `{stem}` `{ext}` `{fmt}` `{src_dir}` `{rel_dir}` `{width}` `{height}` `{date[:FMT]}` `{seq[:###]}`. Example: `--template '{rel_dir}/{stem}_{width}x{height}'` |
 | `--report PATH` | Write structured per-file JSON report after conversion, including metadata/provenance before/after flags |
 | `--support-bundle PATH` | Write a redacted diagnostic zip, then exit |
+| `--history` | Print redacted local batch-session history as JSON, then exit |
 | `--preset NAME` | Load a built-in or `~/.imgconverter/presets/NAME.json` preset before applying other flags |
 | `--list-presets` | List built-in and user presets, then exit |
 | `--export-preset NAME PATH` | Export a preset as a shareable JSON bundle with metadata and CLI equivalent |
