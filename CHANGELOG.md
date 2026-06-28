@@ -2,6 +2,12 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.3.2] — 2026-06-28
+
+### Fixed
+
+- **SDK-only C2PA verification**: C2PA-marked sources now run provenance verification when `c2pa-python` is installed even if the `c2patool` binary is absent, while preserving the existing `c2patool` fallback.
+
 ## [v3.3.1] — 2026-06-27
 
 ### Fixed

@@ -1,6 +1,6 @@
 # ImgConverter Roadmap
 
-**Current version:** v3.3.1 (released 2026-06-27) · **Roadmap revision:** 2026-06-28
+**Current version:** v3.3.2 (released 2026-06-28) · **Roadmap revision:** 2026-06-28
 
 The v3.3.1 drain cleared the prior queue. Current actionable items are listed below.
 
@@ -14,13 +14,6 @@ The v3.3.1 drain cleared the prior queue. Current actionable items are listed be
 ## Research-Driven Additions
 
 ### P0
-
-- [ ] P0 - Verify C2PA through `c2pa-python` when `c2patool` is absent
-  Why: SDK-only installs currently detect C2PA markers but skip verification because `_finalize_metadata_report()` gates verification on `C2PATOOL_PATH`.
-  Evidence: `imgconverter.py:308`, `imgconverter.py:2335`, C2PA 2.4 specification
-  Touches: `imgconverter.py`, `tests/test_sidecars.py`
-  Acceptance: With `HAS_C2PA_PYTHON=True` and `C2PATOOL_PATH=None`, a C2PA-marked source calls `_verify_c2pa()` and records `metadata_report["c2pa_verification"]`; fallback behavior with only `c2patool` still works.
-  Complexity: S
 
 - [ ] P0 - Hash-pin trusted package entry-point plugins
   Why: File plugins are content-hash pinned, but entry-point plugins are trusted by package/version only, so a same-version reinstall can change executable plugin code without a changed trust status.

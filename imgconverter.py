@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.3.1 - Universal image batch converter
+ImgConverter v3.3.2 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.3.1"
+APP_VERSION = "3.3.2"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -2333,7 +2333,7 @@ def _finalize_metadata_report(result: ConvertResult, after: dict[str, bool],
     dropped = [kind for kind in METADATA_KINDS if before.get(kind) and not after.get(kind)]
 
     c2pa_result = None
-    if before.get("c2pa") and C2PATOOL_PATH and src:
+    if before.get("c2pa") and src and (HAS_C2PA_PYTHON or C2PATOOL_PATH):
         c2pa_result = _verify_c2pa(src)
 
     result.metadata_report = {

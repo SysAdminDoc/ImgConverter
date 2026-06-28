@@ -3,7 +3,16 @@ import json
 
 import pytest
 
-from imgconverter import _build_parser, _run_cli, convert_file, EXIT_OK, METADATA_KINDS
+import imgconverter
+from imgconverter import (
+    _build_parser,
+    _finalize_metadata_report,
+    _run_cli,
+    ConvertResult,
+    convert_file,
+    EXIT_OK,
+    METADATA_KINDS,
+)
 
 
 def test_live_photo_mov_paired_through_conversion(rgb_image, tmp_workdir):
@@ -65,6 +74,93 @@ def test_metadata_report_records_provenance_drop(rgb_image, tmp_workdir):
     assert metadata["after"]["c2pa"] is False
     assert "c2pa" in metadata["dropped"]
     assert any("metadata dropped: c2pa" in w for w in data["files"][0]["warnings"])
+
+
+def test_c2pa_sdk_only_verifier_runs_without_c2patool(tmp_workdir, monkeypatch):
+    src = tmp_workdir / "sdk-only.jpg"
+    src.write_bytes(b"fake-image-with-c2pa-marker")
+    called = []
+
+    def fake_verify(path):
+        called.append(path)
+        return {"status": "verified", "manifest_count": 1}
+
+    monkeypatch.setattr(imgconverter, "HAS_C2PA_PYTHON", True)
+    monkeypatch.setattr(imgconverter, "C2PATOOL_PATH", None)
+    monkeypatch.setattr(imgconverter, "_verify_c2pa", fake_verify)
+    result = ConvertResult(src=src, size_before=src.stat().st_size)
+    result.metadata_report = {
+        "before": {**{kind: False for kind in METADATA_KINDS}, "c2pa": True},
+    }
+
+    _finalize_metadata_report(
+        result,
+        {kind: False for kind in METADATA_KINDS},
+        preserve_metadata=True,
+        src=src,
+    )
+
+    assert called == [src]
+    assert result.metadata_report["c2pa_verification"] == {
+        "status": "verified",
+        "manifest_count": 1,
+    }
+
+
+def test_c2pa_tool_fallback_still_verifies_without_sdk(tmp_workdir, monkeypatch):
+    src = tmp_workdir / "tool-only.jpg"
+    src.write_bytes(b"fake-image-with-c2pa-marker")
+    called = []
+
+    def fake_verify(path):
+        called.append(path)
+        return {"status": "invalid", "error": "test"}
+
+    monkeypatch.setattr(imgconverter, "HAS_C2PA_PYTHON", False)
+    monkeypatch.setattr(imgconverter, "C2PATOOL_PATH", "c2patool")
+    monkeypatch.setattr(imgconverter, "_verify_c2pa", fake_verify)
+    result = ConvertResult(src=src, size_before=src.stat().st_size)
+    result.metadata_report = {
+        "before": {**{kind: False for kind in METADATA_KINDS}, "c2pa": True},
+    }
+
+    _finalize_metadata_report(
+        result,
+        {kind: False for kind in METADATA_KINDS},
+        preserve_metadata=True,
+        src=src,
+    )
+
+    assert called == [src]
+    assert result.metadata_report["c2pa_verification"] == {
+        "status": "invalid",
+        "error": "test",
+    }
+
+
+def test_c2pa_verification_skips_when_no_verifier(tmp_workdir, monkeypatch):
+    src = tmp_workdir / "unverified.jpg"
+    src.write_bytes(b"fake-image-with-c2pa-marker")
+
+    def fail_verify(path):
+        raise AssertionError(f"unexpected verification for {path}")
+
+    monkeypatch.setattr(imgconverter, "HAS_C2PA_PYTHON", False)
+    monkeypatch.setattr(imgconverter, "C2PATOOL_PATH", None)
+    monkeypatch.setattr(imgconverter, "_verify_c2pa", fail_verify)
+    result = ConvertResult(src=src, size_before=src.stat().st_size)
+    result.metadata_report = {
+        "before": {**{kind: False for kind in METADATA_KINDS}, "c2pa": True},
+    }
+
+    _finalize_metadata_report(
+        result,
+        {kind: False for kind in METADATA_KINDS},
+        preserve_metadata=True,
+        src=src,
+    )
+
+    assert "c2pa_verification" not in result.metadata_report
 
 
 def test_adjacent_xmp_sidecar_ingested(rgb_image, tmp_workdir):
