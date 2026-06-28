@@ -2,6 +2,12 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.3.3] — 2026-06-28
+
+### Fixed
+
+- **Entry-point plugin trust pinning**: Package entry-point plugins now store and verify a digest of installed module and distribution metadata files, so same-version package code changes are reported as changed and skipped until re-trusted.
+
 ## [v3.3.2] — 2026-06-28
 
 ### Fixed

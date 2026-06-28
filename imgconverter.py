@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.3.2 - Universal image batch converter
+ImgConverter v3.3.3 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.3.2"
+APP_VERSION = "3.3.3"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -691,20 +691,96 @@ def _plugin_trust_status(py: Path, records: dict[str, dict]) -> tuple[str, str]:
     return "trusted", digest
 
 
+def _entrypoint_module_name(value: str) -> str:
+    return str(value).split(":", 1)[0].split("[", 1)[0].strip()
+
+
+def _entrypoint_distribution_digest(ep) -> str:
+    """Stable digest for the package files that can affect an entry-point plugin."""
+    dist = getattr(ep, "dist", None)
+    files = list(getattr(dist, "files", None) or []) if dist else []
+    module_name = _entrypoint_module_name(getattr(ep, "value", ""))
+    if not dist or not files or not module_name:
+        return ""
+
+    module_path = module_name.replace(".", "/")
+    root_name = module_name.split(".", 1)[0]
+    selected = []
+    for file_ref in files:
+        rel = str(file_ref).replace("\\", "/")
+        lower = rel.lower()
+        if "__pycache__" in lower or lower.endswith((".pyc", ".pyo")):
+            continue
+        filename = rel.rsplit("/", 1)[-1]
+        is_module_file = (
+            rel == f"{module_path}.py"
+            or rel.startswith(f"{module_path}/")
+            or rel == f"{root_name}.py"
+            or rel.startswith(f"{root_name}/")
+        )
+        is_record_file = ".dist-info/" in rel and filename in {
+            "RECORD",
+            "METADATA",
+            "entry_points.txt",
+        }
+        if is_module_file or is_record_file:
+            selected.append(file_ref)
+
+    if not selected:
+        selected = [
+            file_ref for file_ref in files
+            if str(file_ref).replace("\\", "/").lower().endswith(".py")
+            and "__pycache__" not in str(file_ref).replace("\\", "/").lower()
+        ]
+    if not selected:
+        return ""
+
+    import hashlib
+    h = hashlib.sha256()
+    for file_ref in sorted(selected, key=lambda p: str(p).replace("\\", "/")):
+        rel = str(file_ref).replace("\\", "/")
+        h.update(rel.encode("utf-8", "replace"))
+        h.update(b"\0")
+        try:
+            located = Path(dist.locate_file(file_ref))
+            if located.is_file():
+                digest = _file_sha256(located)
+                size = located.stat().st_size
+            else:
+                file_hash = getattr(file_ref, "hash", None)
+                digest = str(file_hash.value) if file_hash else "missing"
+                size = getattr(file_ref, "size", "") or ""
+        except OSError:
+            digest = "unreadable"
+            size = ""
+        h.update(str(digest).encode("utf-8", "replace"))
+        h.update(b"\0")
+        h.update(str(size).encode("ascii", "replace"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
 def _trust_plugin(ref: str | Path) -> tuple[bool, str]:
     ref_str = str(ref)
     if ref_str.startswith("ep:"):
         records = _load_plugin_trust()
         for ep_info in _discover_entrypoint_plugins():
             if ep_info["trust_key"] == ref_str:
+                digest = ep_info.get("sha256", "")
+                if not digest:
+                    return False, f"[plugins] trust failed: no package digest for {ep_info['name']}"
                 records[ref_str] = {
                     "package": ep_info["package"],
                     "version": ep_info["version"],
                     "module": ep_info["module"],
+                    "sha256": digest,
                     "trusted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
                 _write_plugin_trust(records)
-                return True, f"[plugins] trusted entry-point {ep_info['name']} ({ep_info['package']}=={ep_info['version']})"
+                return True, (
+                    f"[plugins] trusted entry-point {ep_info['name']} "
+                    f"({ep_info['package']}=={ep_info['version']} {digest[:12]})"
+                )
         return False, f"[plugins] no entry-point found matching {ref_str}"
     try:
         py = _resolve_plugin_ref(ref)
@@ -803,7 +879,7 @@ def get_plugin_trust_rows() -> list[dict]:
             "path": ep_info["module"],
             "trust_ref": ep_info["trust_key"],
             "status": status,
-            "hash_prefix": "",
+            "hash_prefix": str(ep_info.get("sha256", ""))[:12],
             "reason": detail,
         })
     return rows
@@ -829,6 +905,7 @@ def _discover_entrypoint_plugins() -> list[dict]:
                 "version": ver,
                 "module": ep.value,
                 "trust_key": f"ep:{pkg}=={ver}:{ep.name}",
+                "sha256": _entrypoint_distribution_digest(ep),
             })
     except Exception:
         pass
@@ -842,7 +919,13 @@ def _entrypoint_trust_status(ep_info: dict, records: dict[str, dict]) -> tuple[s
         return "untrusted", f"run --trust-plugin {key} to trust this package plugin"
     if record.get("version") != ep_info["version"]:
         return "changed", f"package updated from {record.get('version')} to {ep_info['version']}"
-    return "trusted", f"{ep_info['package']}=={ep_info['version']}"
+    current_digest = str(ep_info.get("sha256", ""))
+    trusted_digest = str(record.get("sha256", ""))
+    if not current_digest:
+        return "changed", "package digest unavailable; re-audit before loading"
+    if trusted_digest != current_digest:
+        return "changed", "package content hash changed; re-audit before loading"
+    return "trusted", f"{ep_info['package']}=={ep_info['version']} {current_digest[:12]}"
 
 
 def _load_plugins() -> list[str]:

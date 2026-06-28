@@ -1,6 +1,7 @@
 """Plugin trust-gate regression tests."""
 
 import sys
+from pathlib import Path
 
 from PIL import Image
 
@@ -111,6 +112,7 @@ def test_entrypoint_plugin_rows_can_be_trusted_by_trust_ref(tmp_workdir, monkeyp
         "version": "1.2.3",
         "module": "imgconverter_demo:register",
         "trust_key": "ep:imgconverter-demo==1.2.3:demo",
+        "sha256": "a" * 64,
     }
 
     monkeypatch.setattr(imgconverter, "_plugin_dir", lambda: plugin_dir)
@@ -124,10 +126,84 @@ def test_entrypoint_plugin_rows_can_be_trusted_by_trust_ref(tmp_workdir, monkeyp
 
     ok, msg = imgconverter._trust_plugin(rows[0]["trust_ref"])
     assert ok, msg
-    assert ep_info["trust_key"] in imgconverter._load_plugin_trust()
+    trust_record = imgconverter._load_plugin_trust()[ep_info["trust_key"]]
+    assert trust_record["sha256"] == ep_info["sha256"]
 
     rows = imgconverter.get_plugin_trust_rows()
     assert rows[0]["status"] == "trusted"
+    assert rows[0]["hash_prefix"] == "a" * 12
+
+
+def test_entrypoint_distribution_digest_tracks_module_changes(tmp_workdir):
+    import imgconverter
+
+    package_file = tmp_workdir / "imgconverter_demo.py"
+    package_file.write_text("def register(opts):\n    return None\n", encoding="utf-8")
+    record_file = tmp_workdir / "imgconverter_demo-1.2.3.dist-info" / "RECORD"
+    record_file.parent.mkdir()
+    record_file.write_text("imgconverter_demo.py,,\n", encoding="utf-8")
+
+    class FakeDist:
+        name = "imgconverter-demo"
+        version = "1.2.3"
+        files = [
+            Path("imgconverter_demo.py"),
+            Path("imgconverter_demo-1.2.3.dist-info/RECORD"),
+        ]
+
+        def locate_file(self, file_ref):
+            return tmp_workdir / str(file_ref)
+
+    class FakeEntryPoint:
+        name = "demo"
+        value = "imgconverter_demo:register"
+        dist = FakeDist()
+
+    first_digest = imgconverter._entrypoint_distribution_digest(FakeEntryPoint())
+    package_file.write_text("def register(opts):\n    return {'encoders': []}\n", encoding="utf-8")
+    second_digest = imgconverter._entrypoint_distribution_digest(FakeEntryPoint())
+
+    assert len(first_digest) == 64
+    assert len(second_digest) == 64
+    assert first_digest != second_digest
+
+
+def test_entrypoint_same_version_digest_change_blocks_load(tmp_workdir, monkeypatch):
+    import imgconverter
+
+    plugin_dir = tmp_workdir / "plugins"
+    plugin_dir.mkdir()
+    marker = tmp_workdir / "entrypoint-loaded.txt"
+    ep_info = {
+        "name": "demo",
+        "package": "imgconverter-demo",
+        "version": "1.2.3",
+        "module": "imgconverter_demo:register",
+        "trust_key": "ep:imgconverter-demo==1.2.3:demo",
+        "sha256": "1" * 64,
+    }
+
+    monkeypatch.setattr(imgconverter, "_plugin_dir", lambda: plugin_dir)
+    monkeypatch.setattr(imgconverter, "_discover_entrypoint_plugins", lambda: [ep_info])
+
+    ok, msg = imgconverter._trust_plugin(ep_info["trust_key"])
+    assert ok, msg
+    assert imgconverter.get_plugin_trust_rows()[0]["status"] == "trusted"
+
+    changed_ep = {**ep_info, "sha256": "2" * 64}
+    monkeypatch.setattr(imgconverter, "_discover_entrypoint_plugins", lambda: [changed_ep])
+
+    def fail_import(_name):
+        marker.write_text("imported", encoding="utf-8")
+        raise AssertionError("changed entry-point plugin should not be imported")
+
+    monkeypatch.setattr(imgconverter.importlib, "import_module", fail_import)
+    rows = imgconverter.get_plugin_trust_rows()
+
+    assert rows[0]["status"] == "changed"
+    assert "content hash changed" in rows[0]["reason"]
+    assert imgconverter._load_plugins() == []
+    assert not marker.exists()
 
 
 def test_trusted_plugin_registers_decoder_encoder_and_storage(tmp_workdir, monkeypatch):
