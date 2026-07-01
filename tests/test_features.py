@@ -18,11 +18,13 @@ from imgconverter import (
     _build_parser,
     _build_quality_mode,
     _convert_animated_or_sequence,
+    _estimate_output_size,
     _load_queue_state,
     _load_watch_profiles,
     _install_shell_integration,
     _parse_canvas,
     _run_cli,
+    _ssimulacra2_score,
     build_cli_parity_matrix,
     CLI_FLAG_PARITY,
     _validate_cli_args,
@@ -1263,6 +1265,33 @@ class TestQualityTargeting:
         )
         assert result.success
         assert any("quality-mode" in w for w in result.warnings)
+
+    def test_ssimulacra2_score_identical_images(self):
+        """Identical images should score 100."""
+        img = Image.new("RGB", (64, 64), (128, 64, 200))
+        assert _ssimulacra2_score(img, img) == 100.0
+
+    def test_ssimulacra2_score_size_mismatch(self):
+        """Different-sized images return 0."""
+        a = Image.new("RGB", (64, 64), (128, 64, 200))
+        b = Image.new("RGB", (32, 32), (128, 64, 200))
+        assert _ssimulacra2_score(a, b) == 0.0
+
+    def test_ssimulacra2_score_tiny_image(self):
+        """Images smaller than 8px return 0 without crashing."""
+        img = Image.new("RGB", (4, 4), (128, 64, 200))
+        assert _ssimulacra2_score(img, img) == 0.0
+
+    def test_estimate_output_size_known_formats(self):
+        """Known formats use their documented compression factors."""
+        assert _estimate_output_size(10000, "jpeg") == 8000
+        assert _estimate_output_size(10000, "avif") == 5000
+        assert _estimate_output_size(10000, "jxl") == 4500
+        assert _estimate_output_size(10000, "png") == 12000
+
+    def test_estimate_output_size_unknown_format(self):
+        """Unknown format falls back to 1.0 factor."""
+        assert _estimate_output_size(10000, "xyz") == 10000
 
 
 # ── 7. Only-if-smaller ────────────────────────────────────────────────────────

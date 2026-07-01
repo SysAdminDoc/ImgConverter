@@ -90,3 +90,23 @@ def test_output_validation_catches_truncated_write(rgb_image, tmp_workdir, monke
 
     assert not result.success
     assert "size" in result.error.lower()
+
+
+def test_zero_byte_file_fails_gracefully(tmp_workdir):
+    """A zero-byte file should fail with a clear error, not crash."""
+    src = tmp_workdir / "empty.jpg"
+    src.write_bytes(b"")
+    out_dir = tmp_workdir / "out"
+    result = convert_file(src, out_dir, fmt="png")
+    assert not result.success
+    assert result.error
+
+
+def test_1x1_pixel_converts_to_all_formats(tmp_workdir):
+    """1x1 pixel images must convert without crashing."""
+    from PIL import Image as PILImage
+    src = tmp_workdir / "tiny.bmp"
+    PILImage.new("RGB", (1, 1), (42, 42, 42)).save(src)
+    for fmt in ["jpeg", "png", "webp"]:
+        result = convert_file(src, tmp_workdir / f"out_{fmt}", fmt=fmt)
+        assert result.success, f"1x1 -> {fmt} failed: {result.error}"

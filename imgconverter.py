@@ -3893,24 +3893,27 @@ class _ThumbnailLoader(QThread):
 
 
 def _set_process_priority_low():
-    if sys.platform == "win32":
-        import ctypes
-        BELOW_NORMAL = 0x00004000
-        ctypes.windll.kernel32.SetPriorityClass(
-            ctypes.windll.kernel32.GetCurrentProcess(), BELOW_NORMAL)
-    else:
-        try:
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            BELOW_NORMAL = 0x00004000
+            ctypes.windll.kernel32.SetPriorityClass(
+                ctypes.windll.kernel32.GetCurrentProcess(), BELOW_NORMAL)
+        else:
             os.nice(10)
-        except OSError:
-            pass
+    except OSError:
+        pass
 
 
 def _restore_process_priority():
-    if sys.platform == "win32":
-        import ctypes
-        NORMAL = 0x00000020
-        ctypes.windll.kernel32.SetPriorityClass(
-            ctypes.windll.kernel32.GetCurrentProcess(), NORMAL)
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            NORMAL = 0x00000020
+            ctypes.windll.kernel32.SetPriorityClass(
+                ctypes.windll.kernel32.GetCurrentProcess(), NORMAL)
+    except OSError:
+        pass
 
 
 class ConvertWorker(QThread):
