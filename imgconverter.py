@@ -3663,10 +3663,20 @@ def convert_file(
                 img, out_fmt, target_val, mode_name, save_kwargs,
             )
             save_kwargs["quality"] = best_q
-            result.warnings.append(
+            target_met = True
+            if mode_name == "target-kb" and best_sz > 0:
+                if best_sz / 1024.0 > target_val:
+                    target_met = False
+            elif mode_name in ("target-psnr", "target-ssimulacra2"):
+                if best_metric < target_val:
+                    target_met = False
+            msg = (
                 f"quality-mode {mode_name}: q={best_q}, "
                 f"size={best_sz}B, metric={best_metric:.2f}"
             )
+            if not target_met:
+                msg += f" (target {target_val} not achieved at q={best_q})"
+            result.warnings.append(msg)
         plugin_save_options = None
         if plugin_encoder is not None:
             plugin_save_options = dict(save_kwargs)
