@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.3.4 - Universal image batch converter
+ImgConverter v3.4.0 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -334,7 +334,8 @@ def _verify_c2pa_sdk(path: Path) -> dict[str, object] | None:
                 am = manifests.get(active, {})
                 claim_gen = am.get("claim_generator")
         state = reader.get_validation_state()
-        reader.close()
+        if hasattr(reader, "close"):
+            reader.close()
         if state is None:
             status = "not-verified"
         else:
@@ -2217,9 +2218,10 @@ def _tone_map_hdr(img: "Image.Image", curve: str) -> "Image.Image":
         raise RuntimeError(
             "numpy is required for --tone-map. Install it: pip install numpy"
         )
+    is_16bit = img.mode in ("I;16", "I;16B", "I;16L", "I")
     rgb = img.convert("RGB")
     arr = np.asarray(rgb, dtype=np.float64)
-    max_val = 65535.0 if arr.dtype.itemsize > 1 or arr.max() > 255 else 255.0
+    max_val = 65535.0 if is_16bit or arr.max() > 255 else 255.0
     arr = arr / max_val
     if curve == "clip":
         out = np.clip(arr, 0.0, 1.0)
@@ -2272,6 +2274,8 @@ def _ssimulacra2_score(a: "Image.Image", b: "Image.Image") -> float:
             "Install it: pip install ssimulacra2"
         )
     if a.size != b.size:
+        return 0.0
+    if min(a.size) < 8:
         return 0.0
     orig = np.asarray(a.convert("RGB"), dtype=np.float64)
     dist = np.asarray(b.convert("RGB"), dtype=np.float64)
@@ -2536,7 +2540,7 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
     if _file_contains_marker(src, b"c2pa"):
         meta["c2pa"] = True
 
-    if suffix in HEIC_EXTS and HAS_HEIF:
+    if suffix in HEIC_EXTS:
         try:
             heif_file = pillow_heif.open_heif(str(src))
             bd = getattr(heif_file, "bit_depth", None)
@@ -3899,6 +3903,14 @@ def _set_process_priority_low():
             os.nice(10)
         except OSError:
             pass
+
+
+def _restore_process_priority():
+    if sys.platform == "win32":
+        import ctypes
+        NORMAL = 0x00000020
+        ctypes.windll.kernel32.SetPriorityClass(
+            ctypes.windll.kernel32.GetCurrentProcess(), NORMAL)
 
 
 class ConvertWorker(QThread):
@@ -6081,7 +6093,7 @@ class MainWindow(QMainWindow):
         self._scan_result: ScanResult | None = None
         self._worker: ConvertWorker | None = None
         self._results: list[ConvertResult] = []
-        self._result_dst_by_src: dict[str, Path] = {}
+        self._result_dst_by_src: dict[str, Path] = {}  # keyed by str(src_path)
         self._convert_start_time: float = 0.0
         self._last_ok_dst: Path | None = None
         self._last_history_id: str | None = None
@@ -7093,7 +7105,7 @@ class MainWindow(QMainWindow):
         scroll_layout.addWidget(self._review_toggle)
 
         self._review_table = QTableWidget(0, 7)
-        self._review_table.setHorizontalHeaderLabels(["", self.tr("File"), self.tr("Format"), self.tr("Size"), self.tr("Output"), self.tr("Est. Output"), self.tr("Warnings")])
+        self._review_table.setHorizontalHeaderLabels([self.tr("Preview"), self.tr("File"), self.tr("Format"), self.tr("Size"), self.tr("Output"), self.tr("Est. Output"), self.tr("Warnings")])
         self._review_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self._review_table.setColumnWidth(0, 52)
         self._review_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -7166,6 +7178,8 @@ class MainWindow(QMainWindow):
         log_filter_bar.setSpacing(4)
         self._log_filter_edit = QLineEdit()
         self._log_filter_edit.setPlaceholderText(self.tr("Filter log (Ctrl+F)…"))
+        self._log_filter_edit.setToolTip(self.tr("Filter log output (Ctrl+F)"))
+        self._log_filter_edit.setAccessibleName(self.tr("Log filter"))
         self._log_filter_edit.setClearButtonEnabled(True)
         self._log_filter_edit.textChanged.connect(self._apply_log_filter)
         log_filter_bar.addWidget(self._log_filter_edit, 1)
@@ -7174,6 +7188,9 @@ class MainWindow(QMainWindow):
 
         log_find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         log_find_shortcut.activated.connect(lambda: self._log_filter_edit.setFocus())
+
+        esc_shortcut = QShortcut(QKeySequence("Escape"), self)
+        esc_shortcut.activated.connect(lambda: self._stop() if self._worker and self._worker.isRunning() else None)
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
@@ -7282,6 +7299,7 @@ class MainWindow(QMainWindow):
                     break
 
             thumb_item = QTableWidgetItem()
+            thumb_item.setData(Qt.ItemDataRole.UserRole, str(f))
             self._review_table.setItem(i, 0, thumb_item)
             self._review_table.setRowHeight(i, 52)
 
@@ -7328,8 +7346,8 @@ class MainWindow(QMainWindow):
         for row in sorted(rows):
             item = self._review_table.item(row, 1)
             if item:
-                src_name = item.text()
-                dst = self._result_dst_by_src.get(src_name)
+                src_path = item.toolTip()
+                dst = self._result_dst_by_src.get(src_path)
                 if dst and dst.exists():
                     urls.append(QUrl.fromLocalFile(str(dst)))
         if urls:
@@ -7339,11 +7357,15 @@ class MainWindow(QMainWindow):
             drag.setMimeData(mime)
             drag.exec(Qt.DropAction.CopyAction)
 
-    def _on_thumbnail_ready(self, row: int, pixmap):
-        if row < self._review_table.rowCount():
+    def _on_thumbnail_ready(self, idx: int, pixmap):
+        path_str = str(self._thumb_loader._files[idx]) if self._thumb_loader else None
+        if not path_str:
+            return
+        for row in range(self._review_table.rowCount()):
             item = self._review_table.item(row, 0)
-            if item:
+            if item and item.data(Qt.ItemDataRole.UserRole) == path_str:
                 item.setIcon(QIcon(pixmap))
+                break
 
     def _set_workflow_state(self, state: str, message: str | None = None, tone: str | None = None):
         if hasattr(self, "workflow_state"):
@@ -7398,6 +7420,8 @@ class MainWindow(QMainWindow):
     def _log(self, msg: str):
         line = msg if msg else "​"
         self._log_lines.append(line)
+        if len(self._log_lines) > 5000:
+            self._log_lines = self._log_lines[-5000:]
         filt = self._log_filter_edit.text().lower() if hasattr(self, "_log_filter_edit") else ""
         if not filt or filt in line.lower():
             self.log_view.appendPlainText(line)
@@ -7722,6 +7746,27 @@ class MainWindow(QMainWindow):
             self.avif_speed_spin.setVisible(is_avif)
             self.avif_codec_label.setVisible(is_avif)
             self.avif_codec_combo.setVisible(is_avif)
+
+        self._refresh_review_table_format()
+
+    def _refresh_review_table_format(self):
+        if not hasattr(self, "_review_table") or self._review_table.rowCount() == 0:
+            return
+        fmt = self._fmt_values[self.fmt_combo.currentIndex()] if hasattr(self, "_fmt_values") else "auto"
+        ext_map = {"jpeg": "JPEG", "png": "PNG", "webp": "WebP",
+                   "avif": "AVIF", "tiff": "TIFF", "jxl": "JXL", "auto": "Auto"}
+        out_label = ext_map.get(fmt, fmt.upper())
+        for row in range(self._review_table.rowCount()):
+            out_item = self._review_table.item(row, 4)
+            if out_item:
+                out_item.setText(out_label)
+            size_item = self._review_table.item(row, 3)
+            est_item = self._review_table.item(row, 5)
+            if size_item and est_item:
+                orig_size = size_item.data(Qt.ItemDataRole.UserRole) or 0
+                est = _estimate_output_size(orig_size, fmt)
+                est_item.setText(_fmt_size(est))
+                est_item.setData(Qt.ItemDataRole.UserRole, est)
 
     # ── Resize controls ──
     def _gui_strip_fields(self) -> frozenset[str]:
@@ -8171,7 +8216,7 @@ class MainWindow(QMainWindow):
         self._results.append(result)
         if result.success and result.dst:
             self._last_ok_dst = result.dst
-            self._result_dst_by_src[result.src.name] = result.dst
+            self._result_dst_by_src[str(result.src)] = result.dst
 
         # Disk-full auto-stop: check structured error_code (locale-independent).
         import errno as _errno
@@ -8222,6 +8267,7 @@ class MainWindow(QMainWindow):
 
     def _on_convert_done(self, results):
         self._file_timer.stop()
+        _restore_process_priority()
         self.scan_btn.setEnabled(True)
         self.convert_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -8340,12 +8386,10 @@ class MainWindow(QMainWindow):
                             f"System will {action} in {_remaining[0]} seconds.\n"
                             f"Click Cancel to abort."
                         ))
-                countdown.buttonClicked.connect(lambda btn: setattr(_cancelled, '__setitem__', (0, True)) or countdown.reject())
                 def _on_cancel(btn):
                     _cancelled[0] = True
                     _timer.stop()
                     countdown.reject()
-                countdown.buttonClicked.disconnect()
                 countdown.buttonClicked.connect(_on_cancel)
                 _timer = QTimer(self)
                 _timer.timeout.connect(_tick)
@@ -8370,10 +8414,12 @@ class MainWindow(QMainWindow):
             return
         if self._worker.is_paused:
             self._worker.resume()
+            self._file_timer.start()
             self.pause_btn.setText(self.tr("Pause"))
             self._set_workflow_state(self.tr("Converting"), self.tr("Resumed batch conversion..."))
         else:
             self._worker.pause()
+            self._file_timer.stop()
             self.pause_btn.setText(self.tr("Resume"))
             self._set_workflow_state(self.tr("Paused"), self.tr("Conversion paused. Click Resume to continue."))
 

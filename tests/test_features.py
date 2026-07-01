@@ -125,6 +125,8 @@ class TestCLIValidation:
             (["--input", "photos", "--avif-speed", "11"], "--avif-speed"),
             (["--input", "photos", "--target-kb", "0"], "--target-kb"),
             (["--input", "photos", "--target-psnr", "-1"], "--target-psnr"),
+            (["--input", "photos", "--target-ssimulacra2", "0"], "--target-ssimulacra2"),
+            (["--input", "photos", "--target-ssimulacra2", "-5"], "--target-ssimulacra2"),
             (["--input", "photos", "--only-if-smaller", "100"], "--only-if-smaller"),
             (["--input", "photos", "--dpi", "0"], "--dpi"),
             (["--input", "photos", "--resize", "scale:0"], "--resize value"),
