@@ -1857,6 +1857,7 @@ class ConvertOptions:
     avif_codec: str = "auto"
     png_lossy: bool = False
     backend: str = "pillow"
+    cpu_priority: str = "normal"
     strip_fields: frozenset[str] = field(default_factory=frozenset)
 
 
@@ -3887,6 +3888,19 @@ class _ThumbnailLoader(QThread):
                 pass
 
 
+def _set_process_priority_low():
+    if sys.platform == "win32":
+        import ctypes
+        BELOW_NORMAL = 0x00004000
+        ctypes.windll.kernel32.SetPriorityClass(
+            ctypes.windll.kernel32.GetCurrentProcess(), BELOW_NORMAL)
+    else:
+        try:
+            os.nice(10)
+        except OSError:
+            pass
+
+
 class ConvertWorker(QThread):
     progress = pyqtSignal(int, int)       # current, total
     current_file = pyqtSignal(str)        # filename currently processing
@@ -3922,6 +3936,8 @@ class ConvertWorker(QThread):
         return not self._pause_event.is_set()
 
     def run(self):
+        if self.opts.cpu_priority == "low":
+            _set_process_priority_low()
         results = []
         total = len(self.files)
         done = 0
@@ -8732,6 +8748,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="HDR tone-mapping curve when source is PQ/HLG/wide-gamut. "
                         "'none' (default - preserve), 'reinhard' (gentle), "
                         "'hable' (Uncharted 2 filmic), 'clip' (hard clamp).")
+    p.add_argument("--cpu-priority", choices=["normal", "low"], default="normal",
+                   help="Process priority for conversion workers. 'low' sets BELOW_NORMAL (Windows) "
+                        "or nice(10) (Unix), keeping the system responsive during large batches.")
     p.add_argument("--use-processes", action="store_true",
                    help="Use a ProcessPoolExecutor instead of ThreadPoolExecutor. "
                         "Bypasses the GIL on Python interpreters that still have it; "
@@ -8839,6 +8858,7 @@ CLI_FLAG_PARITY = {
     "--watch": {"surface": "cli-only", "gui": (), "readme": True, "note": "Directory watch mode"},
     "--watch-interval": {"surface": "cli-only", "gui": (), "readme": True, "note": "Directory watch cadence"},
     "--tone-map": {"surface": "gui", "gui": ("tone_map_combo",), "readme": True, "note": "HDR tone mapping"},
+    "--cpu-priority": {"surface": "cli-only", "gui": (), "readme": True, "note": "Process priority for workers"},
     "--use-processes": {"surface": "cli-only", "gui": (), "readme": True, "note": "Executor selection"},
     "--sidecar-history": {"surface": "cli-only", "gui": (), "readme": True, "note": "Per-file reproducibility JSON"},
     "--backend": {"surface": "cli-only", "gui": (), "readme": True, "note": "Experimental backend selection"},
@@ -8920,7 +8940,7 @@ _PRESET_ARG_KEYS = (
     "target_kb", "target_psnr", "target_ssimulacra2", "watermark", "canvas", "canvas_bg",
     "avif_speed", "avif_codec", "max_file_size", "recursive", "dry_run",
     "use_cache", "clear_cache", "resume", "frames", "watch",
-    "watch_interval", "tone_map", "use_processes", "sidecar_history",
+    "watch_interval", "tone_map", "cpu_priority", "use_processes", "sidecar_history",
     "backend", "verify_quality", "png_lossy",
 )
 
@@ -9344,6 +9364,7 @@ def _build_convert_options(args, *, resize_mode: str = "none",
         avif_codec=getattr(args, "avif_codec", "auto"),
         png_lossy=getattr(args, "png_lossy", False),
         backend=getattr(args, "backend", "pillow"),
+        cpu_priority=getattr(args, "cpu_priority", "normal"),
         strip_fields=frozenset(_sf),
     )
 
@@ -10008,6 +10029,8 @@ def _run_cli(args):
     done_paths: set[str] = set()
     failed_paths: set[str] = set()
 
+    if cli_opts.cpu_priority == "low":
+        _set_process_priority_low()
     max_inflight = args.workers * 2
     file_iter = iter(enumerate(scan.files, start=1))
 

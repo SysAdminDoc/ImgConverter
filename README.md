@@ -255,6 +255,7 @@ python imgconverter.py --history
 | `--resume` | Resume an interrupted CLI batch from the saved queue |
 | `--watch` | Watch the input directory and convert new files as they arrive; uses watchdog events when installed, otherwise polling |
 | `--watch-interval SEC` | Polling/debounce interval for `--watch` mode |
+| `--cpu-priority {normal,low}` | Process priority: `low` keeps the system responsive during large batches |
 | `--use-processes` | Use process workers instead of threads for conversion |
 | `--sidecar-history` | Write per-output `.imgconverter.json` reproducibility sidecars |
 | `--backend BACKEND` | Select `pillow` or experimental `vips` backend |
