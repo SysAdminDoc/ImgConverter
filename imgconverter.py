@@ -7162,6 +7162,19 @@ class MainWindow(QMainWindow):
         log_container_layout.setSpacing(4)
         log_container_layout.addLayout(log_header)
 
+        log_filter_bar = QHBoxLayout()
+        log_filter_bar.setSpacing(4)
+        self._log_filter_edit = QLineEdit()
+        self._log_filter_edit.setPlaceholderText("Filter log (Ctrl+F)…")
+        self._log_filter_edit.setClearButtonEnabled(True)
+        self._log_filter_edit.textChanged.connect(self._apply_log_filter)
+        log_filter_bar.addWidget(self._log_filter_edit, 1)
+        log_container_layout.addLayout(log_filter_bar)
+        self._log_lines: list[str] = []
+
+        log_find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        log_find_shortcut.activated.connect(lambda: self._log_filter_edit.setFocus())
+
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setPlaceholderText("Scan a source folder to see matching files, warnings, and conversion results.")
@@ -7383,7 +7396,18 @@ class MainWindow(QMainWindow):
             self.structure_chk.setEnabled(False)
 
     def _log(self, msg: str):
-        self.log_view.appendPlainText(msg if msg else "​")
+        line = msg if msg else "​"
+        self._log_lines.append(line)
+        filt = self._log_filter_edit.text().lower() if hasattr(self, "_log_filter_edit") else ""
+        if not filt or filt in line.lower():
+            self.log_view.appendPlainText(line)
+
+    def _apply_log_filter(self, text: str):
+        filt = text.lower()
+        self.log_view.clear()
+        for line in self._log_lines:
+            if not filt or filt in line.lower():
+                self.log_view.appendPlainText(line)
 
     def _open_plugin_trust(self):
         dialog = PluginTrustDialog(self)
@@ -7846,6 +7870,8 @@ class MainWindow(QMainWindow):
             self._set_workflow_state("Export failed", "Support bundle could not be written.")
 
     def _clear_log(self):
+        self._log_lines.clear()
+        self._log_filter_edit.clear()
         self.log_view.clear()
         self._update_title()
 
