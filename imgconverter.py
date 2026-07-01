@@ -6076,6 +6076,9 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("export_csv_btn",      "Export CSV",               "Export conversion results as a CSV report"),
     ("export_support_btn",  "Export support bundle",    "Save redacted diagnostics for support"),
     ("clear_log_btn",       "Clear log",                "Clear the activity log"),
+    ("log_view",             "Activity log",             "Conversion activity log showing scan and conversion messages"),
+    ("progress_bar",         "Conversion progress",      "Percentage progress of the current batch conversion"),
+    ("_log_filter_edit",     "Log filter",               "Type to filter log lines by keyword"),
 )
 
 
@@ -7127,7 +7130,7 @@ class MainWindow(QMainWindow):
         self._review_table.setAccessibleName(self.tr("Scan review table"))
         self._review_table.setAccessibleDescription(self.tr("File-level scan results with format, size, and warnings"))
         self._review_table.setVisible(False)
-        self._review_table.setMaximumHeight(220)
+        self._review_table.setMaximumHeight(360)
         scroll_layout.addWidget(self._review_table)
 
         # ── Progress ──
@@ -7925,6 +7928,8 @@ class MainWindow(QMainWindow):
 
     # ── Scan ──
     def _scan(self):
+        if self._worker and self._worker.isRunning():
+            return
         src = self.src_edit.text().strip()
         if not src or not Path(src).is_dir():
             self._log("[ERROR] Please select a valid source directory.")
