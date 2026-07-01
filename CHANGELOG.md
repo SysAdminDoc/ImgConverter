@@ -2,6 +2,32 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.4.1] — 2026-07-01
+
+### Fixed
+
+- **HEIC bit-depth extraction crash**: `HAS_HEIF` was referenced but never defined, causing every HEIC file to fail with a `NameError` during metadata extraction.
+- **Tone-map HDR blackout on 8-bit images**: `_tone_map_hdr` always divided by 65535 due to checking `float64.itemsize` after cast; now checks original image mode.
+- **SSIMULACRA2 crash on tiny images**: Images smaller than 8px now return 0.0 instead of crashing with an empty-scales error.
+- **Thumbnail-to-wrong-row after sort**: Thumbnails are now matched by file path instead of integer index, so sorting the review table during thumbnail loading no longer assigns thumbnails to wrong files.
+- **CPU priority never restored**: GUI conversion with `--cpu-priority low` now restores normal process priority when the batch finishes.
+- **Elapsed timer during pause**: Per-file elapsed timer now stops when conversion is paused and resumes when unpaused.
+- **Drag-out collision**: Same-named files in different subdirectories now map correctly in drag-out (full path key instead of filename-only).
+- **Review table stale after format change**: Output and Est. Output columns now refresh when the format combo changes.
+- **C2PA reader.close() compat**: Guarded with `hasattr` to avoid AttributeError on older c2pa-python versions.
+- **Countdown cancel lambda**: Removed broken dead-code lambda that could corrupt a list if the disconnect/reconnect below it were ever removed.
+- **_log_lines unbounded growth**: Capped to 5000 entries to match the log view's block limit.
+- **Priority functions hardened**: `_set_process_priority_low()` and `_restore_process_priority()` now catch OSError on both platforms.
+- **Stale version in module docstring**: Updated from v3.3.4 to match APP_VERSION.
+
+### Added
+
+- **Escape to cancel**: Pressing Escape cancels the active conversion.
+- **Review table format refresh**: Changing the output format now updates Output and Est. Output columns in the review table.
+- **Scan guard**: Blocks scan-during-conversion via internal guard.
+- **Accessibility improvements**: Accessible names for log_view, progress_bar, log_filter_edit. Thumbnail column header now says "Preview" instead of blank.
+- **9 new regression tests**: SSIMULACRA2 edge cases, _estimate_output_size, zero-byte file, 1x1 pixel conversion, --target-ssimulacra2 validation.
+
 ## [v3.4.0] — 2026-07-01
 
 ### Added
