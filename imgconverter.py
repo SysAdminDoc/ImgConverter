@@ -7211,7 +7211,11 @@ class MainWindow(QMainWindow):
         self._log_filter_edit.setToolTip(self.tr("Filter log output (Ctrl+F)"))
         self._log_filter_edit.setAccessibleName(self.tr("Log filter"))
         self._log_filter_edit.setClearButtonEnabled(True)
-        self._log_filter_edit.textChanged.connect(self._apply_log_filter)
+        self._log_filter_debounce = QTimer(self)
+        self._log_filter_debounce.setSingleShot(True)
+        self._log_filter_debounce.setInterval(250)
+        self._log_filter_debounce.timeout.connect(lambda: self._apply_log_filter(self._log_filter_edit.text()))
+        self._log_filter_edit.textChanged.connect(lambda _: self._log_filter_debounce.start())
         log_filter_bar.addWidget(self._log_filter_edit, 1)
         log_container_layout.addLayout(log_filter_bar)
         self._log_lines: list[str] = []
@@ -7459,9 +7463,15 @@ class MainWindow(QMainWindow):
     def _apply_log_filter(self, text: str):
         filt = text.lower()
         self.log_view.clear()
+        count = 0
         for line in self._log_lines:
             if not filt or filt in line.lower():
                 self.log_view.appendPlainText(line)
+                count += 1
+        if filt and count == 0:
+            self.log_view.setPlaceholderText(self.tr(f"No log lines match \"{text}\"."))
+        else:
+            self.log_view.setPlaceholderText(self.tr("Scan a source folder to see matching files, warnings, and conversion results."))
 
     def _open_plugin_trust(self):
         dialog = PluginTrustDialog(self)
