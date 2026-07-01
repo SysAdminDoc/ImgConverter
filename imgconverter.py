@@ -6554,7 +6554,7 @@ class MainWindow(QMainWindow):
         self.fmt_combo.setItemData(4, "Next-gen AV1 codec, best compression ratio", Qt.ItemDataRole.ToolTipRole)
         self.fmt_combo.setItemData(5, "Lossless, professional workflows", Qt.ItemDataRole.ToolTipRole)
         if HAS_JXL:
-            self.fmt_combo.setItemData(6, "Next-gen JPEG replacement, best quality-to-size ratio", Qt.ItemDataRole.ToolTipRole)
+            self.fmt_combo.setItemData(6, "Next-gen JPEG replacement — Safari 17+, Chrome 145+ (flag), Firefox 152+ (Labs)", Qt.ItemDataRole.ToolTipRole)
         else:
             model = self.fmt_combo.model()
             model.item(6).setEnabled(False)

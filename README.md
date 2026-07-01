@@ -61,7 +61,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **12+ input formats** — JPEG, PNG, HEIC, AVIF, WebP, JXL, RAW, TIFF, BMP, JP2, QOI, ICO
 - **Cross-format conversion** — convert between any formats (JPEG to WebP, PNG to JPEG, etc.); same-format no-ops auto-skipped
 - **AVIF output** — next-gen AV1 codec via Pillow's native encoder, best compression ratio
-- **JPEG XL output** — next-gen JPEG replacement via pillow-jxl-plugin (quality + effort tuning)
+- **JPEG XL output** — next-gen JPEG replacement via pillow-jxl-plugin (quality + effort tuning). Browser support: Safari 17+ (default), Chrome 145+ (flag, expected default H2 2026), Firefox 152+ (Labs)
 - **CSV export** — structured conversion report with per-file status, sizes, timing, and warnings
 - **Persistent batch history** — completed GUI and CLI batches append a redacted local summary with counts, byte deltas, options, and report/support-bundle pointers
 - **CLI mode** — headless conversion via `--input` flag with full feature parity (all GUI options exposed as flags)
