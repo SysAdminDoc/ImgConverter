@@ -5224,11 +5224,25 @@ def _configure_inventory_table(table: QTableWidget):
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
 
+def _restore_dialog_geometry(dialog: QDialog, default_w: int, default_h: int):
+    settings = QSettings()
+    key = f"dialog_geometry/{dialog.__class__.__name__}"
+    geom = settings.value(key)
+    if geom:
+        dialog.restoreGeometry(geom)
+    else:
+        dialog.resize(default_w, default_h)
+    def _on_close():
+        s = QSettings()
+        s.setValue(f"dialog_geometry/{dialog.__class__.__name__}", dialog.saveGeometry())
+    dialog.finished.connect(_on_close)
+
+
 class PluginTrustDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Plugin Trust"))
-        self.resize(880, 460)
+        _restore_dialog_geometry(self, 880, 460)
         self._rows: list[dict] = []
 
         layout = QVBoxLayout(self)
@@ -5349,7 +5363,7 @@ class BatchHistoryDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Batch History"))
-        self.resize(920, 460)
+        _restore_dialog_geometry(self, 920, 460)
         self._records: list[dict] = []
 
         layout = QVBoxLayout(self)
@@ -5513,7 +5527,7 @@ class WatchFolderDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Watch Folder Profiles"))
-        self.resize(860, 460)
+        _restore_dialog_geometry(self, 860, 460)
         self._profiles: list[dict] = _load_watch_profiles()
 
         layout = QVBoxLayout(self)
@@ -5760,7 +5774,7 @@ class DuplicateReviewDialog(QDialog):
     def __init__(self, groups: list[list[Path]], parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Duplicate Review"))
-        self.resize(780, 500)
+        _restore_dialog_geometry(self, 780, 500)
         self.skip_set: set[Path] = set()
 
         layout = QVBoxLayout(self)
@@ -5831,12 +5845,16 @@ class CommandPaletteDialog(QDialog):
     def __init__(self, commands: list[dict], parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Command Palette"))
-        self.resize(500, 380)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        _restore_dialog_geometry(self, 500, 380)
+        self.setStyleSheet(
+            f"CommandPaletteDialog {{ border: 1px solid {CAT['overlay0']}; "
+            f"border-radius: 8px; background: {CAT['base']}; }}"
+        )
         self._commands = commands
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(4)
 
         self._search = QLineEdit()
@@ -5909,6 +5927,10 @@ class CommandPaletteDialog(QDialog):
             self._list.setFocus()
             self._list.keyPressEvent(event)
             return
+        if event.text() and event.text().isprintable() and self._list.hasFocus():
+            self._search.setFocus()
+            self._search.keyPressEvent(event)
+            return
         super().keyPressEvent(event)
 
 
@@ -5916,7 +5938,7 @@ class ShellIntegrationDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Shell Integration"))
-        self.resize(640, 340)
+        _restore_dialog_geometry(self, 640, 340)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -6095,8 +6117,8 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("tiff_comp_combo",     "TIFF compression",         "TIFF compression: None, LZW, or Deflate"),
     ("filter_toggle",       "Input format filters",     "Show or hide input format family filters"),
     ("adv_toggle",          "Advanced output controls", "Show or hide advanced output controls"),
-    ("scan_btn",            "Scan source",              "Scan the selected source for supported images"),
-    ("convert_btn",         "Convert batch",            "Start converting the scanned batch"),
+    ("scan_btn",            "Scan source (F5)",         "Scan the selected source for supported images (F5)"),
+    ("convert_btn",         "Convert batch (F6)",       "Start converting the scanned batch (F6)"),
     ("stop_btn",            "Cancel conversion",        "Stop the current conversion batch"),
     ("pause_btn",           "Pause or resume conversion", "Pause or resume the current conversion batch"),
     ("paste_btn",           "Paste image",              "Paste an image from clipboard as input"),
@@ -7235,6 +7257,11 @@ class MainWindow(QMainWindow):
 
         esc_shortcut = QShortcut(QKeySequence("Escape"), self)
         esc_shortcut.activated.connect(lambda: self._stop() if self._worker and self._worker.isRunning() else None)
+
+        scan_shortcut = QShortcut(QKeySequence("F5"), self)
+        scan_shortcut.activated.connect(self._scan)
+        convert_shortcut = QShortcut(QKeySequence("F6"), self)
+        convert_shortcut.activated.connect(self._convert)
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
