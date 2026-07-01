@@ -90,3 +90,36 @@ def test_template_collision_stays_in_template_subdirectory(rgb_image, tmp_workdi
     assert result.success
     assert result.dst == existing_dir / "src_1.png"
     assert result.dst.exists()
+
+
+def test_template_path_traversal_blocked(rgb_image, tmp_workdir):
+    """Template containing '../' must not escape the output directory."""
+    src = tmp_workdir / "src.bmp"
+    rgb_image.save(src)
+    out_dir = tmp_workdir / "out"
+
+    result = convert_file(
+        src, out_dir, fmt="png",
+        name_template="../../escape/{stem}",
+    )
+    assert result.success
+    assert result.dst.resolve().is_relative_to(out_dir.resolve()), \
+        f"output {result.dst} escaped {out_dir}"
+    assert any("path escapes" in w for w in result.warnings)
+
+
+def test_template_absolute_path_rejected(rgb_image, tmp_workdir):
+    """Template producing an absolute path must be flattened."""
+    import sys
+    src = tmp_workdir / "src.bmp"
+    rgb_image.save(src)
+    out_dir = tmp_workdir / "out"
+
+    abs_template = "C:/{stem}" if sys.platform == "win32" else "/etc/{stem}"
+    result = convert_file(
+        src, out_dir, fmt="png",
+        name_template=abs_template,
+    )
+    assert result.success
+    assert result.dst.resolve().is_relative_to(out_dir.resolve())
+    assert any("absolute" in w for w in result.warnings)

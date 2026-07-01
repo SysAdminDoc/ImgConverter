@@ -98,7 +98,7 @@ def _install_deps(include_optional: bool = False) -> int:
             )
     if failed:
         print(f"[install-deps] {len(failed)} package(s) failed to install.", file=sys.stderr)
-        return 3
+        return EXIT_DEP_MISSING
     print("[install-deps] All targets installed.")
     return 0
 
@@ -3307,7 +3307,10 @@ def convert_file(
         if tone_map and tone_map != "none":
             hdr_kind = _detect_hdr(img, meta.get("icc_profile"))
             if hdr_kind:
+                old_img = img
                 img = _tone_map_hdr(img, tone_map)
+                if old_img is not img:
+                    old_img.close()
                 result.warnings.append(
                     f"hdr: detected {hdr_kind}; tone-mapped with {tone_map} curve"
                 )
@@ -3332,9 +3335,12 @@ def convert_file(
                 src_data = meta.get("icc_profile")
                 if src_data:
                     src_profile = ImageCms.ImageCmsProfile(io.BytesIO(src_data))
+                    old_img = img
                     img = ImageCms.profileToProfile(
                         img, src_profile, dst_profile, outputMode="RGB",
                     )
+                    if old_img is not img:
+                        old_img.close()
                 # Replace the metadata ICC tag with the override.
                 meta["icc_profile"] = ImageCms.ImageCmsProfile(dst_profile).tobytes()
                 result.warnings.append(f"icc-override: embedded {icc_override}")
@@ -3346,7 +3352,10 @@ def convert_file(
             try:
                 src_profile = ImageCms.ImageCmsProfile(io.BytesIO(meta["icc_profile"]))
                 dst_profile = ImageCms.createProfile("sRGB")
+                old_img = img
                 img = ImageCms.profileToProfile(img, src_profile, dst_profile, outputMode="RGB")
+                if old_img is not img:
+                    old_img.close()
                 # Update ICC profile in metadata to sRGB
                 srgb_profile = ImageCms.ImageCmsProfile(dst_profile)
                 meta["icc_profile"] = srgb_profile.tobytes()
@@ -3459,6 +3468,8 @@ def convert_file(
             and icc_override is None
             and not name_template
             and not strip_fields
+            and only_if_smaller_pct is None
+            and quality_mode is None
         )
         if same_fmt and no_processing and not recompress_lossless:
             result.skipped = True
@@ -3783,35 +3794,44 @@ def convert_file(
                     f"metadata: exiftool failed ({msg}); Pillow fallback applied"
                 )
 
+        # only-if-smaller: check BEFORE in-place rename to avoid
+        # destroying the source when the output doesn't meet the threshold.
+        pending_out = temp_path if (in_place and temp_path) else out_path
+        pending_size = pending_out.stat().st_size if pending_out.exists() else 0
+        if only_if_smaller_pct is not None and only_if_smaller_pct > 0:
+            threshold_ratio = (100.0 - only_if_smaller_pct) / 100.0
+            if result.size_before > 0 and pending_size > 0 and (pending_size / result.size_before) > threshold_ratio:
+                if temp_path and temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except OSError:
+                        pass
+                    temp_path = None
+                elif out_path.exists() and not _same_resolved_path(out_path, src):
+                    try:
+                        out_path.unlink()
+                    except OSError:
+                        pass
+                result.dst = None
+                result.success = False
+                result.skipped = True
+                result.size_after = pending_size
+                result.warnings.append(
+                    f"only-if-smaller: output {pending_size}B was "
+                    f">{threshold_ratio*100:.0f}% of source {result.size_before}B; "
+                    f"discarded, keeping original"
+                )
+                result.elapsed = time.perf_counter() - t0
+                return result
+
         # Atomic rename for in-place mode
         if in_place:
             os.replace(str(temp_path), str(out_path))
             temp_path = None  # Rename succeeded, no temp to clean
 
         result.dst = out_path
-        result.size_after = out_path.stat().st_size
+        result.size_after = pending_size
         result.success = True
-
-        # Conditional re-encode: drop the output if it's not meaningfully
-        # smaller than the source. Pattern from XnConvert / ImBatch.
-        if only_if_smaller_pct is not None and only_if_smaller_pct > 0:
-            threshold_ratio = (100.0 - only_if_smaller_pct) / 100.0
-            if result.size_before > 0 and (result.size_after / result.size_before) > threshold_ratio:
-                try:
-                    out_path.unlink()
-                except OSError:
-                    pass
-                result.dst = None
-                result.success = False
-                result.skipped = True
-                result.warnings.append(
-                    f"only-if-smaller: output {result.size_after}B was "
-                    f">{threshold_ratio*100:.0f}% of source {result.size_before}B; "
-                    f"discarded, keeping original"
-                )
-                # Don't run the rest of the post-save hooks if we discarded.
-                result.elapsed = time.perf_counter() - t0
-                return result
 
         _finalize_metadata_report(
             result,
@@ -3910,10 +3930,16 @@ class _RunNowWorker(QThread):
         self._files = list(files)
         self._output_dir = output_dir
         self._opts = opts
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
 
     def run(self):
         ok = fail = skipped = 0
         for seq_i, f in enumerate(self._files, start=1):
+            if self._stop:
+                break
             r = convert_file(f, self._output_dir, seq=seq_i, opts=self._opts)
             if r.success:
                 ok += 1
@@ -8001,6 +8027,8 @@ class MainWindow(QMainWindow):
     def _scan(self):
         if self._worker and self._worker.isRunning():
             return
+        if hasattr(self, "_scanner") and self._scanner.isRunning():
+            return
         src = self.src_edit.text().strip()
         if not src or not Path(src).is_dir():
             self._log("[ERROR] Please select a valid source directory.")
@@ -8128,6 +8156,8 @@ class MainWindow(QMainWindow):
 
     # ── Convert ──
     def _convert(self):
+        if self._worker and self._worker.isRunning():
+            return
         if not self._scan_result or not self._scan_result.files:
             return
 
@@ -8637,7 +8667,7 @@ class MainWindow(QMainWindow):
         if (v := self.settings.value("resize_enabled")) is not None:
             self.resize_chk.setChecked(v == "true" or v is True)
         n = self._safe_int(self.settings.value("resize_mode"))
-        if n is not None:
+        if n is not None and 0 <= n < self.resize_combo.count():
             self.resize_combo.blockSignals(True)
             self.resize_combo.setCurrentIndex(n)
             self.resize_combo.blockSignals(False)
@@ -8657,7 +8687,7 @@ class MainWindow(QMainWindow):
             self.chroma_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("convert_to_srgb")) is not None:
             self.srgb_chk.setChecked(v == "true" or v is True)
-        if (n := self._safe_int(self.settings.value("tiff_compression"))) is not None:
+        if (n := self._safe_int(self.settings.value("tiff_compression"))) is not None and 0 <= n < self.tiff_comp_combo.count():
             self.tiff_comp_combo.setCurrentIndex(n)
         if (n := self._safe_int(self.settings.value("png_compress_level"))) is not None:
             self.png_level_spin.setValue(n)
@@ -8675,11 +8705,11 @@ class MainWindow(QMainWindow):
             self.dpi_spin.setValue(n)
         if (n := self._safe_int(self.settings.value("avif_speed"))) is not None:
             self.avif_speed_spin.setValue(n)
-        if (n := self._safe_int(self.settings.value("avif_codec"))) is not None:
+        if (n := self._safe_int(self.settings.value("avif_codec"))) is not None and 0 <= n < self.avif_codec_combo.count():
             self.avif_codec_combo.setCurrentIndex(n)
-        if (n := self._safe_int(self.settings.value("frames_mode"))) is not None:
+        if (n := self._safe_int(self.settings.value("frames_mode"))) is not None and 0 <= n < self.frames_combo.count():
             self.frames_combo.setCurrentIndex(n)
-        if (n := self._safe_int(self.settings.value("tone_map"))) is not None:
+        if (n := self._safe_int(self.settings.value("tone_map"))) is not None and 0 <= n < self.tone_map_combo.count():
             self.tone_map_combo.setCurrentIndex(n)
         if v := self.settings.value("icc_override"):
             self.icc_edit.setText(v)
@@ -8940,7 +8970,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Action after batch completion: nothing (default), close (exit app), "
                         "sleep (system sleep), shutdown (system shutdown).")
     p.add_argument("--max-memory", type=int, default=None, metavar="PCT",
-                   help="Reduce workers when free system memory drops below PCT%% (default: disabled). "
+                   help="Warn when free system memory drops below PCT%% (default: disabled). "
                         "Requires psutil or falls back to platform checks.")
     p.add_argument("--dedup-warn", action="store_true",
                    help="After scan, log near-duplicate image pairs using perceptual hashing. "
@@ -9559,6 +9589,10 @@ def _validate_cli_args(args) -> list[str]:
         errors.append("--target-psnr must be greater than 0")
     if getattr(args, "target_ssimulacra2", None) is not None and args.target_ssimulacra2 <= 0:
         errors.append("--target-ssimulacra2 must be greater than 0")
+    quality_targets = sum(1 for a in ("target_kb", "target_psnr", "target_ssimulacra2")
+                         if getattr(args, a, None) is not None)
+    if quality_targets > 1:
+        errors.append("--target-kb, --target-psnr, and --target-ssimulacra2 are mutually exclusive")
     if getattr(args, "only_if_smaller", None) is not None:
         if args.only_if_smaller <= 0 or args.only_if_smaller >= 100:
             errors.append("--only-if-smaller must be greater than 0 and less than 100")
@@ -9574,6 +9608,10 @@ def _validate_cli_args(args) -> list[str]:
                     errors.append("--resize value must be greater than 0")
             except ValueError:
                 errors.append("--resize value must be an integer")
+    for flag_name, attr in (("--prefix", "prefix"), ("--suffix", "suffix")):
+        val = getattr(args, attr, "") or ""
+        if any(c in val for c in ("/", "\\", "..")):
+            errors.append(f"{flag_name} must not contain path separators or '..'")
     if getattr(args, "canvas", None) and _parse_canvas(args.canvas) is None:
         errors.append("--canvas must be WIDTHxHEIGHT with positive integers")
     if getattr(args, "max_file_size", None):

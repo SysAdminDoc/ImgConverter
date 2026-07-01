@@ -153,7 +153,6 @@ class TestCLIValidation:
             "--png-level", "6",
             "--avif-speed", "4",
             "--target-kb", "200",
-            "--target-psnr", "40",
             "--only-if-smaller", "25",
             "--dpi", "300",
             "--resize", "max_dim:1920",
@@ -161,6 +160,13 @@ class TestCLIValidation:
             "--max-file-size", "500MB",
         ])
         assert _validate_cli_args(args) == []
+
+    def test_conflicting_quality_modes_rejected(self):
+        args = _build_parser().parse_args([
+            "--input", "photos", "--target-kb", "200", "--target-psnr", "40",
+        ])
+        errors = _validate_cli_args(args)
+        assert any("mutually exclusive" in e for e in errors)
 
     def test_process_workers_reject_loaded_plugins(self, monkeypatch):
         import imgconverter
@@ -1323,6 +1329,21 @@ class TestOnlyIfSmaller:
         assert result.success
         assert result.dst is not None
         assert result.dst.exists()
+
+    def test_in_place_only_if_smaller_preserves_source(self, rgb_image, tmp_workdir):
+        """P0 regression: in-place + only-if-smaller must NOT delete the source
+        when the output doesn't meet the size threshold."""
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=95)
+        original_size = src.stat().st_size
+        result = convert_file(
+            src, tmp_workdir, fmt="jpeg", jpeg_quality=95,
+            in_place=True, only_if_smaller_pct=99.9,
+            convert_to_srgb=True,  # force re-encode (bypass same-format skip)
+        )
+        assert result.skipped, "Expected skipped=True when output isn't smaller"
+        assert src.exists(), "P0 data loss: source was deleted"
+        assert src.stat().st_size == original_size, "Source was modified"
 
 
 # ── 8. DPI override ──────────────────────────────────────────────────────────
