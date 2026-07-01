@@ -264,3 +264,41 @@ def register(opts):
     assert encoded.dst.suffix == ".demoout"
     assert encoded.dst.read_text(encoding="utf-8") == "5x2 q=81"
     assert any("plugin encoder: demoout" in w for w in encoded.warnings)
+
+
+def test_symlink_plugin_rejected_on_trust(tmp_workdir, monkeypatch):
+    import imgconverter
+
+    plugin_dir = tmp_workdir / "plugins"
+    plugin_dir.mkdir()
+    real = plugin_dir / "real.py"
+    real.write_text("def register(opts):\n    return None\n", encoding="utf-8")
+    link = plugin_dir / "link.py"
+    link.symlink_to(real)
+
+    monkeypatch.setattr(imgconverter, "_plugin_dir", lambda: plugin_dir)
+    ok, msg = imgconverter._trust_plugin(link)
+    assert not ok
+    assert "symlink" in msg.lower()
+
+
+def test_symlink_plugin_blocked_on_load(tmp_workdir, monkeypatch):
+    import imgconverter
+
+    plugin_dir = tmp_workdir / "plugins"
+    plugin_dir.mkdir()
+    real = plugin_dir / "real.py"
+    real.write_text("def register(opts):\n    return None\n", encoding="utf-8")
+
+    monkeypatch.setattr(imgconverter, "_plugin_dir", lambda: plugin_dir)
+    ok, msg = imgconverter._trust_plugin(real)
+    assert ok, msg
+
+    real.unlink()
+    link = plugin_dir / "real.py"
+    link.symlink_to(tmp_workdir / "nowhere.py")
+
+    rows = imgconverter.get_plugin_trust_rows()
+    real_row = [r for r in rows if r["name"] == "real.py"]
+    if real_row:
+        assert real_row[0]["status"] != "trusted"
