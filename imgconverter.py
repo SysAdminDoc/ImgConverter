@@ -8688,8 +8688,11 @@ class MainWindow(QMainWindow):
             self._thumb_loader.stop()
             self._thumb_loader.wait(1000)
         if self._worker and self._worker.isRunning():
+            self.status_bar.showMessage(self.tr("Waiting for conversion to finish..."))
             self._worker.stop()
-            self._worker.wait(3000)
+            if not self._worker.wait(10000):
+                self._worker.terminate()
+                self._worker.wait(2000)
         self._tray.hide()
         super().closeEvent(event)
 
