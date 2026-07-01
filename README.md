@@ -51,6 +51,7 @@ Most image converters get the details wrong — they strip metadata, mangle colo
 | `exiftool` | Recovers MakerNotes / GPS sub-IFDs / IPTC / sidecar XMP that Pillow drops silently | [exiftool.org](https://exiftool.org/) |
 | `watchdog` | Lower-latency filesystem events for `--watch` mode; polling remains the fallback | `pip install watchdog` |
 | `c2pa-python` | Native C2PA manifest verification before falling back to `c2patool` | `pip install c2pa-python` |
+| `ssimulacra2` | SSIMULACRA2 perceptual quality metric for `--target-ssimulacra2` | `pip install ssimulacra2` |
 
 Run `imgconverter --install-deps` to install all required + optional Python packages, or `pip install -r requirements.txt`. If a format-specific decoder is missing, that family is skipped gracefully and the app logs which are unavailable. `exiftool` is detected automatically when present on `PATH`; pass `--no-exiftool` to disable the tag-copy pass.
 
@@ -243,6 +244,7 @@ python imgconverter.py --history
 | `--recompress` | Lossless JPEG→JPEG via jpegoptim/jpegtran |
 | `--target-kb N` | Binary-search quality to hit target output size (KB) |
 | `--target-psnr DB` | Binary-search quality to hit a minimum PSNR score |
+| `--target-ssimulacra2 SCORE` | Binary-search quality to hit a minimum SSIMULACRA2 perceptual score (requires `ssimulacra2`) |
 | `--only-if-smaller PCT` | Discard output if not PCT% smaller than input |
 | `--frames MODE` | Multi-frame: `first`, `all`, `animate` (default: first) |
 | `--register-shell` | Install OS shell integration for selected files/folders |

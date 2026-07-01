@@ -1216,11 +1216,15 @@ class TestSelectiveMetadataStripping:
 class TestQualityTargeting:
 
     def test_build_quality_mode_target_kb(self):
-        args = types.SimpleNamespace(target_kb=150, target_psnr=None)
+        args = types.SimpleNamespace(target_kb=150, target_psnr=None, target_ssimulacra2=None)
         assert _build_quality_mode(args) == ("target-kb", 150.0)
 
+    def test_build_quality_mode_ssimulacra2(self):
+        args = types.SimpleNamespace(target_kb=None, target_psnr=None, target_ssimulacra2=70.0)
+        assert _build_quality_mode(args) == ("target-ssimulacra2", 70.0)
+
     def test_build_quality_mode_none(self):
-        args = types.SimpleNamespace(target_kb=None, target_psnr=None)
+        args = types.SimpleNamespace(target_kb=None, target_psnr=None, target_ssimulacra2=None)
         assert _build_quality_mode(args) is None
 
     def test_target_kb_produces_near_target(self, rgb_image, tmp_workdir):
@@ -1240,6 +1244,22 @@ class TestQualityTargeting:
         assert actual_kb < target_kb * 3, (
             f"Output {actual_kb:.1f} KB is way above {target_kb} KB target"
         )
+        assert any("quality-mode" in w for w in result.warnings)
+
+    def test_target_ssimulacra2_binary_search(self, tmp_workdir):
+        """--target-ssimulacra2 should binary-search and produce a quality-mode warning."""
+        img = Image.new("RGB", (128, 128))
+        for x in range(128):
+            for y in range(128):
+                img.putpixel((x, y), (x * 2, y * 2, (x + y) % 256))
+        src = tmp_workdir / "src.bmp"
+        img.save(src)
+        out = tmp_workdir / "out"
+        result = convert_file(
+            src, out, fmt="jpeg",
+            quality_mode=("target-ssimulacra2", 50.0),
+        )
+        assert result.success
         assert any("quality-mode" in w for w in result.warnings)
 
 

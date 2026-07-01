@@ -2256,6 +2256,49 @@ def _psnr(a: "Image.Image", b: "Image.Image") -> float:
     return 20.0 * float(np.log10(255.0)) - 10.0 * float(np.log10(mse))
 
 
+def _ssimulacra2_score(a: "Image.Image", b: "Image.Image") -> float:
+    """Compute SSIMULACRA2 between two PIL images. Higher is better (100 = identical)."""
+    try:
+        import numpy as np
+        from ssimulacra2.ssimulacra2 import (
+            srgb_to_linear, linear_rgb_to_xyb, make_positive_xyb,
+            blur_image, ssim_map, edge_diff_map, downsample,
+            Msssim, MsssimScale, kNumScales,
+        )
+    except ImportError:
+        raise RuntimeError(
+            "ssimulacra2 is required for --target-ssimulacra2. "
+            "Install it: pip install ssimulacra2"
+        )
+    if a.size != b.size:
+        return 0.0
+    orig = np.asarray(a.convert("RGB"), dtype=np.float64)
+    dist = np.asarray(b.convert("RGB"), dtype=np.float64)
+    orig_linear = srgb_to_linear(orig)
+    dist_linear = srgb_to_linear(dist)
+    img1 = make_positive_xyb(linear_rgb_to_xyb(orig_linear))
+    img2 = make_positive_xyb(linear_rgb_to_xyb(dist_linear))
+    msssim = Msssim()
+    for scale in range(kNumScales):
+        if img1.shape[0] < 8 or img1.shape[1] < 8:
+            break
+        sigma1_sq = blur_image(img1 * img1)
+        sigma2_sq = blur_image(img2 * img2)
+        sigma12 = blur_image(img1 * img2)
+        mu1 = blur_image(img1)
+        mu2 = blur_image(img2)
+        sd = MsssimScale()
+        sd.avg_ssim = ssim_map(mu1, mu2, sigma1_sq, sigma2_sq, sigma12)
+        sd.avg_edgediff = edge_diff_map(img1, mu1, img2, mu2)
+        msssim.scales.append(sd)
+        if scale < kNumScales - 1:
+            orig_linear = downsample(orig_linear, 2, 2)
+            dist_linear = downsample(dist_linear, 2, 2)
+            img1 = make_positive_xyb(linear_rgb_to_xyb(orig_linear))
+            img2 = make_positive_xyb(linear_rgb_to_xyb(dist_linear))
+    return float(msssim.score())
+
+
 def _binary_search_quality(
     img: "Image.Image",
     out_fmt: str,
@@ -2270,6 +2313,7 @@ def _binary_search_quality(
 
     mode == 'target-kb' -> target = output size in kilobytes
     mode == 'target-psnr' -> target = minimum PSNR (dB) vs source
+    mode == 'target-ssimulacra2' -> target = minimum SSIMULACRA2 score
 
     Returns (best_quality, best_size, best_metric).
     """
@@ -2300,10 +2344,19 @@ def _binary_search_quality(
                 lo = q + 1   # try a higher quality
             else:
                 hi = q - 1   # too big, lower
-        else:  # target-psnr
+        elif mode == "target-psnr":
             buf.seek(0)
             with Image.open(buf) as decoded:
                 metric = _psnr(img, decoded)
+            best_q, best_size, best_metric = q, int(buf.tell()), metric
+            if metric < target:
+                lo = q + 1
+            else:
+                hi = q - 1
+        else:  # target-ssimulacra2
+            buf.seek(0)
+            with Image.open(buf) as decoded:
+                metric = _ssimulacra2_score(img, decoded)
             best_q, best_size, best_metric = q, int(buf.tell()), metric
             if metric < target:
                 lo = q + 1
@@ -4480,6 +4533,7 @@ def _cli_history_options(args, resize_mode: str, resize_value: int) -> dict:
         "dpi": getattr(args, "dpi", None),
         "target_kb": getattr(args, "target_kb", None),
         "target_psnr": getattr(args, "target_psnr", None),
+        "target_ssimulacra2": getattr(args, "target_ssimulacra2", None),
         "only_if_smaller": getattr(args, "only_if_smaller", None),
         "use_cache": bool(getattr(args, "use_cache", False)),
         "resume": bool(getattr(args, "resume", False)),
@@ -8520,6 +8574,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--target-psnr", type=float, default=None, metavar="DB",
                    help="Binary-search quality to hit a minimum PSNR (dB) vs source. "
                         "40+ dB is excellent; 30 dB is visibly degraded.")
+    p.add_argument("--target-ssimulacra2", type=float, default=None, metavar="SCORE",
+                   help="Binary-search quality to hit a minimum SSIMULACRA2 score vs source. "
+                        "70+ is excellent; 50 is noticeable; <30 is poor. Requires ssimulacra2 package.")
     p.add_argument("--watermark", type=str, default=None, metavar="SPEC",
                    help="Watermark text or path to PNG. Spec: 'TEXT|position|opacity' "
                         "(positions: top-left top top-right left center right "
@@ -8661,6 +8718,7 @@ CLI_FLAG_PARITY = {
     "--recompress": {"surface": "gui", "gui": ("recompress_chk",), "readme": True, "note": "Lossless JPEG recompress"},
     "--target-kb": {"surface": "gui", "gui": ("target_kb_spin",), "readme": True, "note": "Target file size"},
     "--target-psnr": {"surface": "cli-only", "gui": (), "readme": True, "note": "Quality metric automation"},
+    "--target-ssimulacra2": {"surface": "cli-only", "gui": (), "readme": True, "note": "Perceptual quality targeting"},
     "--watermark": {"surface": "gui", "gui": ("watermark_edit",), "readme": True, "note": "Watermark spec"},
     "--canvas": {"surface": "gui", "gui": ("canvas_edit",), "readme": True, "note": "Canvas size"},
     "--canvas-bg": {"surface": "gui", "gui": ("canvas_bg_edit",), "readme": True, "note": "Canvas fill"},
@@ -8754,7 +8812,7 @@ _PRESET_ARG_KEYS = (
     "strip_metadata", "in_place", "skip_existing", "resize",
     "no_structure", "workers", "no_exiftool", "exclude", "report",
     "only_if_smaller", "dpi", "icc", "xmp_sidecar", "recompress",
-    "target_kb", "target_psnr", "watermark", "canvas", "canvas_bg",
+    "target_kb", "target_psnr", "target_ssimulacra2", "watermark", "canvas", "canvas_bg",
     "avif_speed", "avif_codec", "max_file_size", "recursive", "dry_run",
     "use_cache", "clear_cache", "resume", "frames", "watch",
     "watch_interval", "tone_map", "use_processes", "sidecar_history",
@@ -9186,11 +9244,13 @@ def _build_convert_options(args, *, resize_mode: str = "none",
 
 
 def _build_quality_mode(args) -> tuple[str, float] | None:
-    """Translate --target-kb / --target-psnr into the (mode, target) tuple."""
+    """Translate --target-kb / --target-psnr / --target-ssimulacra2 into the (mode, target) tuple."""
     if getattr(args, "target_kb", None) is not None:
         return ("target-kb", float(args.target_kb))
     if getattr(args, "target_psnr", None) is not None:
         return ("target-psnr", float(args.target_psnr))
+    if getattr(args, "target_ssimulacra2", None) is not None:
+        return ("target-ssimulacra2", float(args.target_ssimulacra2))
     return None
 
 
@@ -9211,6 +9271,8 @@ def _validate_cli_args(args) -> list[str]:
         errors.append("--target-kb must be greater than 0")
     if getattr(args, "target_psnr", None) is not None and args.target_psnr <= 0:
         errors.append("--target-psnr must be greater than 0")
+    if getattr(args, "target_ssimulacra2", None) is not None and args.target_ssimulacra2 <= 0:
+        errors.append("--target-ssimulacra2 must be greater than 0")
     if getattr(args, "only_if_smaller", None) is not None:
         if args.only_if_smaller <= 0 or args.only_if_smaller >= 100:
             errors.append("--only-if-smaller must be greater than 0 and less than 100")
@@ -9257,6 +9319,8 @@ def _validate_cli_args(args) -> list[str]:
             unsupported.append("--target-kb")
         if getattr(args, "target_psnr", None) is not None:
             unsupported.append("--target-psnr")
+        if getattr(args, "target_ssimulacra2", None) is not None:
+            unsupported.append("--target-ssimulacra2")
         if getattr(args, "png_lossy", False):
             unsupported.append("--png-lossy")
         if unsupported:
@@ -9809,6 +9873,7 @@ def _run_cli(args):
         getattr(args, "canvas", None), getattr(args, "canvas_bg", "transparent"),
         getattr(args, "dpi", None), getattr(args, "recompress", False),
         getattr(args, "target_kb", None), getattr(args, "target_psnr", None),
+        getattr(args, "target_ssimulacra2", None),
     ) if cache_conn else None
     cache_skipped: list[Path] = []
     if cache_conn:
@@ -9947,6 +10012,7 @@ def _run_cli(args):
                                     "dpi": getattr(args, "dpi", None),
                                     "target_kb": getattr(args, "target_kb", None),
                                     "target_psnr": getattr(args, "target_psnr", None),
+                                    "target_ssimulacra2": getattr(args, "target_ssimulacra2", None),
                                 },
                                 "result": {
                                     "size_in": result.size_before,
