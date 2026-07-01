@@ -22,6 +22,7 @@ Most image converters get the details wrong — they strip metadata, mangle colo
 | **Metadata** | Online converters and many CLI tools strip EXIF/GPS/timestamps | Preserves EXIF, ICC, and XMP data by default |
 | **Performance** | Single-threaded or limited concurrency | Parallel conversion with configurable worker count (up to 32) |
 | **Format coverage** | Most only handle HEIC or one format at a time | 12+ input format families from a single tool |
+| **Privacy** | Free online converters upload your images to remote servers — FBI/IC3 warned (March 2025) some install ransomware or scrape EXIF GPS data | Runs entirely offline. Your files never leave your machine |
 
 ## Supported Input Formats
 
