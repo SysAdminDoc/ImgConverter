@@ -168,6 +168,12 @@ class TestCLIValidation:
         errors = _validate_cli_args(args)
         assert any("mutually exclusive" in e for e in errors)
 
+    def test_prefix_suffix_path_separator_rejected(self):
+        for flag, attr in (("--prefix", "prefix"), ("--suffix", "suffix")):
+            args = _build_parser().parse_args(["--input", "photos", flag, "../escape"])
+            errors = _validate_cli_args(args)
+            assert any("path separator" in e for e in errors), f"{flag} with '../' not rejected"
+
     def test_process_workers_reject_loaded_plugins(self, monkeypatch):
         import imgconverter
 

@@ -2543,9 +2543,13 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
     if suffix in HEIC_EXTS:
         try:
             heif_file = pillow_heif.open_heif(str(src))
-            bd = getattr(heif_file, "bit_depth", None)
-            if bd:
-                meta["bit_depth"] = bd
+            try:
+                bd = getattr(heif_file, "bit_depth", None)
+                if bd:
+                    meta["bit_depth"] = bd
+            finally:
+                if hasattr(heif_file, "close"):
+                    heif_file.close()
         except Exception:
             pass
 
@@ -7634,7 +7638,7 @@ class MainWindow(QMainWindow):
 
         if files:
             files.sort()
-            total_size = sum(f.stat().st_size for f in files)
+            total_size = sum(f.stat().st_size for f in files if f.exists())
             self._scan_result = ScanResult(files=files, total_size=total_size, elapsed=0)
             common_parent = str(Path(os.path.commonpath([str(f.parent) for f in files])))
             self.src_edit.setText(common_parent)
@@ -8798,7 +8802,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="List files that would be converted, then exit")
     p.add_argument("--proof", type=int, default=None, metavar="N",
                    help="Convert N representative files to a temp folder, report size deltas, then exit. "
-                        "Proof outputs are cleaned up unless --output is set.")
+                        "Proof outputs are kept in a temp folder for inspection — delete manually.")
     p.add_argument("--strip-metadata", action="store_true", help="Remove all metadata from output files")
     p.add_argument("--strip-gps", action="store_true",
                    help="Strip GPS/location data while preserving copyright and color profiles")
