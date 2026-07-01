@@ -2,6 +2,27 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.4.2] — 2026-07-01
+
+### Fixed
+
+- **WatchFolderDialog _run_now no longer blocks GUI**: One-shot conversion now runs in a background `QThread` with progress feedback.
+- **Log filter debounced**: 250ms debounce timer prevents O(n) rebuilds on every keystroke during active conversion.
+- **Log filter no-results feedback**: Shows "No log lines match" placeholder when filter matches nothing.
+- **Window close timeout extended**: Worker wait increased from 3s to 10s with `terminate()` fallback for stuck conversions.
+- **Source folder deletion detected**: When scan finds no files because the source folder was deleted, shows "Source folder no longer exists" instead of the generic "No supported files" message.
+- **Quality-mode target warning**: Binary search now logs when the target was not achieved at the quality floor/ceiling.
+
+### Added
+
+- **F5/F6 keyboard shortcuts**: F5 scans source, F6 starts conversion. Documented in button tooltips.
+- **Command palette border**: Frameless dialog now has a visible border and rounded corners.
+- **Command palette type-to-search**: Typing while the command list is focused redirects keystrokes back to the search field.
+- **Dialog geometry persistence**: All 6 dialogs remember their size and position across sessions via QSettings.
+- **Plugin symlink rejection tests**: Two regression tests verifying symlink plugins are blocked on trust and load.
+- **Preset import tests**: Malformed JSON, missing bundle key, empty preset, and valid bundle import tests.
+- **CLI --proof test**: Verifies proof mode converts the requested subset and exits cleanly.
+
 ## [v3.4.1] — 2026-07-01
 
 ### Fixed
