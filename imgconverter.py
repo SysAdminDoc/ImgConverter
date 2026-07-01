@@ -7334,7 +7334,7 @@ class MainWindow(QMainWindow):
             self.structure_chk.setEnabled(False)
 
     def _log(self, msg: str):
-        self.log_view.appendPlainText(msg)
+        self.log_view.appendPlainText(msg if msg else "​")
 
     def _open_plugin_trust(self):
         dialog = PluginTrustDialog(self)
