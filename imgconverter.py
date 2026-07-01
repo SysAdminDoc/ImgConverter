@@ -5180,7 +5180,7 @@ def _configure_inventory_table(table: QTableWidget):
 class PluginTrustDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Plugin Trust")
+        self.setWindowTitle(self.tr("Plugin Trust"))
         self.resize(880, 460)
         self._rows: list[dict] = []
 
@@ -5188,23 +5188,23 @@ class PluginTrustDialog(QDialog):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        self.status_label = QLabel("Loading plugin trust inventory...")
+        self.status_label = QLabel(self.tr("Loading plugin trust inventory..."))
         self.status_label.setObjectName("dialogHint")
-        self.status_label.setAccessibleName("Plugin trust summary")
+        self.status_label.setAccessibleName(self.tr("Plugin trust summary"))
         layout.addWidget(self.status_label)
 
-        self.empty_label = QLabel("No local plugin files or package entry points were found.")
+        self.empty_label = QLabel(self.tr("No local plugin files or package entry points were found."))
         self.empty_label.setObjectName("emptyState")
         self.empty_label.setWordWrap(True)
         self.empty_label.setVisible(False)
         layout.addWidget(self.empty_label)
 
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Plugin", "Path", "Status", "Hash", "Reason"])
+        self.table.setHorizontalHeaderLabels([self.tr("Plugin"), self.tr("Path"), self.tr("Status"), self.tr("Hash"), self.tr("Reason")])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAccessibleName("Plugin trust inventory")
-        self.table.setAccessibleDescription("Installed plugin files with trust status and hash prefix")
+        self.table.setAccessibleName(self.tr("Plugin trust inventory"))
+        self.table.setAccessibleDescription(self.tr("Installed plugin files with trust status and hash prefix"))
         _configure_inventory_table(self.table)
         self.table.itemSelectionChanged.connect(self._update_actions)
         layout.addWidget(self.table)
@@ -5212,10 +5212,10 @@ class PluginTrustDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
-        self.refresh_btn = QPushButton("Refresh")
-        self.trust_btn = QPushButton("Trust")
-        self.untrust_btn = QPushButton("Untrust")
-        self.close_btn = QPushButton("Close")
+        self.refresh_btn = QPushButton(self.tr("Refresh"))
+        self.trust_btn = QPushButton(self.tr("Trust"))
+        self.untrust_btn = QPushButton(self.tr("Untrust"))
+        self.close_btn = QPushButton(self.tr("Close"))
         self.trust_btn.setObjectName("primaryBtn")
         self.untrust_btn.setObjectName("dangerBtn")
         self.close_btn.setObjectName("secondaryBtn")
@@ -5234,10 +5234,10 @@ class PluginTrustDialog(QDialog):
         self.untrust_btn.clicked.connect(self._untrust_selected)
         self.close_btn.clicked.connect(self.accept)
         for button, name, desc in (
-            (self.refresh_btn, "Refresh plugin trust inventory", "Reload plugin trust status from disk"),
-            (self.trust_btn, "Trust selected plugin", "Record the selected plugin file hash as trusted"),
-            (self.untrust_btn, "Untrust selected plugin", "Remove the selected plugin from the local trust manifest"),
-            (self.close_btn, "Close plugin trust", "Close the plugin trust dialog"),
+            (self.refresh_btn, self.tr("Refresh plugin trust inventory"), self.tr("Reload plugin trust status from disk")),
+            (self.trust_btn, self.tr("Trust selected plugin"), self.tr("Record the selected plugin file hash as trusted")),
+            (self.untrust_btn, self.tr("Untrust selected plugin"), self.tr("Remove the selected plugin from the local trust manifest")),
+            (self.close_btn, self.tr("Close plugin trust"), self.tr("Close the plugin trust dialog")),
         ):
             button.setAccessibleName(name)
             button.setAccessibleDescription(desc)
@@ -5257,11 +5257,11 @@ class PluginTrustDialog(QDialog):
         total = len(self._rows)
         needs_review = sum(1 for r in self._rows if r.get("status") in {"untrusted", "changed"})
         if total == 0:
-            text = "No plugin files or package entry points found."
+            text = self.tr("No plugin files or package entry points found.")
         elif needs_review:
-            text = f"{total} plugin entr{'y' if total == 1 else 'ies'} found; {needs_review} need review."
+            text = self.tr(f"{total} plugin entr{'y' if total == 1 else 'ies'} found; {needs_review} need review.")
         else:
-            text = f"{total} plugin entr{'y' if total == 1 else 'ies'} found."
+            text = self.tr(f"{total} plugin entr{'y' if total == 1 else 'ies'} found.")
         self.status_label.setText(text)
         self.empty_label.setVisible(total == 0)
         self.table.setEnabled(total > 0)
@@ -5282,26 +5282,26 @@ class PluginTrustDialog(QDialog):
     def _trust_selected(self):
         row = self._selected_row()
         if not row or row.get("status") == "missing":
-            QMessageBox.information(self, "Plugin Trust", "Select a plugin that needs review.")
+            QMessageBox.information(self, self.tr("Plugin Trust"), self.tr("Select a plugin that needs review."))
             return
         ok, msg = _trust_plugin(row.get("trust_ref") or row["path"])
-        (QMessageBox.information if ok else QMessageBox.warning)(self, "Plugin Trust", msg)
+        (QMessageBox.information if ok else QMessageBox.warning)(self, self.tr("Plugin Trust"), msg)
         self._refresh()
 
     def _untrust_selected(self):
         row = self._selected_row()
         if not row:
-            QMessageBox.information(self, "Plugin Trust", "Select a plugin entry to untrust.")
+            QMessageBox.information(self, self.tr("Plugin Trust"), self.tr("Select a plugin entry to untrust."))
             return
         ok, msg = _untrust_plugin(row.get("trust_ref") or row["name"])
-        (QMessageBox.information if ok else QMessageBox.warning)(self, "Plugin Trust", msg)
+        (QMessageBox.information if ok else QMessageBox.warning)(self, self.tr("Plugin Trust"), msg)
         self._refresh()
 
 
 class BatchHistoryDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Batch History")
+        self.setWindowTitle(self.tr("Batch History"))
         self.resize(920, 460)
         self._records: list[dict] = []
 
@@ -5309,12 +5309,12 @@ class BatchHistoryDialog(QDialog):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        self.status_label = QLabel("Loading batch history...")
+        self.status_label = QLabel(self.tr("Loading batch history..."))
         self.status_label.setObjectName("dialogHint")
-        self.status_label.setAccessibleName("Batch history summary")
+        self.status_label.setAccessibleName(self.tr("Batch history summary"))
         layout.addWidget(self.status_label)
 
-        self.empty_label = QLabel("No completed batch sessions have been recorded yet.")
+        self.empty_label = QLabel(self.tr("No completed batch sessions have been recorded yet."))
         self.empty_label.setObjectName("emptyState")
         self.empty_label.setWordWrap(True)
         self.empty_label.setVisible(False)
@@ -5322,20 +5322,20 @@ class BatchHistoryDialog(QDialog):
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels([
-            "Started", "Surface", "Preset", "Options", "Result", "Bytes", "Artifacts",
+            self.tr("Started"), self.tr("Surface"), self.tr("Preset"), self.tr("Options"), self.tr("Result"), self.tr("Bytes"), self.tr("Artifacts"),
         ])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAccessibleName("Batch session history")
-        self.table.setAccessibleDescription("Read-only completed batch summaries without source paths")
+        self.table.setAccessibleName(self.tr("Batch session history"))
+        self.table.setAccessibleDescription(self.tr("Read-only completed batch summaries without source paths"))
         _configure_inventory_table(self.table)
         layout.addWidget(self.table)
 
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
-        self.refresh_btn = QPushButton("Refresh")
-        self.close_btn = QPushButton("Close")
+        self.refresh_btn = QPushButton(self.tr("Refresh"))
+        self.close_btn = QPushButton(self.tr("Close"))
         self.refresh_btn.setObjectName("secondaryBtn")
         self.close_btn.setObjectName("secondaryBtn")
         self.refresh_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
@@ -5347,8 +5347,8 @@ class BatchHistoryDialog(QDialog):
         self.refresh_btn.clicked.connect(self._refresh)
         self.close_btn.clicked.connect(self.accept)
         for button, name, desc in (
-            (self.refresh_btn, "Refresh batch history", "Reload local batch history from disk"),
-            (self.close_btn, "Close batch history", "Close the batch history dialog"),
+            (self.refresh_btn, self.tr("Refresh batch history"), self.tr("Reload local batch history from disk")),
+            (self.close_btn, self.tr("Close batch history"), self.tr("Close the batch history dialog")),
         ):
             button.setAccessibleName(name)
             button.setAccessibleDescription(desc)
@@ -5368,11 +5368,11 @@ class BatchHistoryDialog(QDialog):
         total = len(self._records)
         failed = sum(1 for r in self._records if r.get("counts", {}).get("failed", 0))
         if total == 0:
-            text = "No completed batch sessions recorded."
+            text = self.tr("No completed batch sessions recorded.")
         elif failed:
-            text = f"{total} batch session{'s' if total != 1 else ''}; {failed} with failures."
+            text = self.tr(f"{total} batch session{'s' if total != 1 else ''}; {failed} with failures.")
         else:
-            text = f"{total} completed batch session{'s' if total != 1 else ''}."
+            text = self.tr(f"{total} completed batch session{'s' if total != 1 else ''}.")
         self.status_label.setText(text)
         self.empty_label.setVisible(total == 0)
         self.table.setEnabled(total > 0)
@@ -5465,7 +5465,7 @@ def _loadable_watch_profiles(profiles: list[dict]) -> list[dict]:
 class WatchFolderDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Watch Folder Profiles")
+        self.setWindowTitle(self.tr("Watch Folder Profiles"))
         self.resize(860, 460)
         self._profiles: list[dict] = _load_watch_profiles()
 
@@ -5473,12 +5473,12 @@ class WatchFolderDialog(QDialog):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        self.status_label = QLabel("Loading watch profiles...")
+        self.status_label = QLabel(self.tr("Loading watch profiles..."))
         self.status_label.setObjectName("dialogHint")
-        self.status_label.setAccessibleName("Watch folder summary")
+        self.status_label.setAccessibleName(self.tr("Watch folder summary"))
         layout.addWidget(self.status_label)
 
-        self.empty_label = QLabel("No watch profiles yet.")
+        self.empty_label = QLabel(self.tr("No watch profiles yet."))
         self.empty_label.setObjectName("emptyState")
         self.empty_label.setWordWrap(True)
         self.empty_label.setVisible(False)
@@ -5486,13 +5486,13 @@ class WatchFolderDialog(QDialog):
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels([
-            "Source Folder", "Output Folder", "Preset", "Enabled",
-            "Last Run", "Converted", "Status",
+            self.tr("Source Folder"), self.tr("Output Folder"), self.tr("Preset"), self.tr("Enabled"),
+            self.tr("Last Run"), self.tr("Converted"), self.tr("Status"),
         ])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAccessibleName("Watch folder profiles")
-        self.table.setAccessibleDescription("Local folders monitored for automatic conversion")
+        self.table.setAccessibleName(self.tr("Watch folder profiles"))
+        self.table.setAccessibleDescription(self.tr("Local folders monitored for automatic conversion"))
         _configure_inventory_table(self.table)
         self.table.itemSelectionChanged.connect(self._update_actions)
         layout.addWidget(self.table)
@@ -5500,11 +5500,11 @@ class WatchFolderDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
-        self.add_btn = QPushButton("Add Profile")
-        self.remove_btn = QPushButton("Remove")
-        self.toggle_btn = QPushButton("Enable")
-        self.run_now_btn = QPushButton("Run Now")
-        self.close_btn = QPushButton("Close")
+        self.add_btn = QPushButton(self.tr("Add Profile"))
+        self.remove_btn = QPushButton(self.tr("Remove"))
+        self.toggle_btn = QPushButton(self.tr("Enable"))
+        self.run_now_btn = QPushButton(self.tr("Run Now"))
+        self.close_btn = QPushButton(self.tr("Close"))
         self.add_btn.setObjectName("primaryBtn")
         self.remove_btn.setObjectName("dangerBtn")
         self.run_now_btn.setObjectName("secondaryBtn")
@@ -5527,11 +5527,11 @@ class WatchFolderDialog(QDialog):
         self.run_now_btn.clicked.connect(self._run_now)
         self.close_btn.clicked.connect(self.accept)
         for button, name, desc in (
-            (self.add_btn, "Add watch profile", "Create a local folder watch profile"),
-            (self.remove_btn, "Remove watch profile", "Remove the selected watch profile"),
-            (self.toggle_btn, "Toggle watch profile", "Enable or disable the selected watch profile"),
-            (self.run_now_btn, "Run now", "Run a one-shot conversion for the selected profile"),
-            (self.close_btn, "Close watch profiles", "Close the watch folder profiles dialog"),
+            (self.add_btn, self.tr("Add watch profile"), self.tr("Create a local folder watch profile")),
+            (self.remove_btn, self.tr("Remove watch profile"), self.tr("Remove the selected watch profile")),
+            (self.toggle_btn, self.tr("Toggle watch profile"), self.tr("Enable or disable the selected watch profile")),
+            (self.run_now_btn, self.tr("Run now"), self.tr("Run a one-shot conversion for the selected profile")),
+            (self.close_btn, self.tr("Close watch profiles"), self.tr("Close the watch folder profiles dialog")),
         ):
             button.setAccessibleName(name)
             button.setAccessibleDescription(desc)
@@ -5546,8 +5546,8 @@ class WatchFolderDialog(QDialog):
                 p.get("source", ""),
                 p.get("output", ""),
                 p.get("preset", "Default"),
-                "Enabled" if p.get("enabled") else "Paused",
-                p.get("last_run") or "Never",
+                self.tr("Enabled") if p.get("enabled") else self.tr("Paused"),
+                p.get("last_run") or self.tr("Never"),
                 str(p.get("last_count", 0)),
             )
             for col, value in enumerate(values):
@@ -5555,7 +5555,7 @@ class WatchFolderDialog(QDialog):
                 item.setToolTip(str(value))
                 self.table.setItem(i, col, item)
             error = p.get("last_error")
-            status_text = error if error else ("OK" if p.get("last_run") else "Ready")
+            status_text = error if error else (self.tr("OK") if p.get("last_run") else self.tr("Ready"))
             item = QTableWidgetItem(status_text)
             item.setToolTip(status_text)
             if error:
@@ -5565,9 +5565,9 @@ class WatchFolderDialog(QDialog):
         enabled = sum(1 for p in self._profiles if p.get("enabled"))
         total = len(self._profiles)
         if total == 0:
-            text = "No watch profiles yet."
+            text = self.tr("No watch profiles yet.")
         else:
-            text = f"{total} watch profile{'s' if total != 1 else ''}; {enabled} enabled."
+            text = self.tr(f"{total} watch profile{'s' if total != 1 else ''}; {enabled} enabled.")
         self.status_label.setText(text)
         self.empty_label.setVisible(total == 0)
         self.table.setEnabled(total > 0)
@@ -5586,25 +5586,25 @@ class WatchFolderDialog(QDialog):
         self.toggle_btn.setEnabled(has_selection)
         self.run_now_btn.setEnabled(has_selection)
         if profile is None:
-            self.toggle_btn.setText("Enable")
+            self.toggle_btn.setText(self.tr("Enable"))
             self.toggle_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
         else:
             enabled = profile.get("enabled")
-            self.toggle_btn.setText("Pause" if enabled else "Enable")
+            self.toggle_btn.setText(self.tr("Pause") if enabled else self.tr("Enable"))
             icon = QStyle.StandardPixmap.SP_MediaPause if enabled else QStyle.StandardPixmap.SP_DialogApplyButton
             self.toggle_btn.setIcon(self.style().standardIcon(icon))
 
     def _add_profile(self):
-        src = QFileDialog.getExistingDirectory(self, "Select Watch Folder")
+        src = QFileDialog.getExistingDirectory(self, self.tr("Select Watch Folder"))
         if not src:
             return
-        out = QFileDialog.getExistingDirectory(self, "Select Output Folder")
+        out = QFileDialog.getExistingDirectory(self, self.tr("Select Output Folder"))
         if not out:
             out = str(Path(src) / "converted")
         presets = list(list_presets().keys())
         if presets:
             preset_name, ok = QInputDialog.getItem(
-                self, "Watch Profile Preset", "Preset", presets, 0, False,
+                self, self.tr("Watch Profile Preset"), self.tr("Preset"), presets, 0, False,
             )
             if not ok:
                 return
@@ -5629,7 +5629,7 @@ class WatchFolderDialog(QDialog):
             _save_watch_profiles(self._profiles)
             self._refresh()
             label = Path(source).name or source or "profile"
-            self.status_label.setText(f"Removed watch profile: {label}.")
+            self.status_label.setText(self.tr(f"Removed watch profile: {label}."))
             if self.table.rowCount():
                 self.table.selectRow(min(row, self.table.rowCount() - 1))
 
@@ -5648,10 +5648,10 @@ class WatchFolderDialog(QDialog):
         out = profile.get("output", "")
         preset_name = profile.get("preset", "Default")
         if not src or not Path(src).is_dir():
-            self.status_label.setText(f"Source folder not found: {src}")
+            self.status_label.setText(self.tr(f"Source folder not found: {src}"))
             return
         self.run_now_btn.setEnabled(False)
-        self.status_label.setText(f"Running one-shot conversion for {Path(src).name}...")
+        self.status_label.setText(self.tr(f"Running one-shot conversion for {Path(src).name}..."))
 
         preset = load_preset(preset_name)
         opts = ConvertOptions(
@@ -5680,10 +5680,10 @@ class WatchFolderDialog(QDialog):
         self._profiles[row]["last_error"] = f"{fail_count} failed" if fail_count else None
         _save_watch_profiles(self._profiles)
         self._refresh()
-        self.status_label.setText(
+        self.status_label.setText(self.tr(
             f"Run complete: {ok_count} converted, {fail_count} failed, "
             f"{len(scan.files) - ok_count - fail_count} skipped."
-        )
+        ))
 
 
 WORKFLOW_TONE_BY_STATE = {
@@ -5710,7 +5710,7 @@ WORKFLOW_TONE_BY_STATE = {
 class DuplicateReviewDialog(QDialog):
     def __init__(self, groups: list[list[Path]], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Duplicate Review")
+        self.setWindowTitle(self.tr("Duplicate Review"))
         self.resize(780, 500)
         self.skip_set: set[Path] = set()
 
@@ -5719,21 +5719,21 @@ class DuplicateReviewDialog(QDialog):
         layout.setSpacing(10)
 
         total_files = sum(len(g) for g in groups)
-        hint = QLabel(f"{len(groups)} duplicate group{'s' if len(groups) != 1 else ''}, "
-                      f"{total_files} total files. Select files to skip during conversion.")
+        hint = QLabel(self.tr(f"{len(groups)} duplicate group{'s' if len(groups) != 1 else ''}, "
+                      f"{total_files} total files. Select files to skip during conversion."))
         hint.setObjectName("dialogHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Group", "File", "Size", "Action"])
+        self.table.setHorizontalHeaderLabels([self.tr("Group"), self.tr("File"), self.tr("Size"), self.tr("Action")])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for c in (0, 2, 3):
             self.table.horizontalHeader().setSectionResizeMode(
                 c, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setAccessibleName("Duplicate image groups")
+        self.table.setAccessibleName(self.tr("Duplicate image groups"))
         layout.addWidget(self.table)
 
         row_idx = 0
@@ -5750,7 +5750,7 @@ class DuplicateReviewDialog(QDialog):
                 except OSError:
                     size = 0
                 self.table.setItem(row_idx, 2, QTableWidgetItem(_fmt_size(size)))
-                action = "Convert" if fi == 0 else "Skip (smaller)"
+                action = self.tr("Convert") if fi == 0 else self.tr("Skip (smaller)")
                 action_item = QTableWidgetItem(action)
                 if fi > 0:
                     action_item.setForeground(QColor(CAT["yellow"]))
@@ -5760,16 +5760,16 @@ class DuplicateReviewDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
-        skip_label = QLabel(f"{len(self.skip_set)} file{'s' if len(self.skip_set) != 1 else ''} "
-                            f"marked for skip")
+        skip_label = QLabel(self.tr(f"{len(self.skip_set)} file{'s' if len(self.skip_set) != 1 else ''} "
+                            f"marked for skip"))
         skip_label.setObjectName("dialogHint")
         buttons.addWidget(skip_label)
         buttons.addStretch()
-        apply_btn = QPushButton("Apply Skips")
+        apply_btn = QPushButton(self.tr("Apply Skips"))
         apply_btn.setObjectName("primaryBtn")
         apply_btn.clicked.connect(self.accept)
         buttons.addWidget(apply_btn)
-        cancel_btn = QPushButton("Convert All")
+        cancel_btn = QPushButton(self.tr("Convert All"))
         cancel_btn.setObjectName("secondaryBtn")
         cancel_btn.clicked.connect(self.reject)
         buttons.addWidget(cancel_btn)
@@ -5781,7 +5781,7 @@ class CommandPaletteDialog(QDialog):
 
     def __init__(self, commands: list[dict], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Command Palette")
+        self.setWindowTitle(self.tr("Command Palette"))
         self.resize(500, 380)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
         self._commands = commands
@@ -5791,13 +5791,13 @@ class CommandPaletteDialog(QDialog):
         layout.setSpacing(4)
 
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Type to filter commands...")
-        self._search.setAccessibleName("Command search")
+        self._search.setPlaceholderText(self.tr("Type to filter commands..."))
+        self._search.setAccessibleName(self.tr("Command search"))
         self._search.textChanged.connect(self._filter)
         layout.addWidget(self._search)
 
         self._list = QTableWidget(0, 2)
-        self._list.setHorizontalHeaderLabels(["Command", "Status"])
+        self._list.setHorizontalHeaderLabels([self.tr("Command"), self.tr("Status")])
         self._list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self._list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -5805,7 +5805,7 @@ class CommandPaletteDialog(QDialog):
         self._list.verticalHeader().setVisible(False)
         self._list.setShowGrid(False)
         self._list.doubleClicked.connect(self._on_activate)
-        self._list.setAccessibleName("Available commands")
+        self._list.setAccessibleName(self.tr("Available commands"))
         layout.addWidget(self._list)
 
         self._populate(commands)
@@ -5866,7 +5866,7 @@ class CommandPaletteDialog(QDialog):
 class ShellIntegrationDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Shell Integration")
+        self.setWindowTitle(self.tr("Shell Integration"))
         self.resize(640, 340)
 
         layout = QVBoxLayout(self)
@@ -5878,7 +5878,7 @@ class ShellIntegrationDialog(QDialog):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        cmd_label = QLabel("Commands that will be registered:")
+        cmd_label = QLabel(self.tr("Commands that will be registered:"))
         cmd_label.setObjectName("fieldLabel")
         layout.addWidget(cmd_label)
 
@@ -5895,14 +5895,14 @@ class ShellIntegrationDialog(QDialog):
 
         preset_row = QHBoxLayout()
         preset_row.setSpacing(8)
-        preset_label = QLabel("Default preset:")
+        preset_label = QLabel(self.tr("Default preset:"))
         preset_label.setObjectName("fieldLabel")
         preset_row.addWidget(preset_label)
         self.preset_combo = QComboBox()
-        self.preset_combo.addItem("(none)")
+        self.preset_combo.addItem(self.tr("(none)"))
         for name in sorted(list_presets().keys()):
             self.preset_combo.addItem(name)
-        self.preset_combo.setToolTip("Preset applied when converting via shell context menu")
+        self.preset_combo.setToolTip(self.tr("Preset applied when converting via shell context menu"))
         self.preset_combo.setFixedWidth(180)
         preset_row.addWidget(self.preset_combo)
         preset_row.addStretch()
@@ -5910,18 +5910,18 @@ class ShellIntegrationDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
-        self.install_btn = QPushButton("Install Shell Integration")
+        self.install_btn = QPushButton(self.tr("Install Shell Integration"))
         self.install_btn.setObjectName("primaryBtn")
         self.install_btn.clicked.connect(self._install)
         btn_row.addWidget(self.install_btn)
 
-        self.uninstall_btn = QPushButton("Uninstall")
+        self.uninstall_btn = QPushButton(self.tr("Uninstall"))
         self.uninstall_btn.setObjectName("secondaryBtn")
         self.uninstall_btn.clicked.connect(self._uninstall)
         btn_row.addWidget(self.uninstall_btn)
 
         btn_row.addStretch()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(self.tr("Close"))
         close_btn.setObjectName("secondaryBtn")
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
@@ -5952,41 +5952,41 @@ class ShellIntegrationDialog(QDialog):
             installed = (Path.home() / ".local/share/applications/imgconverter.desktop").exists()
         elif system == "Darwin":
             self.status_label.setText(
-                "macOS: Shell integration uses Automator Quick Actions.\n"
-                "See the command preview below for the script to paste into Automator."
+                self.tr("macOS: Shell integration uses Automator Quick Actions.\n"
+                "See the command preview below for the script to paste into Automator.")
             )
             self.install_btn.setEnabled(False)
             self.uninstall_btn.setEnabled(False)
             return
 
         if installed:
-            self.status_label.setText(
+            self.status_label.setText(self.tr(
                 f"Shell integration is currently installed ({system}).\n"
                 "Right-click images or folders in your file manager to convert them."
-            )
+            ))
         else:
-            self.status_label.setText(
+            self.status_label.setText(self.tr(
                 f"Shell integration is not installed ({system}).\n"
                 "Click Install to add context-menu entries for image conversion."
-            )
+            ))
 
     def _install(self):
         rc = _install_shell_integration(uninstall=False)
         if rc == EXIT_OK:
-            self.result_label.setText("Shell integration installed successfully.")
+            self.result_label.setText(self.tr("Shell integration installed successfully."))
             self.result_label.setStyleSheet(f"color: {CAT['green']};")
         else:
-            self.result_label.setText("Installation failed. Check permissions.")
+            self.result_label.setText(self.tr("Installation failed. Check permissions."))
             self.result_label.setStyleSheet(f"color: {CAT['red']};")
         self._detect_state()
 
     def _uninstall(self):
         rc = _install_shell_integration(uninstall=True)
         if rc == EXIT_OK:
-            self.result_label.setText("Shell integration removed.")
+            self.result_label.setText(self.tr("Shell integration removed."))
             self.result_label.setStyleSheet(f"color: {CAT['green']};")
         else:
-            self.result_label.setText("Removal failed.")
+            self.result_label.setText(self.tr("Removal failed."))
             self.result_label.setStyleSheet(f"color: {CAT['red']};")
         self._detect_state()
 
@@ -6069,7 +6069,7 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"ImgConverter v{APP_VERSION}")
+        self.setWindowTitle(self.tr(f"ImgConverter v{APP_VERSION}"))
         self.setMinimumSize(700, 520)
         self.resize(1040, 820)
         self.setAcceptDrops(True)
@@ -6392,7 +6392,7 @@ class MainWindow(QMainWindow):
         icon_label = QLabel()
         icon_label.setPixmap(self._icon.pixmap(QSize(32, 32)))
         icon_label.setFixedSize(34, 34)
-        icon_label.setAccessibleName("ImgConverter app icon")
+        icon_label.setAccessibleName(self.tr("ImgConverter app icon"))
         hdr.addWidget(icon_label)
 
         title_block = QVBoxLayout()
@@ -6401,20 +6401,20 @@ class MainWindow(QMainWindow):
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(8)
-        title = QLabel("ImgConverter")
+        title = QLabel(self.tr("ImgConverter"))
         title.setObjectName("appTitle")
         ver = QLabel(f"v{APP_VERSION}")
         ver.setObjectName("appVersion")
-        self.workflow_state = QLabel("Ready")
+        self.workflow_state = QLabel(self.tr("Ready"))
         self.workflow_state.setObjectName("workflowState")
         self.workflow_state.setProperty("tone", "ready")
-        self.workflow_state.setAccessibleName("Workflow status")
-        self.workflow_state.setAccessibleDescription("Current batch workflow state")
+        self.workflow_state.setAccessibleName(self.tr("Workflow status"))
+        self.workflow_state.setAccessibleDescription(self.tr("Current batch workflow state"))
         title_row.addWidget(title)
         title_row.addWidget(ver)
         title_row.addWidget(self.workflow_state)
         title_row.addStretch()
-        desc = QLabel("Private, metadata-safe batch image conversion")
+        desc = QLabel(self.tr("Private, metadata-safe batch image conversion"))
         desc.setObjectName("appSubtitle")
         desc.setWordWrap(True)
         title_block.addLayout(title_row)
@@ -6423,21 +6423,21 @@ class MainWindow(QMainWindow):
         scroll_layout.addWidget(header)
 
         # ── Source / Output ──
-        io_group = QGroupBox("Source and output")
+        io_group = QGroupBox(self.tr("Source and output"))
         io_grid = QGridLayout(io_group)
         io_grid.setHorizontalSpacing(10)
         io_grid.setVerticalSpacing(10)
         io_grid.setColumnStretch(1, 1)
 
-        source_label = QLabel("Source folder")
+        source_label = QLabel(self.tr("Source folder"))
         source_label.setObjectName("fieldLabel")
         self.src_edit = QLineEdit()
-        self.src_edit.setPlaceholderText("Drop files or choose a folder to scan")
+        self.src_edit.setPlaceholderText(self.tr("Drop files or choose a folder to scan"))
         self.src_edit.setMinimumWidth(120)
         self.src_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.src_edit.textChanged.connect(lambda: self.src_edit.setStyleSheet(""))
         io_grid.addWidget(self.src_edit, 0, 1)
-        self.src_btn = QPushButton("Choose")
+        self.src_btn = QPushButton(self.tr("Choose"))
         self.src_btn.setFixedWidth(104)
         self.src_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.src_btn.clicked.connect(self._browse_source)
@@ -6446,7 +6446,7 @@ class MainWindow(QMainWindow):
         self.recent_btn = QToolButton()
         self.recent_btn.setArrowType(Qt.ArrowType.DownArrow)
         self.recent_btn.setFixedWidth(30)
-        self.recent_btn.setToolTip("Recent directories")
+        self.recent_btn.setToolTip(self.tr("Recent directories"))
         self._recent_menu = QMenu(self)
         self.recent_btn.setMenu(self._recent_menu)
         self.recent_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -6459,25 +6459,25 @@ class MainWindow(QMainWindow):
         source_label_row.addStretch()
         io_grid.addLayout(source_label_row, 0, 0)
 
-        output_label = QLabel("Output folder")
+        output_label = QLabel(self.tr("Output folder"))
         output_label.setObjectName("fieldLabel")
         io_grid.addWidget(output_label, 1, 0)
         self.dst_edit = QLineEdit()
-        self.dst_edit.setPlaceholderText("Default: source/converted")
+        self.dst_edit.setPlaceholderText(self.tr("Default: source/converted"))
         self.dst_edit.setMinimumWidth(120)
         self.dst_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.dst_edit.textChanged.connect(lambda: self.dst_edit.setStyleSheet(""))
         io_grid.addWidget(self.dst_edit, 1, 1)
-        self.dst_btn = QPushButton("Choose")
+        self.dst_btn = QPushButton(self.tr("Choose"))
         self.dst_btn.setFixedWidth(104)
         self.dst_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.dst_btn.clicked.connect(self._browse_output)
         io_grid.addWidget(self.dst_btn, 1, 2)
 
-        self.recursive_chk = QCheckBox("Scan subdirectories")
+        self.recursive_chk = QCheckBox(self.tr("Scan subdirectories"))
         self.recursive_chk.setChecked(True)
 
-        self.structure_chk = QCheckBox("Preserve folder structure in output")
+        self.structure_chk = QCheckBox(self.tr("Preserve folder structure in output"))
         self.structure_chk.setChecked(True)
 
         io_options = QHBoxLayout()
@@ -6488,17 +6488,17 @@ class MainWindow(QMainWindow):
         io_options.addStretch()
         io_grid.addLayout(io_options, 2, 1, 1, 2)
 
-        self.inplace_chk = QCheckBox("Convert in place after verified output")
+        self.inplace_chk = QCheckBox(self.tr("Convert in place after verified output"))
         self.inplace_chk.setChecked(False)
         self.inplace_chk.setStyleSheet(f"color: {CAT['peach']};")
-        self.inplace_chk.setToolTip("Writes each converted file next to the source, then deletes the source only after output validation succeeds.")
+        self.inplace_chk.setToolTip(self.tr("Writes each converted file next to the source, then deletes the source only after output validation succeeds."))
         self.inplace_chk.toggled.connect(self._on_inplace_toggled)
         io_grid.addWidget(self.inplace_chk, 3, 1, 1, 2)
 
         scroll_layout.addWidget(io_group)
 
         # ── Input Format Filter ──
-        filter_group = QGroupBox("Input formats")
+        filter_group = QGroupBox(self.tr("Input formats"))
         filter_layout = QGridLayout(filter_group)
         filter_layout.setHorizontalSpacing(8)
         filter_layout.setVerticalSpacing(7)
@@ -6512,7 +6512,7 @@ class MainWindow(QMainWindow):
             chk.setChecked(available)
             chk.setEnabled(available)
             if not available:
-                chk.setToolTip(f"{name} decoder not installed")
+                chk.setToolTip(self.tr(f"{name} decoder not installed"))
                 chk.setStyleSheet(f"color: {CAT['overlay0']};")
             self._format_filters[name] = chk
             filter_layout.addWidget(chk, row, col)
@@ -6529,9 +6529,9 @@ class MainWindow(QMainWindow):
         self.filter_toggle.setCheckable(True)
         self.filter_toggle.setChecked(False)
         self.filter_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self.filter_toggle.setText("Show input format filters")
+        self.filter_toggle.setText(self.tr("Show input format filters"))
         self.filter_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.filter_toggle.setToolTip("Show or hide input format family filters")
+        self.filter_toggle.setToolTip(self.tr("Show or hide input format family filters"))
         self.filter_toggle.toggled.connect(self._toggle_filters)
         self.filter_group = filter_group
         self.filter_group.setVisible(False)
@@ -6539,7 +6539,7 @@ class MainWindow(QMainWindow):
         scroll_layout.addWidget(filter_group)
 
         # ── Conversion Options ──
-        opt_group = QGroupBox("Output settings")
+        opt_group = QGroupBox(self.tr("Output settings"))
         opt_grid = QGridLayout(opt_group)
         opt_grid.setHorizontalSpacing(10)
         opt_grid.setVerticalSpacing(10)
@@ -6548,7 +6548,7 @@ class MainWindow(QMainWindow):
         opt_grid.setColumnStretch(2, 0)
         opt_grid.setColumnStretch(3, 1)
 
-        format_label = QLabel("Format")
+        format_label = QLabel(self.tr("Format"))
         format_label.setObjectName("fieldLabel")
         opt_grid.addWidget(format_label, 0, 0)
         self.fmt_combo = QComboBox()
@@ -6556,25 +6556,25 @@ class MainWindow(QMainWindow):
         self.fmt_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self._fmt_values = ["auto", "jpeg", "png", "webp", "avif", "tiff", "jxl"]
         fmt_labels = [
-            "Auto (JPEG for photos, PNG for transparency)",
+            self.tr("Auto (JPEG for photos, PNG for transparency)"),
             "JPEG", "PNG", "WebP", "AVIF", "TIFF", "JPEG XL"
         ]
         for plugin_fmt in sorted(PLUGIN_ENCODERS):
             self._fmt_values.append(plugin_fmt)
             fmt_labels.append(f"Plugin: {plugin_fmt}")
         self.fmt_combo.addItems(fmt_labels)
-        self.fmt_combo.setItemData(0, "JPEG for photos, PNG when transparency exists", Qt.ItemDataRole.ToolTipRole)
-        self.fmt_combo.setItemData(1, "Best for photographs, lossy compression", Qt.ItemDataRole.ToolTipRole)
-        self.fmt_combo.setItemData(2, "Lossless, supports transparency", Qt.ItemDataRole.ToolTipRole)
-        self.fmt_combo.setItemData(3, "Modern format, smaller files", Qt.ItemDataRole.ToolTipRole)
-        self.fmt_combo.setItemData(4, "Next-gen AV1 codec, best compression ratio", Qt.ItemDataRole.ToolTipRole)
-        self.fmt_combo.setItemData(5, "Lossless, professional workflows", Qt.ItemDataRole.ToolTipRole)
+        self.fmt_combo.setItemData(0, self.tr("JPEG for photos, PNG when transparency exists"), Qt.ItemDataRole.ToolTipRole)
+        self.fmt_combo.setItemData(1, self.tr("Best for photographs, lossy compression"), Qt.ItemDataRole.ToolTipRole)
+        self.fmt_combo.setItemData(2, self.tr("Lossless, supports transparency"), Qt.ItemDataRole.ToolTipRole)
+        self.fmt_combo.setItemData(3, self.tr("Modern format, smaller files"), Qt.ItemDataRole.ToolTipRole)
+        self.fmt_combo.setItemData(4, self.tr("Next-gen AV1 codec, best compression ratio"), Qt.ItemDataRole.ToolTipRole)
+        self.fmt_combo.setItemData(5, self.tr("Lossless, professional workflows"), Qt.ItemDataRole.ToolTipRole)
         if HAS_JXL:
-            self.fmt_combo.setItemData(6, "Next-gen JPEG replacement — Safari 17+, Chrome 145+ (flag), Firefox 152+ (Labs)", Qt.ItemDataRole.ToolTipRole)
+            self.fmt_combo.setItemData(6, self.tr("Next-gen JPEG replacement — Safari 17+, Chrome 145+ (flag), Firefox 152+ (Labs)"), Qt.ItemDataRole.ToolTipRole)
         else:
             model = self.fmt_combo.model()
             model.item(6).setEnabled(False)
-            self.fmt_combo.setItemData(6, "Requires pillow-jxl-plugin (pip install pillow-jxl-plugin)", Qt.ItemDataRole.ToolTipRole)
+            self.fmt_combo.setItemData(6, self.tr("Requires pillow-jxl-plugin (pip install pillow-jxl-plugin)"), Qt.ItemDataRole.ToolTipRole)
         for idx, plugin_fmt in enumerate(self._fmt_values[7:], start=7):
             encoder = PLUGIN_ENCODERS[plugin_fmt]
             self.fmt_combo.setItemData(
@@ -6585,16 +6585,16 @@ class MainWindow(QMainWindow):
         opt_grid.addWidget(self.fmt_combo, 0, 1, 1, 2)
 
         self._preset_btn = QToolButton()
-        self._preset_btn.setText("Presets")
+        self._preset_btn.setText(self.tr("Presets"))
         self._preset_btn.setObjectName("menuButton")
         self._preset_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._preset_btn.setToolTip("Apply a conversion preset")
+        self._preset_btn.setToolTip(self.tr("Apply a conversion preset"))
         self._preset_menu = QMenu(self)
         self._preset_menu.aboutToShow.connect(self._populate_preset_menu)
         self._preset_btn.setMenu(self._preset_menu)
         opt_grid.addWidget(self._preset_btn, 0, 3)
 
-        self.quality_desc_label = QLabel("JPEG/WebP quality")
+        self.quality_desc_label = QLabel(self.tr("JPEG/WebP quality"))
         self.quality_desc_label.setObjectName("fieldLabel")
         opt_grid.addWidget(self.quality_desc_label, 1, 0)
         self.quality_slider = QSlider(Qt.Orientation.Horizontal)
@@ -6608,7 +6608,7 @@ class MainWindow(QMainWindow):
         self.quality_slider.valueChanged.connect(lambda v: self.quality_label.setText(str(v)))
         opt_grid.addWidget(self.quality_label, 1, 3)
 
-        workers_label = QLabel("Workers")
+        workers_label = QLabel(self.tr("Workers"))
         workers_label.setObjectName("fieldLabel")
         opt_grid.addWidget(workers_label, 2, 0)
         self.workers_spin = QSpinBox()
@@ -6617,50 +6617,50 @@ class MainWindow(QMainWindow):
         self.workers_spin.setValue(min(cpu_count, 8))
         opt_grid.addWidget(self.workers_spin, 2, 1)
 
-        meta_label = QLabel("Metadata")
+        meta_label = QLabel(self.tr("Metadata"))
         meta_label.setObjectName("fieldLabel")
         opt_grid.addWidget(meta_label, 2, 2)
         self.meta_combo = QComboBox()
         self.meta_combo.addItems([
-            "Preserve All",
-            "Strip GPS Only",
-            "Strip GPS + Device Info",
-            "Strip All",
+            self.tr("Preserve All"),
+            self.tr("Strip GPS Only"),
+            self.tr("Strip GPS + Device Info"),
+            self.tr("Strip All"),
         ])
         self.meta_combo.setToolTip(
-            "Preserve All: keep EXIF/ICC/XMP intact\n"
+            self.tr("Preserve All: keep EXIF/ICC/XMP intact\n"
             "Strip GPS Only: remove location data, keep copyright and color\n"
             "Strip GPS + Device Info: remove location + camera make/model/serial\n"
-            "Strip All: remove all EXIF, ICC, and XMP metadata"
+            "Strip All: remove all EXIF, ICC, and XMP metadata")
         )
-        self.meta_combo.setAccessibleName("Metadata handling")
+        self.meta_combo.setAccessibleName(self.tr("Metadata handling"))
         self.meta_combo.setAccessibleDescription(
-            "Choose which metadata fields to preserve or strip during conversion"
+            self.tr("Choose which metadata fields to preserve or strip during conversion")
         )
         opt_grid.addWidget(self.meta_combo, 2, 3)
 
-        self.meta_chk = QCheckBox("Preserve metadata")
+        self.meta_chk = QCheckBox(self.tr("Preserve metadata"))
         self.meta_chk.setVisible(False)
-        self.strip_meta_chk = QCheckBox("Strip all metadata")
+        self.strip_meta_chk = QCheckBox(self.tr("Strip all metadata"))
         self.strip_meta_chk.setVisible(False)
 
-        self.skip_existing_chk = QCheckBox("Skip files that already have output")
+        self.skip_existing_chk = QCheckBox(self.tr("Skip files that already have output"))
         self.skip_existing_chk.setChecked(False)
-        self.skip_existing_chk.setToolTip("Resume interrupted batches — skip files where output already exists")
+        self.skip_existing_chk.setToolTip(self.tr("Resume interrupted batches — skip files where output already exists"))
         opt_grid.addWidget(self.skip_existing_chk, 3, 0, 1, 2)
 
-        self.progressive_jpeg_chk = QCheckBox("Progressive JPEG")
+        self.progressive_jpeg_chk = QCheckBox(self.tr("Progressive JPEG"))
         self.progressive_jpeg_chk.setChecked(False)
-        self.progressive_jpeg_chk.setToolTip("Save JPEGs as progressive (loads top-to-bottom in browsers)")
+        self.progressive_jpeg_chk.setToolTip(self.tr("Save JPEGs as progressive (loads top-to-bottom in browsers)"))
         opt_grid.addWidget(self.progressive_jpeg_chk, 3, 2)
 
-        self.lossless_webp_chk = QCheckBox("Lossless WebP")
+        self.lossless_webp_chk = QCheckBox(self.tr("Lossless WebP"))
         self.lossless_webp_chk.setChecked(False)
-        self.lossless_webp_chk.setToolTip("Save WebP files in lossless mode (larger files, no quality loss)")
+        self.lossless_webp_chk.setToolTip(self.tr("Save WebP files in lossless mode (larger files, no quality loss)"))
         opt_grid.addWidget(self.lossless_webp_chk, 3, 3)
 
         # ── Resize ──
-        self.resize_chk = QCheckBox("Resize")
+        self.resize_chk = QCheckBox(self.tr("Resize"))
         self.resize_chk.setChecked(False)
         self.resize_chk.toggled.connect(self._on_resize_toggled)
         opt_grid.addWidget(self.resize_chk, 4, 0)
@@ -6668,7 +6668,7 @@ class MainWindow(QMainWindow):
         self.resize_combo = QComboBox()
         self.resize_combo.setMinimumWidth(100)
         self.resize_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.resize_combo.addItems(["Max Dimension", "Scale"])
+        self.resize_combo.addItems([self.tr("Max Dimension"), self.tr("Scale")])
         self.resize_combo.setEnabled(False)
         self.resize_combo.currentIndexChanged.connect(self._on_resize_mode_changed)
         opt_grid.addWidget(self.resize_combo, 4, 1)
@@ -6681,50 +6681,50 @@ class MainWindow(QMainWindow):
         opt_grid.addWidget(self.resize_spin, 4, 2, 1, 2)
 
         # ── Filename Prefix / Suffix ──
-        prefix_label = QLabel("Prefix")
+        prefix_label = QLabel(self.tr("Prefix"))
         prefix_label.setObjectName("fieldLabel")
         opt_grid.addWidget(prefix_label, 5, 0)
         self.prefix_edit = QLineEdit()
-        self.prefix_edit.setPlaceholderText("e.g. converted_")
+        self.prefix_edit.setPlaceholderText(self.tr("e.g. converted_"))
         self.prefix_edit.setMinimumWidth(100)
         self.prefix_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         opt_grid.addWidget(self.prefix_edit, 5, 1)
 
-        suffix_label = QLabel("Suffix")
+        suffix_label = QLabel(self.tr("Suffix"))
         suffix_label.setObjectName("fieldLabel")
         opt_grid.addWidget(suffix_label, 5, 2)
         self.suffix_edit = QLineEdit()
-        self.suffix_edit.setPlaceholderText("e.g. _web")
+        self.suffix_edit.setPlaceholderText(self.tr("e.g. _web"))
         self.suffix_edit.setMinimumWidth(100)
         self.suffix_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         opt_grid.addWidget(self.suffix_edit, 5, 3)
 
         # ── Chroma Subsampling + sRGB ──
-        self.chroma_chk = QCheckBox("4:2:0 chroma (smaller JPEG files)")
+        self.chroma_chk = QCheckBox(self.tr("4:2:0 chroma (smaller JPEG files)"))
         self.chroma_chk.setChecked(False)
-        self.chroma_chk.setToolTip("Use 4:2:0 chroma subsampling instead of 4:4:4 for smaller JPEGs (slight color detail loss)")
+        self.chroma_chk.setToolTip(self.tr("Use 4:2:0 chroma subsampling instead of 4:4:4 for smaller JPEGs (slight color detail loss)"))
         opt_grid.addWidget(self.chroma_chk, 6, 0, 1, 2)
 
-        self.srgb_chk = QCheckBox("Convert colors to sRGB")
+        self.srgb_chk = QCheckBox(self.tr("Convert colors to sRGB"))
         self.srgb_chk.setChecked(False)
-        self.srgb_chk.setToolTip("Convert embedded ICC profiles (e.g. Display P3) to sRGB for maximum compatibility")
+        self.srgb_chk.setToolTip(self.tr("Convert embedded ICC profiles (e.g. Display P3) to sRGB for maximum compatibility"))
         opt_grid.addWidget(self.srgb_chk, 6, 2, 1, 2)
 
         # ── TIFF Compression + PNG Compression Level ──
-        self.tiff_comp_label = QLabel("TIFF compression")
+        self.tiff_comp_label = QLabel(self.tr("TIFF compression"))
         self.tiff_comp_label.setObjectName("fieldLabel")
         opt_grid.addWidget(self.tiff_comp_label, 7, 0)
         self.tiff_comp_combo = QComboBox()
-        self.tiff_comp_combo.addItems(["None", "LZW", "Deflate"])
+        self.tiff_comp_combo.addItems([self.tr("None"), "LZW", "Deflate"])
         opt_grid.addWidget(self.tiff_comp_combo, 7, 1)
 
-        self.png_level_label = QLabel("PNG compression")
+        self.png_level_label = QLabel(self.tr("PNG compression"))
         self.png_level_label.setObjectName("fieldLabel")
         opt_grid.addWidget(self.png_level_label, 7, 2)
         self.png_level_spin = QSpinBox()
         self.png_level_spin.setRange(1, 9)
         self.png_level_spin.setValue(6)
-        self.png_level_spin.setToolTip("PNG compression level (1=fastest, 9=smallest)")
+        self.png_level_spin.setToolTip(self.tr("PNG compression level (1=fastest, 9=smallest)"))
         opt_grid.addWidget(self.png_level_spin, 7, 3)
 
         scroll_layout.addWidget(opt_group)
@@ -6735,12 +6735,12 @@ class MainWindow(QMainWindow):
         self.adv_toggle.setCheckable(True)
         self.adv_toggle.setChecked(False)
         self.adv_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self.adv_toggle.setText("Show advanced output controls")
+        self.adv_toggle.setText(self.tr("Show advanced output controls"))
         self.adv_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.adv_toggle.toggled.connect(self._toggle_advanced)
         scroll_layout.addWidget(self.adv_toggle)
 
-        self.adv_group = QGroupBox("Advanced output controls")
+        self.adv_group = QGroupBox(self.tr("Advanced output controls"))
         self.adv_group.setVisible(False)
         adv_group = self.adv_group
         adv_grid = QGridLayout(adv_group)
@@ -6751,132 +6751,132 @@ class MainWindow(QMainWindow):
         adv_grid.setColumnStretch(2, 0)
         adv_grid.setColumnStretch(3, 1)
 
-        template_label = QLabel("Name template")
+        template_label = QLabel(self.tr("Name template"))
         template_label.setObjectName("fieldLabel")
         adv_grid.addWidget(template_label, 0, 0)
         self.template_edit = QLineEdit()
-        self.template_edit.setPlaceholderText("{stem}  (overrides prefix/suffix)")
+        self.template_edit.setPlaceholderText(self.tr("{stem}  (overrides prefix/suffix)"))
         self.template_edit.setMinimumWidth(100)
         self.template_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.template_edit.setToolTip(
-            "Output filename template. Tokens: {stem} {ext} {fmt} {src_dir} "
-            "{rel_dir} {width} {height} {date[:FMT]} {seq[:###]}"
+            self.tr("Output filename template. Tokens: {stem} {ext} {fmt} {src_dir} "
+            "{rel_dir} {width} {height} {date[:FMT]} {seq[:###]}")
         )
         adv_grid.addWidget(self.template_edit, 0, 1)
 
-        dpi_label = QLabel("DPI")
+        dpi_label = QLabel(self.tr("DPI"))
         dpi_label.setObjectName("fieldLabel")
         adv_grid.addWidget(dpi_label, 0, 2)
         self.dpi_spin = QSpinBox()
         self.dpi_spin.setRange(0, 2400)
         self.dpi_spin.setValue(0)
-        self.dpi_spin.setSpecialValueText("(unchanged)")
-        self.dpi_spin.setToolTip("Set output DPI tag for JPEG/PNG/TIFF (0 = keep original)")
+        self.dpi_spin.setSpecialValueText(self.tr("(unchanged)"))
+        self.dpi_spin.setToolTip(self.tr("Set output DPI tag for JPEG/PNG/TIFF (0 = keep original)"))
         adv_grid.addWidget(self.dpi_spin, 0, 3)
 
-        self.avif_speed_label = QLabel("AVIF speed")
+        self.avif_speed_label = QLabel(self.tr("AVIF speed"))
         self.avif_speed_label.setObjectName("fieldLabel")
         adv_grid.addWidget(self.avif_speed_label, 1, 0)
         self.avif_speed_spin = QSpinBox()
         self.avif_speed_spin.setRange(0, 10)
         self.avif_speed_spin.setValue(6)
         self.avif_speed_spin.setToolTip(
-            "AVIF encoding speed 0-10. Lower = smaller file, slower encode. "
-            "0 = best compression, 10 = fastest."
+            self.tr("AVIF encoding speed 0-10. Lower = smaller file, slower encode. "
+            "0 = best compression, 10 = fastest.")
         )
         adv_grid.addWidget(self.avif_speed_spin, 1, 1)
 
-        self.avif_codec_label = QLabel("AVIF codec")
+        self.avif_codec_label = QLabel(self.tr("AVIF codec"))
         self.avif_codec_label.setObjectName("fieldLabel")
         adv_grid.addWidget(self.avif_codec_label, 1, 2)
         self.avif_codec_combo = QComboBox()
         self.avif_codec_combo.addItems(["Auto", "aom", "rav1e", "svt"])
         self.avif_codec_combo.setToolTip(
-            "AVIF encoder. Auto lets Pillow choose, svt is fastest, "
-            "aom has best compression, rav1e is in between."
+            self.tr("AVIF encoder. Auto lets Pillow choose, svt is fastest, "
+            "aom has best compression, rav1e is in between.")
         )
         adv_grid.addWidget(self.avif_codec_combo, 1, 3)
 
-        self.frames_label = QLabel("Multi-frame")
+        self.frames_label = QLabel(self.tr("Multi-frame"))
         self.frames_label.setObjectName("fieldLabel")
         adv_grid.addWidget(self.frames_label, 2, 0)
         self.frames_combo = QComboBox()
-        self.frames_combo.addItems(["First Frame Only", "Extract All Frames", "Preserve Animation"])
+        self.frames_combo.addItems([self.tr("First Frame Only"), self.tr("Extract All Frames"), self.tr("Preserve Animation")])
         self.frames_combo.setToolTip(
-            "How to handle multi-frame sources (animated WebP/GIF/APNG, multi-page TIFF, HEIC sequences)"
+            self.tr("How to handle multi-frame sources (animated WebP/GIF/APNG, multi-page TIFF, HEIC sequences)")
         )
         adv_grid.addWidget(self.frames_combo, 2, 1)
 
-        self.tone_map_label = QLabel("Tone map")
+        self.tone_map_label = QLabel(self.tr("Tone map"))
         self.tone_map_label.setObjectName("fieldLabel")
         adv_grid.addWidget(self.tone_map_label, 2, 2)
         self.tone_map_combo = QComboBox()
-        self.tone_map_combo.addItems(["None", "Reinhard", "Hable", "Clip"])
+        self.tone_map_combo.addItems([self.tr("None"), "Reinhard", "Hable", "Clip"])
         self.tone_map_combo.setToolTip(
-            "HDR tone-mapping curve for PQ/HLG/wide-gamut sources"
+            self.tr("HDR tone-mapping curve for PQ/HLG/wide-gamut sources")
         )
         adv_grid.addWidget(self.tone_map_combo, 2, 3)
 
-        icc_label = QLabel("ICC override")
+        icc_label = QLabel(self.tr("ICC override"))
         icc_label.setObjectName("fieldLabel")
         adv_grid.addWidget(icc_label, 3, 0)
         self.icc_edit = QLineEdit()
-        self.icc_edit.setPlaceholderText("sRGB or path to .icc file")
+        self.icc_edit.setPlaceholderText(self.tr("sRGB or path to .icc file"))
         self.icc_edit.setMinimumWidth(100)
         self.icc_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.icc_edit.setToolTip(
-            "Embed a specific ICC profile. Enter 'sRGB' for built-in or "
-            "a path to an .icc/.icm file. Leave empty to keep source profile."
+            self.tr("Embed a specific ICC profile. Enter 'sRGB' for built-in or "
+            "a path to an .icc/.icm file. Leave empty to keep source profile.")
         )
         adv_grid.addWidget(self.icc_edit, 3, 1, 1, 3)
 
-        watermark_label = QLabel("Watermark")
+        watermark_label = QLabel(self.tr("Watermark"))
         watermark_label.setObjectName("fieldLabel")
         adv_grid.addWidget(watermark_label, 4, 0)
         self.watermark_edit = QLineEdit()
-        self.watermark_edit.setPlaceholderText("text|position|opacity  or  logo.png|position|opacity")
+        self.watermark_edit.setPlaceholderText(self.tr("text|position|opacity  or  logo.png|position|opacity"))
         self.watermark_edit.setMinimumWidth(100)
         self.watermark_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.watermark_edit.setToolTip(
-            "Watermark spec: 'TEXT|position|opacity' or 'image.png|position|opacity'. "
+            self.tr("Watermark spec: 'TEXT|position|opacity' or 'image.png|position|opacity'. "
             "Positions: top-left, top, top-right, left, center, right, "
-            "bottom-left, bottom, bottom-right. Opacity: 0.0-1.0."
+            "bottom-left, bottom, bottom-right. Opacity: 0.0-1.0.")
         )
         adv_grid.addWidget(self.watermark_edit, 4, 1, 1, 3)
 
-        canvas_label = QLabel("Canvas")
+        canvas_label = QLabel(self.tr("Canvas"))
         canvas_label.setObjectName("fieldLabel")
         adv_grid.addWidget(canvas_label, 5, 0)
         self.canvas_edit = QLineEdit()
-        self.canvas_edit.setPlaceholderText("WxH  (e.g. 1920x1080)")
+        self.canvas_edit.setPlaceholderText(self.tr("WxH  (e.g. 1920x1080)"))
         self.canvas_edit.setMinimumWidth(100)
         self.canvas_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.canvas_edit.setToolTip("Pad output to canvas size preserving aspect ratio")
+        self.canvas_edit.setToolTip(self.tr("Pad output to canvas size preserving aspect ratio"))
         adv_grid.addWidget(self.canvas_edit, 5, 1)
 
-        canvas_bg_label = QLabel("Canvas BG")
+        canvas_bg_label = QLabel(self.tr("Canvas BG"))
         canvas_bg_label.setObjectName("fieldLabel")
         adv_grid.addWidget(canvas_bg_label, 5, 2)
         self.canvas_bg_edit = QLineEdit()
         self.canvas_bg_edit.setText("transparent")
         self.canvas_bg_edit.setMinimumWidth(100)
         self.canvas_bg_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.canvas_bg_edit.setToolTip("Canvas background: 'transparent', '#RRGGBB', or named color")
+        self.canvas_bg_edit.setToolTip(self.tr("Canvas background: 'transparent', '#RRGGBB', or named color"))
         adv_grid.addWidget(self.canvas_bg_edit, 5, 3)
 
-        self.xmp_sidecar_chk = QCheckBox("Emit XMP sidecar")
-        self.xmp_sidecar_chk.setToolTip("Write .xmp sidecar alongside output (Adobe Bridge / darktable convention)")
+        self.xmp_sidecar_chk = QCheckBox(self.tr("Emit XMP sidecar"))
+        self.xmp_sidecar_chk.setToolTip(self.tr("Write .xmp sidecar alongside output (Adobe Bridge / darktable convention)"))
         adv_grid.addWidget(self.xmp_sidecar_chk, 6, 0, 1, 2)
 
-        self.recompress_chk = QCheckBox("Recompress JPEG (lossless)")
+        self.recompress_chk = QCheckBox(self.tr("Recompress JPEG (lossless)"))
         self.recompress_chk.setToolTip(
-            "For JPEG→JPEG: use jpegoptim/jpegtran for pixel-lossless size reduction "
-            "instead of decode-re-encode. Requires jpegoptim or jpegtran on PATH."
+            self.tr("For JPEG→JPEG: use jpegoptim/jpegtran for pixel-lossless size reduction "
+            "instead of decode-re-encode. Requires jpegoptim or jpegtran on PATH.")
         )
         adv_grid.addWidget(self.recompress_chk, 6, 2, 1, 2)
 
-        self.only_if_smaller_chk = QCheckBox("Only if smaller by")
-        self.only_if_smaller_chk.setToolTip("Discard output when it's not meaningfully smaller than input")
+        self.only_if_smaller_chk = QCheckBox(self.tr("Only if smaller by"))
+        self.only_if_smaller_chk.setToolTip(self.tr("Discard output when it's not meaningfully smaller than input"))
         adv_grid.addWidget(self.only_if_smaller_chk, 7, 0)
         self.only_if_smaller_spin = QSpinBox()
         self.only_if_smaller_spin.setRange(1, 99)
@@ -6886,41 +6886,41 @@ class MainWindow(QMainWindow):
         self.only_if_smaller_chk.toggled.connect(self.only_if_smaller_spin.setEnabled)
         adv_grid.addWidget(self.only_if_smaller_spin, 7, 1)
 
-        target_label = QLabel("Target KB")
+        target_label = QLabel(self.tr("Target KB"))
         target_label.setObjectName("fieldLabel")
         adv_grid.addWidget(target_label, 7, 2)
         self.target_kb_spin = QSpinBox()
         self.target_kb_spin.setRange(0, 100000)
         self.target_kb_spin.setValue(0)
-        self.target_kb_spin.setSpecialValueText("(disabled)")
-        self.target_kb_spin.setToolTip("Binary-search quality to hit a target output size in KB (0 = disabled)")
+        self.target_kb_spin.setSpecialValueText(self.tr("(disabled)"))
+        self.target_kb_spin.setToolTip(self.tr("Binary-search quality to hit a target output size in KB (0 = disabled)"))
         adv_grid.addWidget(self.target_kb_spin, 7, 3)
 
-        self.png_lossy_chk = QCheckBox("Lossy PNG (pngquant)")
+        self.png_lossy_chk = QCheckBox(self.tr("Lossy PNG (pngquant)"))
         self.png_lossy_chk.setToolTip(
-            "Run pngquant for 50-80% PNG size reduction via lossy quantization. "
-            "Requires pngquant on PATH."
+            self.tr("Run pngquant for 50-80% PNG size reduction via lossy quantization. "
+            "Requires pngquant on PATH.")
         )
         adv_grid.addWidget(self.png_lossy_chk, 8, 0, 1, 2)
 
-        exclude_label = QLabel("Exclude")
+        exclude_label = QLabel(self.tr("Exclude"))
         exclude_label.setObjectName("fieldLabel")
         adv_grid.addWidget(exclude_label, 9, 0)
         self.exclude_edit = QLineEdit()
         self.exclude_edit.setPlaceholderText("*.thumb.*; cache/**")
         self.exclude_edit.setMinimumWidth(100)
         self.exclude_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.exclude_edit.setToolTip("Semicolon-separated glob patterns to skip during scan")
+        self.exclude_edit.setToolTip(self.tr("Semicolon-separated glob patterns to skip during scan"))
         adv_grid.addWidget(self.exclude_edit, 9, 1)
 
-        max_file_size_label = QLabel("Max file")
+        max_file_size_label = QLabel(self.tr("Max file"))
         max_file_size_label.setObjectName("fieldLabel")
         adv_grid.addWidget(max_file_size_label, 9, 2)
         self.max_file_size_edit = QLineEdit()
         self.max_file_size_edit.setPlaceholderText("500MB")
         self.max_file_size_edit.setMinimumWidth(100)
         self.max_file_size_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.max_file_size_edit.setToolTip("Skip files larger than this size (B, KB, MB, GB, TB)")
+        self.max_file_size_edit.setToolTip(self.tr("Skip files larger than this size (B, KB, MB, GB, TB)"))
         self.max_file_size_edit.textChanged.connect(lambda: self.max_file_size_edit.setStyleSheet(""))
         adv_grid.addWidget(self.max_file_size_edit, 9, 3)
 
@@ -6946,38 +6946,38 @@ class MainWindow(QMainWindow):
         output_actions.setContentsMargins(0, 0, 0, 0)
         output_actions.setSpacing(10)
 
-        self.scan_btn = QPushButton("Scan Source")
+        self.scan_btn = QPushButton(self.tr("Scan Source"))
         self.scan_btn.setObjectName("primaryBtn")
         self.scan_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView))
         self.scan_btn.clicked.connect(self._scan)
         primary_actions.addWidget(self.scan_btn)
 
-        self.convert_btn = QPushButton("Convert Batch")
+        self.convert_btn = QPushButton(self.tr("Convert Batch"))
         self.convert_btn.setObjectName("primaryBtn")
         self.convert_btn.setEnabled(False)
         self.convert_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.convert_btn.clicked.connect(self._convert)
         primary_actions.addWidget(self.convert_btn)
 
-        self.stop_btn = QPushButton("Cancel")
+        self.stop_btn = QPushButton(self.tr("Cancel"))
         self.stop_btn.setObjectName("stopBtn")
         self.stop_btn.setEnabled(False)
         self.stop_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogCancelButton))
         self.stop_btn.clicked.connect(self._stop)
         primary_actions.addWidget(self.stop_btn)
 
-        self.pause_btn = QPushButton("Pause")
+        self.pause_btn = QPushButton(self.tr("Pause"))
         self.pause_btn.setObjectName("secondaryBtn")
         self.pause_btn.setEnabled(False)
-        self.pause_btn.setToolTip("Pause conversion after the current in-flight files finish")
-        self.pause_btn.setAccessibleName("Pause/Resume conversion")
+        self.pause_btn.setToolTip(self.tr("Pause conversion after the current in-flight files finish"))
+        self.pause_btn.setAccessibleName(self.tr("Pause/Resume conversion"))
         self.pause_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
         self.pause_btn.clicked.connect(self._toggle_pause)
         primary_actions.addWidget(self.pause_btn)
 
-        self.paste_btn = QPushButton("Paste Image")
+        self.paste_btn = QPushButton(self.tr("Paste Image"))
         self.paste_btn.setObjectName("secondaryBtn")
-        self.paste_btn.setToolTip("Paste an image from the clipboard as a temporary PNG input")
+        self.paste_btn.setToolTip(self.tr("Paste an image from the clipboard as a temporary PNG input"))
         self.paste_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
         self.paste_btn.clicked.connect(self._paste_clipboard)
 
@@ -6985,64 +6985,64 @@ class MainWindow(QMainWindow):
 
         secondary_actions.addWidget(self.paste_btn)
 
-        self.manage_plugins_btn = QPushButton("Plugins")
+        self.manage_plugins_btn = QPushButton(self.tr("Plugins"))
         self.manage_plugins_btn.setObjectName("secondaryBtn")
-        self.manage_plugins_btn.setToolTip("Review plugin trust status")
+        self.manage_plugins_btn.setToolTip(self.tr("Review plugin trust status"))
         self.manage_plugins_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView))
         self.manage_plugins_btn.clicked.connect(self._open_plugin_trust)
         secondary_actions.addWidget(self.manage_plugins_btn)
 
-        self.watch_folders_btn = QPushButton("Watch Folders")
+        self.watch_folders_btn = QPushButton(self.tr("Watch Folders"))
         self.watch_folders_btn.setObjectName("secondaryBtn")
-        self.watch_folders_btn.setToolTip("Manage hot-folder watch profiles")
-        self.watch_folders_btn.setAccessibleName("Watch folder profiles")
+        self.watch_folders_btn.setToolTip(self.tr("Manage hot-folder watch profiles"))
+        self.watch_folders_btn.setAccessibleName(self.tr("Watch folder profiles"))
         self.watch_folders_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
         self.watch_folders_btn.clicked.connect(self._open_watch_folders)
         secondary_actions.addWidget(self.watch_folders_btn)
 
-        self.history_btn = QPushButton("History")
+        self.history_btn = QPushButton(self.tr("History"))
         self.history_btn.setObjectName("secondaryBtn")
-        self.history_btn.setToolTip("Review redacted local batch history")
-        self.history_btn.setAccessibleName("Batch history")
+        self.history_btn.setToolTip(self.tr("Review redacted local batch history"))
+        self.history_btn.setAccessibleName(self.tr("Batch history"))
         self.history_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
         self.history_btn.clicked.connect(self._open_batch_history)
         secondary_actions.addWidget(self.history_btn)
 
-        self.shell_btn = QPushButton("Shell")
+        self.shell_btn = QPushButton(self.tr("Shell"))
         self.shell_btn.setObjectName("secondaryBtn")
-        self.shell_btn.setToolTip("Manage file-manager context-menu integration")
-        self.shell_btn.setAccessibleName("Shell integration")
+        self.shell_btn.setToolTip(self.tr("Manage file-manager context-menu integration"))
+        self.shell_btn.setAccessibleName(self.tr("Shell integration"))
         self.shell_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon))
         self.shell_btn.clicked.connect(self._open_shell_integration)
         secondary_actions.addWidget(self.shell_btn)
 
-        self.dedup_btn = QPushButton("Duplicates")
+        self.dedup_btn = QPushButton(self.tr("Duplicates"))
         self.dedup_btn.setObjectName("secondaryBtn")
-        self.dedup_btn.setToolTip("Check for near-duplicate images in the scanned files")
-        self.dedup_btn.setAccessibleName("Duplicate review")
+        self.dedup_btn.setToolTip(self.tr("Check for near-duplicate images in the scanned files"))
+        self.dedup_btn.setAccessibleName(self.tr("Duplicate review"))
         self.dedup_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView))
         self.dedup_btn.setEnabled(False)
         self.dedup_btn.clicked.connect(self._check_duplicates)
         secondary_actions.addWidget(self.dedup_btn)
 
-        self.auto_open_chk = QCheckBox("Auto-open output")
+        self.auto_open_chk = QCheckBox(self.tr("Auto-open output"))
         self.auto_open_chk.setChecked(False)
-        self.auto_open_chk.setToolTip("Automatically open the output folder when conversion finishes")
+        self.auto_open_chk.setToolTip(self.tr("Automatically open the output folder when conversion finishes"))
         secondary_actions.addStretch()
         output_actions.addStretch()
         output_actions.addWidget(self.auto_open_chk)
 
-        when_done_label = QLabel("After conversion:")
+        when_done_label = QLabel(self.tr("After conversion:"))
         when_done_label.setObjectName("fieldLabel")
         output_actions.addWidget(when_done_label)
         self.when_done_combo = QComboBox()
-        self.when_done_combo.addItems(["Do Nothing", "Close App", "Sleep", "Shutdown"])
-        self.when_done_combo.setToolTip("Action to take after batch conversion completes")
-        self.when_done_combo.setAccessibleName("When done action")
+        self.when_done_combo.addItems([self.tr("Do Nothing"), self.tr("Close App"), self.tr("Sleep"), self.tr("Shutdown")])
+        self.when_done_combo.setToolTip(self.tr("Action to take after batch conversion completes"))
+        self.when_done_combo.setAccessibleName(self.tr("When done action"))
         self.when_done_combo.setFixedWidth(130)
         output_actions.addWidget(self.when_done_combo)
 
-        self.open_output_btn = QPushButton("Open Output")
+        self.open_output_btn = QPushButton(self.tr("Open Output"))
         self.open_output_btn.setObjectName("secondaryBtn")
         self.open_output_btn.setEnabled(False)
         self.open_output_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
@@ -7066,12 +7066,12 @@ class MainWindow(QMainWindow):
         stats_layout.setContentsMargins(10, 10, 10, 10)
         stats_layout.setSpacing(8)
 
-        self.stat_files = self._make_stat("0", "Files Found")
-        self.stat_size = self._make_stat("0 B", "Total Size")
-        self.stat_done = self._make_stat("0", "Converted")
-        self.stat_skipped = self._make_stat("0", "Skipped")
-        self.stat_failed = self._make_stat("0", "Failed")
-        self.stat_saved = self._make_stat("0 B", "Space Saved")
+        self.stat_files = self._make_stat("0", self.tr("Files Found"))
+        self.stat_size = self._make_stat("0 B", self.tr("Total Size"))
+        self.stat_done = self._make_stat("0", self.tr("Converted"))
+        self.stat_skipped = self._make_stat("0", self.tr("Skipped"))
+        self.stat_failed = self._make_stat("0", self.tr("Failed"))
+        self.stat_saved = self._make_stat("0 B", self.tr("Space Saved"))
 
         for w in [self.stat_files, self.stat_size, self.stat_done,
                   self.stat_skipped, self.stat_failed, self.stat_saved]:
@@ -7085,15 +7085,15 @@ class MainWindow(QMainWindow):
         self._review_toggle.setCheckable(True)
         self._review_toggle.setChecked(False)
         self._review_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self._review_toggle.setText("Show scan review table")
+        self._review_toggle.setText(self.tr("Show scan review table"))
         self._review_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._review_toggle.setToolTip("Toggle file-level scan results table")
+        self._review_toggle.setToolTip(self.tr("Toggle file-level scan results table"))
         self._review_toggle.toggled.connect(self._toggle_review_table)
         self._review_toggle.setVisible(False)
         scroll_layout.addWidget(self._review_toggle)
 
         self._review_table = QTableWidget(0, 7)
-        self._review_table.setHorizontalHeaderLabels(["", "File", "Format", "Size", "Output", "Est. Output", "Warnings"])
+        self._review_table.setHorizontalHeaderLabels(["", self.tr("File"), self.tr("Format"), self.tr("Size"), self.tr("Output"), self.tr("Est. Output"), self.tr("Warnings")])
         self._review_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self._review_table.setColumnWidth(0, 52)
         self._review_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -7109,8 +7109,8 @@ class MainWindow(QMainWindow):
         self._review_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._review_table.setSortingEnabled(True)
         self._review_table.setAlternatingRowColors(True)
-        self._review_table.setAccessibleName("Scan review table")
-        self._review_table.setAccessibleDescription("File-level scan results with format, size, and warnings")
+        self._review_table.setAccessibleName(self.tr("Scan review table"))
+        self._review_table.setAccessibleDescription(self.tr("File-level scan results with format, size, and warnings"))
         self._review_table.setVisible(False)
         self._review_table.setMaximumHeight(220)
         scroll_layout.addWidget(self._review_table)
@@ -7123,35 +7123,35 @@ class MainWindow(QMainWindow):
 
         # ── Log + controls ──
         log_header = QHBoxLayout()
-        log_label = QLabel("Activity log")
+        log_label = QLabel(self.tr("Activity log"))
         log_label.setObjectName("fieldLabel")
         log_header.addWidget(log_label)
         log_header.addStretch()
 
-        self.export_log_btn = QPushButton("Export Log")
+        self.export_log_btn = QPushButton(self.tr("Export Log"))
         self.export_log_btn.setObjectName("miniBtn")
-        self.export_log_btn.setToolTip("Save the conversion log as a text file")
+        self.export_log_btn.setToolTip(self.tr("Save the conversion log as a text file"))
         self.export_log_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_log_btn.clicked.connect(self._export_log)
         log_header.addWidget(self.export_log_btn)
 
-        self.export_csv_btn = QPushButton("Export CSV")
+        self.export_csv_btn = QPushButton(self.tr("Export CSV"))
         self.export_csv_btn.setObjectName("miniBtn")
-        self.export_csv_btn.setToolTip("Export conversion results as a CSV report")
+        self.export_csv_btn.setToolTip(self.tr("Export conversion results as a CSV report"))
         self.export_csv_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_csv_btn.clicked.connect(self._export_csv)
         log_header.addWidget(self.export_csv_btn)
 
-        self.export_support_btn = QPushButton("Support Bundle")
+        self.export_support_btn = QPushButton(self.tr("Support Bundle"))
         self.export_support_btn.setObjectName("miniBtn")
-        self.export_support_btn.setToolTip("Save redacted diagnostics for support")
+        self.export_support_btn.setToolTip(self.tr("Save redacted diagnostics for support"))
         self.export_support_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_support_btn.clicked.connect(self._export_support_bundle)
         log_header.addWidget(self.export_support_btn)
 
-        self.clear_log_btn = QPushButton("Clear")
+        self.clear_log_btn = QPushButton(self.tr("Clear"))
         self.clear_log_btn.setObjectName("miniBtn")
-        self.clear_log_btn.setToolTip("Clear the log output")
+        self.clear_log_btn.setToolTip(self.tr("Clear the log output"))
         self.clear_log_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
         self.clear_log_btn.clicked.connect(self._clear_log)
         log_header.addWidget(self.clear_log_btn)
@@ -7165,7 +7165,7 @@ class MainWindow(QMainWindow):
         log_filter_bar = QHBoxLayout()
         log_filter_bar.setSpacing(4)
         self._log_filter_edit = QLineEdit()
-        self._log_filter_edit.setPlaceholderText("Filter log (Ctrl+F)…")
+        self._log_filter_edit.setPlaceholderText(self.tr("Filter log (Ctrl+F)…"))
         self._log_filter_edit.setClearButtonEnabled(True)
         self._log_filter_edit.textChanged.connect(self._apply_log_filter)
         log_filter_bar.addWidget(self._log_filter_edit, 1)
@@ -7177,7 +7177,7 @@ class MainWindow(QMainWindow):
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setPlaceholderText("Scan a source folder to see matching files, warnings, and conversion results.")
+        self.log_view.setPlaceholderText(self.tr("Scan a source folder to see matching files, warnings, and conversion results."))
         self.log_view.setMaximumBlockCount(5000)
         self.log_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.log_view.customContextMenuRequested.connect(self._on_log_context_menu)
@@ -7195,7 +7195,7 @@ class MainWindow(QMainWindow):
         # ── Status bar ──
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self._set_workflow_state("Ready", "Select a source folder to begin.")
+        self._set_workflow_state(self.tr("Ready"), self.tr("Select a source folder to begin."))
 
     def _make_stat(self, value: str, label: str) -> QWidget:
         w = QFrame()
@@ -7228,21 +7228,21 @@ class MainWindow(QMainWindow):
         self.adv_group.setVisible(checked)
         self.adv_toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
         self.adv_toggle.setText(
-            "Hide advanced output controls" if checked else "Show advanced output controls"
+            self.tr("Hide advanced output controls") if checked else self.tr("Show advanced output controls")
         )
 
     def _toggle_filters(self, checked: bool):
         self.filter_group.setVisible(checked)
         self.filter_toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
         self.filter_toggle.setText(
-            "Hide input format filters" if checked else "Show input format filters"
+            self.tr("Hide input format filters") if checked else self.tr("Show input format filters")
         )
 
     def _toggle_review_table(self, checked: bool):
         self._review_table.setVisible(checked)
         self._review_toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
         self._review_toggle.setText(
-            "Hide scan review table" if checked else "Show scan review table"
+            self.tr("Hide scan review table") if checked else self.tr("Show scan review table")
         )
 
     def _populate_review_table(self, files: list[Path]):
@@ -7315,10 +7315,10 @@ class MainWindow(QMainWindow):
         self._thumb_loader.thumbnail_ready.connect(self._on_thumbnail_ready)
         self._thumb_loader.start()
         self._review_toggle.setVisible(True)
-        self._review_toggle.setText(
+        self._review_toggle.setText(self.tr(
             f"{'Hide' if self._review_toggle.isChecked() else 'Show'} scan review table "
             f"({len(files)} files)"
-        )
+        ))
 
     def _review_table_start_drag(self, supported_actions):
         from PyQt6.QtGui import QDrag
@@ -7360,7 +7360,7 @@ class MainWindow(QMainWindow):
     def _set_line_error(self, widget, message: str):
         widget.setStyleSheet(f"border: 1px solid {CAT['red']};")
         widget.setFocus()
-        self._set_workflow_state("Needs input", message)
+        self._set_workflow_state(self.tr("Needs input"), message)
 
     def _set_conversion_busy(self, busy: bool):
         enabled = not busy
@@ -7526,7 +7526,7 @@ class MainWindow(QMainWindow):
         img = clipboard.image()
         if img.isNull():
             self._log("[PASTE] No image found on clipboard.")
-            self._set_workflow_state("No image", "Clipboard does not contain an image.")
+            self._set_workflow_state(self.tr("No image"), self.tr("Clipboard does not contain an image."))
             return
         tmp_dir = USER_CACHE_DIR / "clipboard"
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -7545,23 +7545,23 @@ class MainWindow(QMainWindow):
         self._update_title("scanned", count=1)
         self.progress_bar.setMaximum(100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("Ready to convert")
-        self._set_workflow_state("Ready to convert", "Clipboard image is ready to convert.")
+        self.progress_bar.setFormat(self.tr("Ready to convert"))
+        self._set_workflow_state(self.tr("Ready to convert"), self.tr("Clipboard image is ready to convert."))
         self._log(f"[PASTE] Pasted clipboard image as {tmp_path.name} ({_fmt_size(total_size)})")
 
     # ── Log context menu ──
     def _on_log_context_menu(self, pos):
         menu = QMenu(self)
-        copy_sel = menu.addAction("Copy Selection")
+        copy_sel = menu.addAction(self.tr("Copy Selection"))
         copy_sel.setEnabled(self.log_view.textCursor().hasSelection())
         copy_sel.triggered.connect(self.log_view.copy)
 
-        copy_all = menu.addAction("Copy All")
+        copy_all = menu.addAction(self.tr("Copy All"))
         copy_all.triggered.connect(lambda: QApplication.clipboard().setText(self.log_view.toPlainText()))
 
         menu.addSeparator()
 
-        open_loc = menu.addAction("Open File Location")
+        open_loc = menu.addAction(self.tr("Open File Location"))
         open_loc.setEnabled(self._last_ok_dst is not None)
         open_loc.triggered.connect(
             lambda: _open_path(str(self._last_ok_dst.parent)) if self._last_ok_dst else None
@@ -7573,11 +7573,11 @@ class MainWindow(QMainWindow):
         # gives users a working alternative that doesn't require GUI tests.
         if self._last_ok_dst is not None:
             menu.addSeparator()
-            copy_dst_path = menu.addAction("Copy Output Path")
+            copy_dst_path = menu.addAction(self.tr("Copy Output Path"))
             copy_dst_path.triggered.connect(
                 lambda: QApplication.clipboard().setText(str(self._last_ok_dst))
             )
-            reveal_dst = menu.addAction("Reveal Output in File Manager")
+            reveal_dst = menu.addAction(self.tr("Reveal Output in File Manager"))
             reveal_dst.triggered.connect(
                 lambda: _open_path(str(self._last_ok_dst.parent))
             )
@@ -7604,15 +7604,15 @@ class MainWindow(QMainWindow):
         self.dst_btn.setEnabled(not checked)
         self.structure_chk.setEnabled(not checked)
         if checked:
-            self.dst_edit.setPlaceholderText("In-place mode writes next to each source")
-            self._set_workflow_state("In-place mode", "In-place mode will delete each source only after output validation succeeds.")
+            self.dst_edit.setPlaceholderText(self.tr("In-place mode writes next to each source"))
+            self._set_workflow_state(self.tr("In-place mode"), self.tr("In-place mode will delete each source only after output validation succeeds."))
         else:
-            self.dst_edit.setPlaceholderText("Default: source/converted")
-            self._set_workflow_state("Ready", "Output folder mode restored.")
+            self.dst_edit.setPlaceholderText(self.tr("Default: source/converted"))
+            self._set_workflow_state(self.tr("Ready"), self.tr("Output folder mode restored."))
 
     # ── Browse ──
     def _browse_source(self):
-        d = QFileDialog.getExistingDirectory(self, "Select Source Directory",
+        d = QFileDialog.getExistingDirectory(self, self.tr("Select Source Directory"),
                                              self.src_edit.text() or str(Path.home()))
         if d:
             self.src_edit.setText(d)
@@ -7621,7 +7621,7 @@ class MainWindow(QMainWindow):
             self._add_recent_dir(d)
 
     def _browse_output(self):
-        d = QFileDialog.getExistingDirectory(self, "Select Output Directory",
+        d = QFileDialog.getExistingDirectory(self, self.tr("Select Output Directory"),
                                              self.dst_edit.text() or str(Path.home()))
         if d:
             self.dst_edit.setText(d)
@@ -7656,7 +7656,7 @@ class MainWindow(QMainWindow):
         self._recent_menu.clear()
         recent = self._get_recent_dirs()
         if not recent:
-            action = self._recent_menu.addAction("No recent directories")
+            action = self._recent_menu.addAction(self.tr("No recent directories"))
             action.setEnabled(False)
         else:
             for path in recent:
@@ -7689,15 +7689,15 @@ class MainWindow(QMainWindow):
 
         # Quality label text
         if is_jpeg:
-            self.quality_desc_label.setText("JPEG quality")
+            self.quality_desc_label.setText(self.tr("JPEG quality"))
         elif is_webp:
-            self.quality_desc_label.setText("WebP quality")
+            self.quality_desc_label.setText(self.tr("WebP quality"))
         elif is_avif:
-            self.quality_desc_label.setText("AVIF quality")
+            self.quality_desc_label.setText(self.tr("AVIF quality"))
         elif is_jxl:
-            self.quality_desc_label.setText("JXL quality")
+            self.quality_desc_label.setText(self.tr("JXL quality"))
         else:
-            self.quality_desc_label.setText("JPEG/WebP quality")
+            self.quality_desc_label.setText(self.tr("JPEG/WebP quality"))
 
         # Chroma subsampling: JPEG, Auto
         self.chroma_chk.setVisible(is_auto or is_jpeg)
@@ -7753,15 +7753,15 @@ class MainWindow(QMainWindow):
     # ── Log controls ──
     def _export_log(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export Log", str(Path.home() / "imgconverter_log.txt"),
-            "Text Files (*.txt);;All Files (*)"
+            self, self.tr("Export Log"), str(Path.home() / "imgconverter_log.txt"),
+            self.tr("Text Files (*.txt);;All Files (*)")
         )
         if path:
             try:
                 _write_text_atomic(Path(path), self.log_view.toPlainText(), encoding="utf-8")
             except OSError as e:
                 self._log(f"[ERROR] Could not export log: {e}")
-                self._set_workflow_state("Export failed", "Choose a writable folder and try again.")
+                self._set_workflow_state(self.tr("Export failed"), self.tr("Choose a writable folder and try again."))
                 return
             self._log(f"Log exported to {path}")
 
@@ -7769,11 +7769,11 @@ class MainWindow(QMainWindow):
         """Export conversion results as a CSV report."""
         if not self._results:
             self._log("[ERROR] No conversion results to export.")
-            self._set_workflow_state("No report", "Run a conversion before exporting a CSV report.")
+            self._set_workflow_state(self.tr("No report"), self.tr("Run a conversion before exporting a CSV report."))
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export CSV Report", str(Path.home() / "imgconverter_report.csv"),
-            "CSV Files (*.csv);;All Files (*)"
+            self, self.tr("Export CSV Report"), str(Path.home() / "imgconverter_report.csv"),
+            self.tr("CSV Files (*.csv);;All Files (*)")
         )
         if path:
             import csv
@@ -7795,7 +7795,7 @@ class MainWindow(QMainWindow):
                 _write_text_atomic(Path(path), buffer.getvalue(), encoding="utf-8")
             except OSError as e:
                 self._log(f"[ERROR] Could not export CSV report: {e}")
-                self._set_workflow_state("Export failed", "Choose a writable folder and try again.")
+                self._set_workflow_state(self.tr("Export failed"), self.tr("Choose a writable folder and try again."))
                 return
             _update_batch_history_artifact(self._last_history_id, "report", Path(path))
             self._log(f"CSV report exported to {path}")
@@ -7851,8 +7851,8 @@ class MainWindow(QMainWindow):
 
     def _export_support_bundle(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export Support Bundle", str(Path.home() / "imgconverter_support.zip"),
-            "Zip Files (*.zip);;All Files (*)"
+            self, self.tr("Export Support Bundle"), str(Path.home() / "imgconverter_support.zip"),
+            self.tr("Zip Files (*.zip);;All Files (*)")
         )
         if not path:
             return
@@ -7864,10 +7864,10 @@ class MainWindow(QMainWindow):
             )
             _update_batch_history_artifact(self._last_history_id, "support_bundle", written)
             self._log(f"Support bundle exported to {written}")
-            self._set_workflow_state("Support bundle exported", "Redacted diagnostics were saved.")
+            self._set_workflow_state(self.tr("Support bundle exported"), self.tr("Redacted diagnostics were saved."))
         except OSError as e:
             self._log(f"[ERROR] Support bundle export failed: {e}")
-            self._set_workflow_state("Export failed", "Support bundle could not be written.")
+            self._set_workflow_state(self.tr("Export failed"), self.tr("Support bundle could not be written."))
 
     def _clear_log(self):
         self._log_lines.clear()
@@ -7880,7 +7880,7 @@ class MainWindow(QMainWindow):
         src = self.src_edit.text().strip()
         if not src or not Path(src).is_dir():
             self._log("[ERROR] Please select a valid source directory.")
-            self._set_line_error(self.src_edit, "Select a valid source folder before scanning.")
+            self._set_line_error(self.src_edit, self.tr("Select a valid source folder before scanning."))
             return
 
         self._update_title()
@@ -7890,14 +7890,14 @@ class MainWindow(QMainWindow):
             self._thumb_loader.stop()
         self._review_table.setRowCount(0)
         self._review_toggle.setVisible(False)
-        self._set_workflow_state("Scanning", "Scanning source folder...")
+        self._set_workflow_state(self.tr("Scanning"), self.tr("Scanning source folder..."))
         self._log(f"[SCAN] {src}")
 
         enabled_exts = self._get_enabled_extensions()
         if not enabled_exts:
             self._log("[ERROR] No input formats selected in the filter panel.")
             self.scan_btn.setEnabled(True)
-            self._set_workflow_state("Needs input", "Select at least one available input format.")
+            self._set_workflow_state(self.tr("Needs input"), self.tr("Select at least one available input format."))
             return
 
         exclude_patterns = _split_patterns(self.exclude_edit.text())
@@ -7906,7 +7906,7 @@ class MainWindow(QMainWindow):
         if max_file_size_text and max_file_size is None:
             self.scan_btn.setEnabled(True)
             self._log(f"[ERROR] Invalid max file size: {max_file_size_text}")
-            self._set_line_error(self.max_file_size_edit, "Use a size like 500MB, 2GB, or leave it blank.")
+            self._set_line_error(self.max_file_size_edit, self.tr("Use a size like 500MB, 2GB, or leave it blank."))
             return
         if exclude_patterns:
             self._log(f"[FILTER] Excluding: {', '.join(exclude_patterns)}")
@@ -7924,7 +7924,7 @@ class MainWindow(QMainWindow):
         self._scanner.scan_progress.connect(self._on_scan_progress)
         self._scanner.finished.connect(self._on_scan_done)
         self.progress_bar.setMaximum(0)
-        self.progress_bar.setFormat("Scanning...")
+        self.progress_bar.setFormat(self.tr("Scanning..."))
         self._scanner.start()
 
     def _on_scan_progress(self, count: int, total_size: int, directory: str, dir_count: int):
@@ -7982,18 +7982,18 @@ class MainWindow(QMainWindow):
                     ext_counts["ICO"] = ext_counts.get("ICO", 0) + 1
             breakdown = ", ".join(f"{v} {k}" for k, v in sorted(ext_counts.items(), key=lambda x: -x[1]))
             self._log(f"Breakdown: {breakdown}")
-            self.progress_bar.setFormat("Ready to convert")
+            self.progress_bar.setFormat(self.tr("Ready to convert"))
             self._set_workflow_state(
-                "Ready to convert",
-                f"Found {len(result.files)} files ({_fmt_size(result.total_size)}). Ready to convert."
+                self.tr("Ready to convert"),
+                self.tr(f"Found {len(result.files)} files ({_fmt_size(result.total_size)}). Ready to convert.")
             )
             self._populate_review_table(result.files)
             self.dedup_btn.setEnabled(True)
         else:
             self.convert_btn.setEnabled(False)
-            self.progress_bar.setFormat("No files found")
+            self.progress_bar.setFormat(self.tr("No files found"))
             self._update_title()
-            self._set_workflow_state("No files", "No supported image files found with the current filters.")
+            self._set_workflow_state(self.tr("No files"), self.tr("No supported image files found with the current filters."))
             self._log("[INFO] No supported image files found. Check the source folder and input format filters.")
 
     # ── Convert ──
@@ -8020,7 +8020,7 @@ class MainWindow(QMainWindow):
             self._log("[ERROR] Output directory is the same as source directory. Use a subfolder or enable in-place mode.")
             self.scan_btn.setEnabled(True)
             self.convert_btn.setEnabled(True)
-            self._set_line_error(self.dst_edit, "Choose a different output folder or enable in-place mode.")
+            self._set_line_error(self.dst_edit, self.tr("Choose a different output folder or enable in-place mode."))
             return
         if not in_place and dst_resolved != src_resolved:
             try:
@@ -8042,7 +8042,7 @@ class MainWindow(QMainWindow):
                 )
                 self.scan_btn.setEnabled(True)
                 self.convert_btn.setEnabled(True)
-                self._set_workflow_state("Blocked", "Not enough disk space for the estimated output.")
+                self._set_workflow_state(self.tr("Blocked"), self.tr("Not enough disk space for the estimated output."))
                 return
             if estimated > disk.free * 0.8:
                 self._log(
@@ -8080,10 +8080,10 @@ class MainWindow(QMainWindow):
         self.convert_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.pause_btn.setEnabled(True)
-        self.pause_btn.setText("Pause")
+        self.pause_btn.setText(self.tr("Pause"))
         self.open_output_btn.setEnabled(False)
         self._set_conversion_busy(True)
-        self._set_workflow_state("Converting", "Converting batch...")
+        self._set_workflow_state(self.tr("Converting"), self.tr("Converting batch..."))
 
         if in_place:
             self._log("In-place mode: converted files saved next to originals, source files will be deleted")
@@ -8226,7 +8226,7 @@ class MainWindow(QMainWindow):
         self.convert_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
-        self.pause_btn.setText("Pause")
+        self.pause_btn.setText(self.tr("Pause"))
         self.open_output_btn.setEnabled(True)
         self._set_conversion_busy(False)
         self.progress_bar.setFormat("%p%")
@@ -8255,11 +8255,11 @@ class MainWindow(QMainWindow):
         self._log(summary)
         self._log(f"{'='*60}")
         if fail and ok == 0:
-            self._set_workflow_state("Failed", summary)
+            self._set_workflow_state(self.tr("Failed"), summary)
         elif fail:
-            self._set_workflow_state("Review log", summary)
+            self._set_workflow_state(self.tr("Review log"), summary)
         else:
-            self._set_workflow_state("Complete", summary)
+            self._set_workflow_state(self.tr("Complete"), summary)
 
         history_record = _build_batch_history_record(
             surface="gui",
@@ -8290,9 +8290,9 @@ class MainWindow(QMainWindow):
         if ok == 0 and fail > 0 and total_attempted > 0:
             tray_icon = QSystemTrayIcon.MessageIcon.Critical
             QMessageBox.warning(
-                self, "Conversion Failed",
-                f"All {fail} file(s) failed to convert.\n\n"
-                f"Check the log panel for error details.",
+                self, self.tr("Conversion Failed"),
+                self.tr(f"All {fail} file(s) failed to convert.\n\n"
+                f"Check the log panel for error details."),
             )
         else:
             tray_icon = QSystemTrayIcon.MessageIcon.Information
@@ -8301,8 +8301,8 @@ class MainWindow(QMainWindow):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
             self._tray.showMessage(
-                "ImgConverter — Conversion Complete",
-                f"{ok} converted, {fail} failed" + (f", {skipped} skipped" if skipped else ""),
+                self.tr("ImgConverter — Conversion Complete"),
+                self.tr(f"{ok} converted, {fail} failed" + (f", {skipped} skipped" if skipped else "")),
                 tray_icon,
                 5000,
             )
@@ -8321,11 +8321,11 @@ class MainWindow(QMainWindow):
             if action in ("sleep", "shutdown"):
                 countdown = QMessageBox(self)
                 countdown.setIcon(QMessageBox.Icon.Warning)
-                countdown.setWindowTitle(f"ImgConverter — {action.title()} in 30 seconds")
-                countdown.setText(
+                countdown.setWindowTitle(self.tr(f"ImgConverter — {action.title()} in 30 seconds"))
+                countdown.setText(self.tr(
                     f"System will {action} in 30 seconds.\n"
                     f"Click Cancel to abort."
-                )
+                ))
                 countdown.setStandardButtons(QMessageBox.StandardButton.Cancel)
                 countdown.setDefaultButton(QMessageBox.StandardButton.Cancel)
                 _remaining = [30]
@@ -8336,10 +8336,10 @@ class MainWindow(QMainWindow):
                         _timer.stop()
                         countdown.accept()
                     else:
-                        countdown.setText(
+                        countdown.setText(self.tr(
                             f"System will {action} in {_remaining[0]} seconds.\n"
                             f"Click Cancel to abort."
-                        )
+                        ))
                 countdown.buttonClicked.connect(lambda btn: setattr(_cancelled, '__setitem__', (0, True)) or countdown.reject())
                 def _on_cancel(btn):
                     _cancelled[0] = True
@@ -8362,20 +8362,20 @@ class MainWindow(QMainWindow):
             self._worker.stop()
             self.stop_btn.setEnabled(False)
             self.pause_btn.setEnabled(False)
-            self.pause_btn.setText("Pause")
-            self._set_workflow_state("Stopping", "Stopping after the current file finishes...")
+            self.pause_btn.setText(self.tr("Pause"))
+            self._set_workflow_state(self.tr("Stopping"), self.tr("Stopping after the current file finishes..."))
 
     def _toggle_pause(self):
         if not self._worker:
             return
         if self._worker.is_paused:
             self._worker.resume()
-            self.pause_btn.setText("Pause")
-            self._set_workflow_state("Converting", "Resumed batch conversion...")
+            self.pause_btn.setText(self.tr("Pause"))
+            self._set_workflow_state(self.tr("Converting"), self.tr("Resumed batch conversion..."))
         else:
             self._worker.pause()
-            self.pause_btn.setText("Resume")
-            self._set_workflow_state("Paused", "Conversion paused. Click Resume to continue.")
+            self.pause_btn.setText(self.tr("Resume"))
+            self._set_workflow_state(self.tr("Paused"), self.tr("Conversion paused. Click Resume to continue."))
 
     def _open_output(self):
         if self.inplace_chk.isChecked():
