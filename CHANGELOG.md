@@ -2,6 +2,30 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.4.3] — 2026-07-01
+
+### Fixed
+
+- **P0 data loss: only-if-smaller + in-place**: The only-if-smaller check now runs BEFORE the in-place `os.replace`, preventing irrecoverable source file deletion when the output didn't meet the size threshold.
+- **Same-format skip guard**: Now correctly re-encodes when `only_if_smaller_pct` or `quality_mode` is set, instead of incorrectly skipping.
+- **Image handle leaks**: Tone-map and sRGB/ICC conversion paths now close the old image before replacing.
+- **Binary search best-fit**: `_binary_search_quality` now tracks the actual best-fitting quality (highest q under target for target-kb, lowest q meeting PSNR/SSIMULACRA2 target) instead of always returning the last evaluated iteration.
+- **Pause-time accounting**: Elapsed time, ETA, speed, and wall-time summary now correctly subtract paused time instead of counting it as conversion time.
+- **WatchFolderDialog cleanup**: Dialog now stops the _RunNowWorker on close to prevent signal delivery to destroyed widgets.
+- **Quality-mode mutual exclusivity**: `--target-kb`, `--target-psnr`, `--target-ssimulacra2` are now validated as mutually exclusive.
+- **Prefix/suffix path traversal**: `--prefix` and `--suffix` reject path separators and `..` to prevent output directory escape.
+- **HEIF handle leak**: `pillow_heif.open_heif()` handle now properly closed after bit-depth extraction.
+- **Settings combo bounds**: Five combo boxes (resize mode, TIFF compression, AVIF codec, frames mode, tone map) now validate index bounds when restoring from QSettings.
+- **Scan/convert guards**: Both `_scan` and `_convert` now have double-invocation guards to prevent command-palette bypass.
+- **File drop stat safety**: `stat()` in file drop handler now tolerates files deleted between drop and stat.
+- **--max-memory help text**: Corrected to say "warn" instead of "reduce workers" (warning only, no throttling).
+- **--proof help text**: Corrected to say outputs are kept for inspection (not auto-cleaned).
+- **Exit code constant**: `_install_deps` now returns `EXIT_DEP_MISSING` instead of magic number 3.
+
+### Added
+
+- **5 new regression tests**: in-place only-if-smaller source preservation (P0), template path-traversal guard, template absolute-path guard, conflicting quality-mode flag rejection, prefix/suffix path-separator rejection. 186 total.
+
 ## [v3.4.2] — 2026-07-01
 
 ### Fixed

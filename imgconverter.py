@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.4.2 - Universal image batch converter
+ImgConverter v3.4.3 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.4.2"
+APP_VERSION = "3.4.3"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
