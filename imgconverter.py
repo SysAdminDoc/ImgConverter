@@ -7075,12 +7075,12 @@ class MainWindow(QMainWindow):
         self._review_toggle.setVisible(False)
         scroll_layout.addWidget(self._review_toggle)
 
-        self._review_table = QTableWidget(0, 6)
-        self._review_table.setHorizontalHeaderLabels(["", "File", "Format", "Size", "Output", "Warnings"])
+        self._review_table = QTableWidget(0, 7)
+        self._review_table.setHorizontalHeaderLabels(["", "File", "Format", "Size", "Output", "Est. Output", "Warnings"])
         self._review_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self._review_table.setColumnWidth(0, 52)
         self._review_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for c in range(2, 6):
+        for c in range(2, 7):
             self._review_table.horizontalHeader().setSectionResizeMode(
                 c, QHeaderView.ResizeMode.ResizeToContents)
         self._review_table.setIconSize(QSize(48, 48))
@@ -7266,11 +7266,16 @@ class MainWindow(QMainWindow):
             out_item = QTableWidgetItem(out_label)
             self._review_table.setItem(i, 4, out_item)
 
+            est_size = _estimate_output_size(size, fmt)
+            est_item = QTableWidgetItem(_fmt_size(est_size))
+            est_item.setData(Qt.ItemDataRole.UserRole, est_size)
+            self._review_table.setItem(i, 5, est_item)
+
             warn_text = "; ".join(warnings) if warnings else ""
             warn_item = QTableWidgetItem(warn_text)
             if warnings:
                 warn_item.setForeground(QColor(CAT["yellow"]))
-            self._review_table.setItem(i, 5, warn_item)
+            self._review_table.setItem(i, 6, warn_item)
 
         self._review_table.setSortingEnabled(True)
         self._thumb_loader = _ThumbnailLoader(files)
