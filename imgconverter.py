@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.3.4"
+APP_VERSION = "3.4.0"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -48,12 +48,14 @@ EXIT_TOTAL_FAILURE   = 6   # every file in batch failed
 DEP_FLOORS = {
     "PIL":          ("Pillow",             "12.2.0"),
     "pillow_heif":  ("pillow-heif",        "1.4.0"),
-    "PyQt6":        ("PyQt6",              "6.8"),
+    "PyQt6":        ("PyQt6",              "6.10"),
     "rawpy":        ("rawpy",              "0.27.0"),    # optional
     "pillow_jxl":   ("pillow-jxl-plugin",  "1.3.6"),     # optional
+    "c2pa":         ("c2pa-python",        "0.35"),       # optional
+    "watchdog":     ("watchdog",           "6.0"),        # optional
 }
 REQUIRED_DEPS = ("PIL", "pillow_heif", "PyQt6")
-OPTIONAL_DEPS = ("rawpy", "pillow_jxl")
+OPTIONAL_DEPS = ("rawpy", "pillow_jxl", "c2pa", "watchdog")
 
 
 def _is_frozen() -> bool:
@@ -331,10 +333,14 @@ def _verify_c2pa_sdk(path: Path) -> dict[str, object] | None:
             if active and isinstance(manifests, dict):
                 am = manifests.get(active, {})
                 claim_gen = am.get("claim_generator")
-        is_valid = reader.is_valid()
+        state = reader.get_validation_state()
         reader.close()
+        if state is None:
+            status = "not-verified"
+        else:
+            status = "invalid" if "error" in state.lower() or "invalid" in state.lower() else "verified"
         return {
-            "status": "verified" if is_valid else "invalid",
+            "status": status,
             "claim_generator": _redact_text(claim_gen) if claim_gen else None,
             "manifest_count": manifest_count,
         }

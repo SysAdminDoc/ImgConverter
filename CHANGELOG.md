@@ -2,6 +2,19 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [v3.4.0] — 2026-07-01
+
+### Fixed
+
+- **C2PA SDK verification**: `_verify_c2pa_sdk()` now uses `reader.get_validation_state()` instead of the incorrect `reader.is_valid()` call, which was a Reader lifecycle property — not a manifest validation method — and silently returned `"not-verified"` for every C2PA-marked file.
+- **Dependency floor warnings**: c2pa-python and watchdog are now included in `DEP_FLOORS`, so users with outdated versions get startup warnings instead of silent breakage.
+
+### Changed
+
+- **c2pa-python floor**: bumped from `>=0.6` to `>=0.35` across all manifests (requirements.txt, pyproject.toml, conda-forge). The `>=0.6` floor allowed installing versions where the Reader API didn't exist.
+- **watchdog floor**: bumped from `>=4.0` to `>=6.0` across all manifests. Aligns with the project's Python 3.10+ requirement (watchdog 6.0 dropped 3.8 support).
+- **PyQt6 floor**: bumped from `>=6.8` to `>=6.10` across all manifests. Brings Qt 6.9.1 (450+ bug fixes) and matches Python 3.10+ requirement.
+
 ## [v3.3.4] — 2026-06-28
 
 ### Added

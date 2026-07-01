@@ -1,5 +1,5 @@
 {% set name = "imgconverter" %}
-{% set version = "3.3.4" %}
+{% set version = "3.4.0" %}
 
 package:
   name: {{ name|lower }}
@@ -28,7 +28,7 @@ requirements:
     - python >=3.10
     - pillow >=12.2.0
     - pillow-heif >=1.4.0
-    - pyqt6 >=6.8
+    - pyqt6 >=6.10
   run_constrained:
     - numpy >=1.26
 
