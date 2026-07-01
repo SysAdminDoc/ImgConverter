@@ -2340,33 +2340,42 @@ def _binary_search_quality(
         try:
             img.save(buf, out_fmt, **kwargs)
         except Exception:
-            # Save failed (e.g. unsupported kwarg combo); fall back to qmax.
             break
-        size_kb = buf.tell() / 1024.0
+        cur_size = int(buf.tell())
+        size_kb = cur_size / 1024.0
         if mode == "target-kb":
-            best_q, best_size, best_metric = q, int(buf.tell()), size_kb
             if size_kb <= target:
-                lo = q + 1   # try a higher quality
+                if q > best_q or best_size < 0:
+                    best_q, best_size, best_metric = q, cur_size, size_kb
+                lo = q + 1
             else:
-                hi = q - 1   # too big, lower
+                if best_size < 0:
+                    best_q, best_size, best_metric = q, cur_size, size_kb
+                hi = q - 1
         elif mode == "target-psnr":
             buf.seek(0)
             with Image.open(buf) as decoded:
                 metric = _psnr(img, decoded)
-            best_q, best_size, best_metric = q, int(buf.tell()), metric
-            if metric < target:
-                lo = q + 1
-            else:
+            if metric >= target:
+                if q < best_q or best_size < 0:
+                    best_q, best_size, best_metric = q, cur_size, metric
                 hi = q - 1
+            else:
+                if best_size < 0:
+                    best_q, best_size, best_metric = q, cur_size, metric
+                lo = q + 1
         else:  # target-ssimulacra2
             buf.seek(0)
             with Image.open(buf) as decoded:
                 metric = _ssimulacra2_score(img, decoded)
-            best_q, best_size, best_metric = q, int(buf.tell()), metric
-            if metric < target:
-                lo = q + 1
-            else:
+            if metric >= target:
+                if q < best_q or best_size < 0:
+                    best_q, best_size, best_metric = q, cur_size, metric
                 hi = q - 1
+            else:
+                if best_size < 0:
+                    best_q, best_size, best_metric = q, cur_size, metric
+                lo = q + 1
         if lo > hi:
             break
     return best_q, best_size, best_metric
@@ -5559,6 +5568,7 @@ class WatchFolderDialog(QDialog):
         self.setWindowTitle(self.tr("Watch Folder Profiles"))
         _restore_dialog_geometry(self, 860, 460)
         self._profiles: list[dict] = _load_watch_profiles()
+        self._run_now_worker: _RunNowWorker | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -5777,6 +5787,12 @@ class WatchFolderDialog(QDialog):
             f"Run complete: {ok_count} converted, {fail_count} failed, "
             f"{skipped} skipped."
         ))
+
+    def done(self, result):
+        if self._run_now_worker and self._run_now_worker.isRunning():
+            self._run_now_worker.stop()
+            self._run_now_worker.wait(5000)
+        super().done(result)
 
 
 WORKFLOW_TONE_BY_STATE = {
@@ -6187,6 +6203,8 @@ class MainWindow(QMainWindow):
         self._results: list[ConvertResult] = []
         self._result_dst_by_src: dict[str, Path] = {}  # keyed by str(src_path)
         self._convert_start_time: float = 0.0
+        self._paused_total: float = 0.0
+        self._pause_start: float = 0.0
         self._last_ok_dst: Path | None = None
         self._last_history_id: str | None = None
         self._current_preset_name = "Manual"
@@ -8228,6 +8246,8 @@ class MainWindow(QMainWindow):
         self._fail_count = 0
         self._saved_bytes = 0
         self._convert_start_time = time.perf_counter()
+        self._paused_total = 0.0
+        self._pause_start = 0.0
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(self._scan_result.files))
         self._set_stat_value(self.stat_done, "0")
@@ -8304,7 +8324,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(current)
         self._update_title("converting", current=current, total=total)
         self._set_taskbar_progress(current, total)
-        elapsed = time.perf_counter() - self._convert_start_time
+        elapsed = time.perf_counter() - self._convert_start_time - self._paused_total
         if current > 0 and elapsed > 0 and current < total:
             speed = current / elapsed
             rate = elapsed / current
@@ -8401,7 +8421,7 @@ class MainWindow(QMainWindow):
         fail = sum(1 for r in results if not r.success and not r.skipped)
         deleted = sum(1 for r in results if r.src_deleted)
         total_time = sum(r.elapsed for r in results)
-        wall_time = time.perf_counter() - self._convert_start_time
+        wall_time = time.perf_counter() - self._convert_start_time - self._paused_total
         saved = sum(r.size_before - r.size_after for r in results if r.success)
 
         parts = [f"{ok} converted"]
@@ -8533,11 +8553,13 @@ class MainWindow(QMainWindow):
             return
         if self._worker.is_paused:
             self._worker.resume()
+            self._paused_total += time.perf_counter() - self._pause_start
             self._file_timer.start()
             self.pause_btn.setText(self.tr("Pause"))
             self._set_workflow_state(self.tr("Converting"), self.tr("Resumed batch conversion..."))
         else:
             self._worker.pause()
+            self._pause_start = time.perf_counter()
             self._file_timer.stop()
             self.pause_btn.setText(self.tr("Resume"))
             self._set_workflow_state(self.tr("Paused"), self.tr("Conversion paused. Click Resume to continue."))
