@@ -19,6 +19,7 @@ from imgconverter import (
     _build_quality_mode,
     _convert_animated_or_sequence,
     _estimate_output_size,
+    import_preset_bundle,
     _load_queue_state,
     _load_watch_profiles,
     _install_shell_integration,
@@ -2136,3 +2137,67 @@ class TestVipsBackend:
                               preserve_metadata=True)
         assert not result.success or any("metadata" in w.lower() for w in result.warnings), \
             "vips backend should warn about metadata loss or reject preserve_metadata=True"
+
+
+# ── Preset Import ────────────────────────────────────────────────────────────
+
+
+class TestPresetImport:
+
+    def test_import_malformed_json_rejected(self, tmp_workdir):
+        bad = tmp_workdir / "bad.json"
+        bad.write_text("{{{not json", encoding="utf-8")
+        ok, msg = import_preset_bundle(bad)
+        assert not ok
+        assert "failed to read" in msg.lower()
+
+    def test_import_missing_bundle_key_rejected(self, tmp_workdir):
+        bad = tmp_workdir / "no_key.json"
+        bad.write_text('{"name": "test"}', encoding="utf-8")
+        ok, msg = import_preset_bundle(bad)
+        assert not ok
+        assert "not a valid" in msg.lower()
+
+    def test_import_empty_preset_rejected(self, tmp_workdir):
+        bad = tmp_workdir / "empty_preset.json"
+        bad.write_text('{"imgconverter_preset_bundle": true, "preset": {}}', encoding="utf-8")
+        ok, msg = import_preset_bundle(bad)
+        assert not ok
+        assert "no preset data" in msg.lower()
+
+    def test_import_valid_bundle_succeeds(self, tmp_workdir, monkeypatch):
+        import imgconverter
+        target_dir = tmp_workdir / "presets"
+        monkeypatch.setattr(imgconverter, "USER_PRESET_DIR", target_dir)
+        bundle = tmp_workdir / "valid.json"
+        bundle.write_text(json.dumps({
+            "imgconverter_preset_bundle": True,
+            "name": "Test Preset",
+            "schema_version": 2,
+            "preset": {"format": "webp", "quality": 80},
+        }), encoding="utf-8")
+        ok, msg = import_preset_bundle(bundle)
+        assert ok
+        assert "imported" in msg.lower()
+        assert (target_dir / "test-preset.json").exists()
+
+
+# ── CLI --proof Mode ────────────────────────────────────────────────────────
+
+
+class TestProofMode:
+
+    def test_proof_converts_subset(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "src"
+        src.mkdir()
+        for i in range(5):
+            rgb_image.save(src / f"img{i}.bmp")
+        out = tmp_workdir / "proof_out"
+        with pytest.raises(SystemExit) as exc_info:
+            _run_cli(_build_parser().parse_args([
+                "--input", str(src), "--output", str(out),
+                "--format", "png", "--proof", "2",
+            ]))
+        assert exc_info.value.code == EXIT_OK
+        converted = list(out.glob("*.png"))
+        assert len(converted) == 2
