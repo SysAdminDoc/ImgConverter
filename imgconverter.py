@@ -8078,10 +8078,16 @@ class MainWindow(QMainWindow):
             self.dedup_btn.setEnabled(True)
         else:
             self.convert_btn.setEnabled(False)
-            self.progress_bar.setFormat(self.tr("No files found"))
             self._update_title()
-            self._set_workflow_state(self.tr("No files"), self.tr("No supported image files found with the current filters."))
-            self._log("[INFO] No supported image files found. Check the source folder and input format filters.")
+            src = self.src_edit.text().strip()
+            if src and not Path(src).is_dir():
+                self.progress_bar.setFormat(self.tr("Source folder missing"))
+                self._set_workflow_state(self.tr("No files"), self.tr("Source folder no longer exists."))
+                self._log(f"[ERROR] Source folder no longer exists: {src}")
+            else:
+                self.progress_bar.setFormat(self.tr("No files found"))
+                self._set_workflow_state(self.tr("No files"), self.tr("No supported image files found with the current filters."))
+                self._log("[INFO] No supported image files found. Check the source folder and input format filters.")
 
     # ── Convert ──
     def _convert(self):
