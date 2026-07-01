@@ -6073,6 +6073,11 @@ class MainWindow(QMainWindow):
         self._skip_count = 0
         self._fail_count = 0
         self._saved_bytes = 0
+        self._file_start_time: float = 0.0
+        self._file_display_name: str = ""
+        self._file_timer = QTimer(self)
+        self._file_timer.setInterval(500)
+        self._file_timer.timeout.connect(self._update_file_elapsed)
 
         # System tray for completion notifications
         self._tray = QSystemTrayIcon(self._icon, self)
@@ -8080,9 +8085,18 @@ class MainWindow(QMainWindow):
 
     def _on_current_file(self, filename: str):
         display = filename if len(filename) <= 72 else f"{filename[:34]}...{filename[-34:]}"
+        self._file_display_name = display
+        self._file_start_time = time.monotonic()
         self.progress_bar.setFormat(f"%p% - {display}")
+        self._file_timer.start()
+
+    def _update_file_elapsed(self):
+        elapsed = time.monotonic() - self._file_start_time
+        if elapsed >= 2.0:
+            self.progress_bar.setFormat(f"%p% - {self._file_display_name} — {elapsed:.1f}s")
 
     def _on_file_done(self, result: ConvertResult):
+        self._file_timer.stop()
         self._results.append(result)
         if result.success and result.dst:
             self._last_ok_dst = result.dst
@@ -8135,6 +8149,7 @@ class MainWindow(QMainWindow):
             pass
 
     def _on_convert_done(self, results):
+        self._file_timer.stop()
         self.scan_btn.setEnabled(True)
         self.convert_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
