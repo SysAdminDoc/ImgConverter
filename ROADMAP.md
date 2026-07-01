@@ -1,8 +1,6 @@
 # ImgConverter Roadmap
 
-**Current version:** v3.3.4 (released 2026-06-28) · **Roadmap revision:** 2026-06-28
-
-The v3.3.4 drain cleared the current queue. No active actionable items remain.
+**Current version:** v3.4.0 (released 2026-07-01) · **Roadmap revision:** 2026-07-01
 
 ## Working Rules
 
@@ -11,6 +9,4 @@ The v3.3.4 drain cleared the current queue. No active actionable items remain.
 - When a blocker is resolved, move it back here and implement it in priority order.
 - Record completed work in `CHANGELOG.md` and git history.
 
-## Research-Driven Additions
-
-None.
+No actionable items remain. Completed work lives in git history and CHANGELOG.md.

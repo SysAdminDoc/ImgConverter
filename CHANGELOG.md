@@ -4,16 +4,31 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [v3.4.0] — 2026-07-01
 
+### Added
+
+- **SSIMULACRA2 quality targeting**: `--target-ssimulacra2 SCORE` binary-searches quality to hit a minimum SSIMULACRA2 perceptual score vs source. Optional `ssimulacra2>=0.3` dep.
+- **Thumbnail preview column**: Scan review table shows 48px thumbnails loaded lazily via QThread. Decode failures show a blank cell.
+- **Per-file elapsed time indicator**: Progress bar shows elapsed time for files taking >2 seconds during conversion.
+- **Estimated output size column**: Scan review table shows per-file estimated output size based on format.
+- **Drag-out of converted files**: After conversion, drag files from the scan review table to other applications via `QMimeData.setUrls()`.
+- **CPU priority option**: `--cpu-priority {normal,low}` sets BELOW_NORMAL (Windows) or nice(10) (Unix) for background batch conversion.
+- **Log search/filter**: Filter bar above the activity log with Ctrl+F shortcut. Filters visible log lines as the user types.
+
 ### Fixed
 
 - **C2PA SDK verification**: `_verify_c2pa_sdk()` now uses `reader.get_validation_state()` instead of the incorrect `reader.is_valid()` call, which was a Reader lifecycle property — not a manifest validation method — and silently returned `"not-verified"` for every C2PA-marked file.
 - **Dependency floor warnings**: c2pa-python and watchdog are now included in `DEP_FLOORS`, so users with outdated versions get startup warnings instead of silent breakage.
+- **Screen reader blank-line workaround**: Empty log lines now use a zero-width space so NVDA/JAWS announce "blank" instead of repeating the previous line.
 
 ### Changed
 
-- **c2pa-python floor**: bumped from `>=0.6` to `>=0.35` across all manifests (requirements.txt, pyproject.toml, conda-forge). The `>=0.6` floor allowed installing versions where the Reader API didn't exist.
-- **watchdog floor**: bumped from `>=4.0` to `>=6.0` across all manifests. Aligns with the project's Python 3.10+ requirement (watchdog 6.0 dropped 3.8 support).
-- **PyQt6 floor**: bumped from `>=6.8` to `>=6.10` across all manifests. Brings Qt 6.9.1 (450+ bug fixes) and matches Python 3.10+ requirement.
+- **c2pa-python floor**: bumped from `>=0.6` to `>=0.35` across all manifests. The `>=0.6` floor allowed installing versions where the Reader API didn't exist.
+- **watchdog floor**: bumped from `>=4.0` to `>=6.0` across all manifests. Aligns with the project's Python 3.10+ requirement.
+- **PyQt6 floor**: bumped from `>=6.8` to `>=6.10` across all manifests. Brings Qt 6.9.1 (450+ bug fixes).
+- **PyInstaller spec modernized**: `optimize=2`, `upx_exclude` for .pyd/Qt6 DLLs, dynamic `hiddenimports` for optional deps.
+- **i18n scaffolding**: All 345 user-visible GUI strings wrapped with `self.tr()` for future Qt Linguist translation.
+- **JPEG XL browser status**: README and GUI tooltip now mention Safari 17+, Chrome 145+ (flag), Firefox 152+ (Labs).
+- **Privacy comparison**: README "Why ImgConverter?" table now highlights offline privacy advantage vs online converters.
 
 ## [v3.3.4] — 2026-06-28
 
