@@ -6065,6 +6065,7 @@ class MainWindow(QMainWindow):
         self._scan_result: ScanResult | None = None
         self._worker: ConvertWorker | None = None
         self._results: list[ConvertResult] = []
+        self._result_dst_by_src: dict[str, Path] = {}
         self._convert_start_time: float = 0.0
         self._last_ok_dst: Path | None = None
         self._last_history_id: str | None = None
@@ -7084,6 +7085,9 @@ class MainWindow(QMainWindow):
             self._review_table.horizontalHeader().setSectionResizeMode(
                 c, QHeaderView.ResizeMode.ResizeToContents)
         self._review_table.setIconSize(QSize(48, 48))
+        self._review_table.setDragEnabled(True)
+        self._review_table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self._review_table.startDrag = self._review_table_start_drag
         self._thumb_loader: _ThumbnailLoader | None = None
         self._review_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._review_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -7286,6 +7290,25 @@ class MainWindow(QMainWindow):
             f"{'Hide' if self._review_toggle.isChecked() else 'Show'} scan review table "
             f"({len(files)} files)"
         )
+
+    def _review_table_start_drag(self, supported_actions):
+        from PyQt6.QtGui import QDrag
+        from PyQt6.QtCore import QMimeData
+        rows = set(idx.row() for idx in self._review_table.selectedIndexes())
+        urls = []
+        for row in sorted(rows):
+            item = self._review_table.item(row, 1)
+            if item:
+                src_name = item.text()
+                dst = self._result_dst_by_src.get(src_name)
+                if dst and dst.exists():
+                    urls.append(QUrl.fromLocalFile(str(dst)))
+        if urls:
+            mime = QMimeData()
+            mime.setUrls(urls)
+            drag = QDrag(self._review_table)
+            drag.setMimeData(mime)
+            drag.exec(Qt.DropAction.CopyAction)
 
     def _on_thumbnail_ready(self, row: int, pixmap):
         if row < self._review_table.rowCount():
@@ -7992,6 +8015,7 @@ class MainWindow(QMainWindow):
             resize_mode = "max_dim" if self.resize_combo.currentIndex() == 0 else "scale"
 
         self._results = []
+        self._result_dst_by_src = {}
         self._last_history_id = None
         self._ok_count = 0
         self._skip_count = 0
@@ -8105,6 +8129,7 @@ class MainWindow(QMainWindow):
         self._results.append(result)
         if result.success and result.dst:
             self._last_ok_dst = result.dst
+            self._result_dst_by_src[result.src.name] = result.dst
 
         # Disk-full auto-stop: check structured error_code (locale-independent).
         import errno as _errno
