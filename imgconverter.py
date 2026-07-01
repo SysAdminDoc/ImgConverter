@@ -3852,6 +3852,41 @@ def convert_file(
 
 # ── Worker Threads ───────────────────────────────────────────────────────────
 
+
+class _ThumbnailLoader(QThread):
+    thumbnail_ready = pyqtSignal(int, object)  # row, QPixmap
+
+    def __init__(self, files: list[Path], size: int = 48):
+        super().__init__()
+        self._files = list(files)
+        self._size = size
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        sz = self._size
+        for idx, path in enumerate(self._files):
+            if self._stop:
+                return
+            try:
+                with Image.open(path) as img:
+                    img.thumbnail((sz, sz), Image.Resampling.LANCZOS)
+                    rgb = img.convert("RGBA") if img.mode == "RGBA" else img.convert("RGB")
+                    from PyQt6.QtGui import QImage
+                    if rgb.mode == "RGBA":
+                        data = rgb.tobytes("raw", "RGBA")
+                        qimg = QImage(data, rgb.width, rgb.height, QImage.Format.Format_RGBA8888)
+                    else:
+                        data = rgb.tobytes("raw", "RGB")
+                        qimg = QImage(data, rgb.width, rgb.height, QImage.Format.Format_RGB888)
+                    pix = QPixmap.fromImage(qimg)
+                    self.thumbnail_ready.emit(idx, pix)
+            except Exception:
+                pass
+
+
 class ConvertWorker(QThread):
     progress = pyqtSignal(int, int)       # current, total
     current_file = pyqtSignal(str)        # filename currently processing
@@ -7035,12 +7070,16 @@ class MainWindow(QMainWindow):
         self._review_toggle.setVisible(False)
         scroll_layout.addWidget(self._review_toggle)
 
-        self._review_table = QTableWidget(0, 5)
-        self._review_table.setHorizontalHeaderLabels(["File", "Format", "Size", "Output", "Warnings"])
-        self._review_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for c in range(1, 5):
+        self._review_table = QTableWidget(0, 6)
+        self._review_table.setHorizontalHeaderLabels(["", "File", "Format", "Size", "Output", "Warnings"])
+        self._review_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self._review_table.setColumnWidth(0, 52)
+        self._review_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for c in range(2, 6):
             self._review_table.horizontalHeader().setSectionResizeMode(
                 c, QHeaderView.ResizeMode.ResizeToContents)
+        self._review_table.setIconSize(QSize(48, 48))
+        self._thumb_loader: _ThumbnailLoader | None = None
         self._review_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._review_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._review_table.setSortingEnabled(True)
@@ -7169,6 +7208,9 @@ class MainWindow(QMainWindow):
         )
 
     def _populate_review_table(self, files: list[Path]):
+        if self._thumb_loader and self._thumb_loader.isRunning():
+            self._thumb_loader.stop()
+            self._thumb_loader.wait()
         fmt = self._fmt_values[self.fmt_combo.currentIndex()] if hasattr(self, "_fmt_values") else "auto"
         ext_map = {"jpeg": "JPEG", "png": "PNG", "webp": "WebP",
                    "avif": "AVIF", "tiff": "TIFF", "jxl": "JXL", "auto": "Auto"}
@@ -7201,32 +7243,45 @@ class MainWindow(QMainWindow):
                     family = name
                     break
 
+            thumb_item = QTableWidgetItem()
+            self._review_table.setItem(i, 0, thumb_item)
+            self._review_table.setRowHeight(i, 52)
+
             name_item = QTableWidgetItem(f.name)
             name_item.setToolTip(str(f))
-            self._review_table.setItem(i, 0, name_item)
+            self._review_table.setItem(i, 1, name_item)
 
             fmt_item = QTableWidgetItem(family)
-            self._review_table.setItem(i, 1, fmt_item)
+            self._review_table.setItem(i, 2, fmt_item)
 
             size_item = QTableWidgetItem(_fmt_size(size))
             size_item.setData(Qt.ItemDataRole.UserRole, size)
-            self._review_table.setItem(i, 2, size_item)
+            self._review_table.setItem(i, 3, size_item)
 
             out_item = QTableWidgetItem(out_label)
-            self._review_table.setItem(i, 3, out_item)
+            self._review_table.setItem(i, 4, out_item)
 
             warn_text = "; ".join(warnings) if warnings else ""
             warn_item = QTableWidgetItem(warn_text)
             if warnings:
                 warn_item.setForeground(QColor(CAT["yellow"]))
-            self._review_table.setItem(i, 4, warn_item)
+            self._review_table.setItem(i, 5, warn_item)
 
         self._review_table.setSortingEnabled(True)
+        self._thumb_loader = _ThumbnailLoader(files)
+        self._thumb_loader.thumbnail_ready.connect(self._on_thumbnail_ready)
+        self._thumb_loader.start()
         self._review_toggle.setVisible(True)
         self._review_toggle.setText(
             f"{'Hide' if self._review_toggle.isChecked() else 'Show'} scan review table "
             f"({len(files)} files)"
         )
+
+    def _on_thumbnail_ready(self, row: int, pixmap):
+        if row < self._review_table.rowCount():
+            item = self._review_table.item(row, 0)
+            if item:
+                item.setIcon(QIcon(pixmap))
 
     def _set_workflow_state(self, state: str, message: str | None = None, tone: str | None = None):
         if hasattr(self, "workflow_state"):
@@ -7756,6 +7811,8 @@ class MainWindow(QMainWindow):
         self._update_title()
         self.scan_btn.setEnabled(False)
         self.convert_btn.setEnabled(False)
+        if self._thumb_loader and self._thumb_loader.isRunning():
+            self._thumb_loader.stop()
         self._review_table.setRowCount(0)
         self._review_toggle.setVisible(False)
         self._set_workflow_state("Scanning", "Scanning source folder...")
@@ -8452,6 +8509,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._save_state()
+        if self._thumb_loader and self._thumb_loader.isRunning():
+            self._thumb_loader.stop()
+            self._thumb_loader.wait(1000)
         if self._worker and self._worker.isRunning():
             self._worker.stop()
             self._worker.wait(3000)
