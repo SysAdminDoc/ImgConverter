@@ -3892,6 +3892,28 @@ class _ThumbnailLoader(QThread):
                 pass
 
 
+class _RunNowWorker(QThread):
+    finished_run = pyqtSignal(int, int, int)  # ok, fail, skipped
+
+    def __init__(self, files: list[Path], output_dir: Path, opts: "ConvertOptions"):
+        super().__init__()
+        self._files = list(files)
+        self._output_dir = output_dir
+        self._opts = opts
+
+    def run(self):
+        ok = fail = skipped = 0
+        for seq_i, f in enumerate(self._files, start=1):
+            r = convert_file(f, self._output_dir, seq=seq_i, opts=self._opts)
+            if r.success:
+                ok += 1
+            elif r.skipped:
+                skipped += 1
+            else:
+                fail += 1
+        self.finished_run.emit(ok, fail, skipped)
+
+
 def _set_process_priority_low():
     try:
         if sys.platform == "win32":
@@ -5666,6 +5688,9 @@ class WatchFolderDialog(QDialog):
             self.status_label.setText(self.tr(f"Source folder not found: {src}"))
             return
         self.run_now_btn.setEnabled(False)
+        self.add_btn.setEnabled(False)
+        self.remove_btn.setEnabled(False)
+        self.toggle_btn.setEnabled(False)
         self.status_label.setText(self.tr(f"Running one-shot conversion for {Path(src).name}..."))
 
         preset = load_preset(preset_name)
@@ -5679,16 +5704,15 @@ class WatchFolderDialog(QDialog):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         scan = scan_directory(Path(src), recursive=True)
-        ok_count = 0
-        fail_count = 0
-        from datetime import datetime
-        for seq_i, f in enumerate(scan.files, start=1):
-            r = convert_file(f, output_dir, seq=seq_i, opts=opts)
-            if r.success:
-                ok_count += 1
-            elif not r.skipped:
-                fail_count += 1
+        self._run_now_row = row
+        self._run_now_total = len(scan.files)
+        self._run_now_worker = _RunNowWorker(scan.files, output_dir, opts)
+        self._run_now_worker.finished_run.connect(self._on_run_now_done)
+        self._run_now_worker.start()
 
+    def _on_run_now_done(self, ok_count: int, fail_count: int, skipped: int):
+        from datetime import datetime
+        row = self._run_now_row
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         self._profiles[row]["last_run"] = now_str
         self._profiles[row]["last_count"] = ok_count
@@ -5697,7 +5721,7 @@ class WatchFolderDialog(QDialog):
         self._refresh()
         self.status_label.setText(self.tr(
             f"Run complete: {ok_count} converted, {fail_count} failed, "
-            f"{len(scan.files) - ok_count - fail_count} skipped."
+            f"{skipped} skipped."
         ))
 
 
