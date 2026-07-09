@@ -2,6 +2,13 @@
 
 All notable changes to ImgConverter will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **Shared interaction system**: Strengthened focus rings, hover/pressed/disabled states, table selection, combo menus, sliders, splitters, validation fields, and progress tones across the main window and every dialog.
+- **Consistent geometry**: Normalized every stylesheet corner radius to the 0/4/6/8/10/12px product scale and added a regression test that rejects drift back to pill or off-scale shapes.
+
 ## [v3.4.3] — 2026-07-01
 
 ### Fixed

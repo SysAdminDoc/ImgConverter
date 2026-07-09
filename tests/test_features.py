@@ -517,6 +517,17 @@ class TestStylesheetAccessibility:
         assert missing == []
         assert weak == []
 
+    def test_stylesheet_uses_bounded_corner_radius_scale(self):
+        import imgconverter
+
+        radii = {
+            int(value)
+            for value in re.findall(r"border-radius:\s*(\d+)px", imgconverter.STYLESHEET)
+        }
+
+        assert radii <= set(imgconverter.ALLOWED_RADIUS_PX)
+        assert 999 not in radii
+
     def test_main_window_controls_have_accessible_names(self, monkeypatch):
         import imgconverter
 

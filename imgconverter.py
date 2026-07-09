@@ -1213,6 +1213,9 @@ QWidget {{
     font-family: 'Segoe UI', 'Inter', sans-serif;
     font-size: 13px;
 }}
+QScrollArea, QScrollArea > QWidget > QWidget {{
+    background-color: transparent;
+}}
 QDialog {{
     background-color: {CAT['base']};
 }}
@@ -1296,17 +1299,19 @@ QPushButton {{
     border-radius: 6px;
     padding: 7px 16px;
     font-weight: 600;
-    min-height: 22px;
+    min-height: 24px;
 }}
 QPushButton:hover {{
     background-color: {CAT['surface1']};
     border-color: {CAT['lavender']};
 }}
 QPushButton:focus {{
-    border: 1px solid {CAT['blue']};
+    border: 2px solid {CAT['blue']};
 }}
 QPushButton:pressed {{
     background-color: {CAT['surface2']};
+    padding-top: 8px;
+    padding-bottom: 6px;
 }}
 QPushButton:disabled {{
     background-color: {CAT['crust']};
@@ -1329,6 +1334,9 @@ QPushButton#primaryBtn:disabled {{
     background-color: {CAT['surface1']};
     color: {CAT['subtext1']};
     border-color: {CAT['surface1']};
+}}
+QPushButton#primaryBtn:focus {{
+    border: 2px solid {CAT['text']};
 }}
 QPushButton#stopBtn {{
     background-color: {CAT['red']};
@@ -1379,9 +1387,17 @@ QLineEdit {{
     border-radius: 6px;
     padding: 7px 10px;
     selection-background-color: {CAT['blue']};
+    selection-color: {CAT['crust']};
+}}
+QLineEdit:hover {{
+    border-color: {CAT['surface2']};
 }}
 QLineEdit:focus {{
-    border: 1px solid {CAT['blue']};
+    border: 2px solid {CAT['blue']};
+}}
+QLineEdit[validationState="error"] {{
+    border: 2px solid {CAT['red']};
+    background-color: {CAT['mantle']};
 }}
 QComboBox {{
     background-color: {CAT['surface0']};
@@ -1395,7 +1411,7 @@ QComboBox:hover {{
     border-color: {CAT['lavender']};
 }}
 QComboBox:focus {{
-    border: 1px solid {CAT['blue']};
+    border: 2px solid {CAT['blue']};
 }}
 QComboBox::drop-down {{
     border: none;
@@ -1407,6 +1423,14 @@ QComboBox QAbstractItemView {{
     border: 1px solid {CAT['surface1']};
     selection-background-color: {CAT['surface1']};
     selection-color: {CAT['lavender']};
+    outline: 0;
+}}
+QComboBox QAbstractItemView::item {{
+    min-height: 28px;
+    padding: 4px 8px;
+}}
+QComboBox QAbstractItemView::item:hover {{
+    background-color: {CAT['surface1']};
 }}
 QSpinBox {{
     background-color: {CAT['surface0']};
@@ -1416,7 +1440,7 @@ QSpinBox {{
     padding: 5px 8px;
 }}
 QSpinBox:focus {{
-    border: 1px solid {CAT['blue']};
+    border: 2px solid {CAT['blue']};
 }}
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
     background-color: {CAT['crust']};
@@ -1426,7 +1450,7 @@ QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
 QSlider::groove:horizontal {{
     background: {CAT['surface0']};
     height: 6px;
-    border-radius: 3px;
+    border-radius: 4px;
 }}
 QSlider::handle:horizontal {{
     background: {CAT['lavender']};
@@ -1437,11 +1461,17 @@ QSlider::handle:horizontal {{
 }}
 QSlider::handle:horizontal:focus {{
     background: {CAT['blue']};
-    border: 1px solid {CAT['text']};
+    border: 2px solid {CAT['text']};
+}}
+QSlider::handle:horizontal:hover {{
+    background: {CAT['blue']};
+}}
+QSlider::handle:horizontal:disabled {{
+    background: {CAT['surface2']};
 }}
 QSlider::sub-page:horizontal {{
     background: {CAT['blue']};
-    border-radius: 3px;
+    border-radius: 4px;
 }}
 QProgressBar {{
     background-color: {CAT['surface0']};
@@ -1454,7 +1484,16 @@ QProgressBar {{
 }}
 QProgressBar::chunk {{
     background-color: {CAT['green']};
-    border-radius: 5px;
+    border-radius: 6px;
+}}
+QProgressBar[tone="active"]::chunk {{
+    background-color: {CAT['blue']};
+}}
+QProgressBar[tone="warning"]::chunk {{
+    background-color: {CAT['yellow']};
+}}
+QProgressBar[tone="danger"]::chunk {{
+    background-color: {CAT['red']};
 }}
 QPlainTextEdit {{
     background-color: {CAT['crust']};
@@ -1467,7 +1506,7 @@ QPlainTextEdit {{
     selection-background-color: {CAT['surface1']};
 }}
 QPlainTextEdit:focus {{
-    border: 1px solid {CAT['blue']};
+    border: 2px solid {CAT['blue']};
 }}
 QTableWidget {{
     background-color: {CAT['base']};
@@ -1480,11 +1519,22 @@ QTableWidget {{
     selection-color: {CAT['crust']};
 }}
 QTableWidget:focus {{
-    border: 1px solid {CAT['blue']};
+    border: 2px solid {CAT['blue']};
 }}
 QTableWidget::item {{
     padding: 6px 8px;
     border: none;
+}}
+QTableWidget::item:hover {{
+    background-color: {CAT['surface0']};
+}}
+QTableWidget::item:selected {{
+    background-color: {CAT['blue']};
+    color: {CAT['crust']};
+}}
+QTableWidget::item:selected:!active {{
+    background-color: {CAT['surface2']};
+    color: {CAT['text']};
 }}
 QHeaderView::section {{
     background-color: {CAT['surface0']};
@@ -1517,6 +1567,9 @@ QCheckBox::indicator:checked {{
 }}
 QCheckBox::indicator:focus {{
     border: 2px solid {CAT['blue']};
+}}
+QCheckBox::indicator:hover {{
+    border-color: {CAT['lavender']};
 }}
 QCheckBox::indicator:disabled {{
     background-color: {CAT['crust']};
@@ -1553,6 +1606,9 @@ QFrame#actionBar, QFrame#statsFrame {{
     border: 1px solid {CAT['surface0']};
     border-radius: 8px;
 }}
+QFrame#actionBar {{
+    border-color: {CAT['surface1']};
+}}
 QFrame#statCard {{
     background-color: {CAT['base']};
     border: 1px solid {CAT['surface0']};
@@ -1572,12 +1628,12 @@ QScrollBar:vertical {{
     background: {CAT['mantle']};
     width: 10px;
     margin: 0;
-    border-radius: 5px;
+    border-radius: 4px;
 }}
 QScrollBar::handle:vertical {{
     background: {CAT['surface2']};
     min-height: 30px;
-    border-radius: 5px;
+    border-radius: 4px;
 }}
 QScrollBar::handle:vertical:hover {{
     background: {CAT['overlay0']};
@@ -1593,12 +1649,12 @@ QScrollBar:horizontal {{
     background: {CAT['mantle']};
     height: 10px;
     margin: 0;
-    border-radius: 5px;
+    border-radius: 4px;
 }}
 QScrollBar::handle:horizontal {{
     background: {CAT['surface2']};
     min-width: 30px;
-    border-radius: 5px;
+    border-radius: 4px;
 }}
 QScrollBar::handle:horizontal:hover {{
     background: {CAT['overlay0']};
@@ -1622,7 +1678,7 @@ QToolButton:hover {{
     border-color: {CAT['lavender']};
 }}
 QToolButton:focus {{
-    border: 1px solid {CAT['blue']};
+    border: 2px solid {CAT['blue']};
 }}
 QToolButton:disabled {{
     background-color: {CAT['crust']};
@@ -1659,6 +1715,22 @@ QMenu::item:selected {{
     background-color: {CAT['surface1']};
     color: {CAT['lavender']};
 }}
+QMenu::item:disabled {{
+    color: {CAT['overlay2']};
+}}
+QMenu::separator {{
+    height: 1px;
+    background-color: {CAT['surface1']};
+    margin: 4px 8px;
+}}
+QSplitter::handle {{
+    background-color: {CAT['surface0']};
+    min-height: 4px;
+    border-radius: 4px;
+}}
+QSplitter::handle:hover {{
+    background-color: {CAT['blue']};
+}}
 QToolTip {{
     background-color: {CAT['surface0']};
     color: {CAT['text']};
@@ -1669,6 +1741,7 @@ QToolTip {{
 """
 
 WCAG_AA_NORMAL_TEXT_CONTRAST = 4.5
+ALLOWED_RADIUS_PX = (0, 4, 6, 8, 10, 12)
 STYLESHEET_READABLE_PAIRS = (
     ("QWidget", "text", "base"),
     ("QLabel#appTitle", "text", "mantle"),
