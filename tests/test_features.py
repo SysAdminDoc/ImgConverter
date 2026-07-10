@@ -2047,7 +2047,7 @@ class TestQtAccessibility:
         dialog = imgconverter.BatchHistoryDialog(self.window)
         try:
             assert dialog.table.rowCount() == 1
-            assert dialog.table.item(0, 1).text() == "gui"
+            assert dialog.table.item(0, 1).text() == "Desktop app"
             assert dialog.table.editTriggers() == imgconverter.QTableWidget.EditTrigger.NoEditTriggers
         finally:
             dialog.close()

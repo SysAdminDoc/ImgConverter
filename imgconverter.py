@@ -1583,11 +1583,62 @@ QLabel#dialogHint {{
     color: {CAT['subtext0']};
     font-size: 12px;
 }}
+QFrame#dialogHeader {{
+    background-color: {CAT['mantle']};
+    border: 1px solid {CAT['surface0']};
+    border-radius: 8px;
+}}
+QLabel#dialogEyebrow {{
+    color: {CAT['blue']};
+    font-size: 11px;
+    font-weight: 800;
+}}
+QLabel#dialogTitle {{
+    color: {CAT['text']};
+    font-size: 18px;
+    font-weight: 800;
+}}
+QLabel#dialogDescription {{
+    color: {CAT['subtext0']};
+    font-size: 12px;
+}}
+QLabel#dialogStatus {{
+    color: {CAT['subtext1']};
+    background-color: {CAT['mantle']};
+    border-left: 3px solid {CAT['surface2']};
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 12px;
+}}
+QLabel#dialogStatus[tone="active"] {{
+    color: {CAT['blue']};
+    border-left-color: {CAT['blue']};
+}}
+QLabel#dialogStatus[tone="success"] {{
+    color: {CAT['green']};
+    border-left-color: {CAT['green']};
+}}
+QLabel#dialogStatus[tone="warning"] {{
+    color: {CAT['yellow']};
+    border-left-color: {CAT['yellow']};
+}}
+QLabel#dialogStatus[tone="danger"] {{
+    color: {CAT['red']};
+    border-left-color: {CAT['red']};
+}}
 QLabel#emptyState {{
     color: {CAT['subtext1']};
     background-color: {CAT['mantle']};
     border: 1px solid {CAT['surface0']};
     border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+}}
+QLabel#noResults {{
+    color: {CAT['subtext1']};
+    background-color: {CAT['mantle']};
+    border: 1px dashed {CAT['surface1']};
+    border-radius: 6px;
     padding: 10px 12px;
     font-size: 12px;
 }}
@@ -1774,7 +1825,11 @@ STYLESHEET_READABLE_PAIRS = (
     ("QCheckBox:disabled", "subtext1", "base"),
     ("QLabel#dimLabel", "overlay2", "base"),
     ("QLabel#dialogHint", "subtext0", "base"),
+    ("QLabel#dialogTitle", "text", "mantle"),
+    ("QLabel#dialogDescription", "subtext0", "mantle"),
+    ("QLabel#dialogStatus", "subtext1", "mantle"),
     ("QLabel#emptyState", "subtext1", "mantle"),
+    ("QLabel#noResults", "subtext1", "mantle"),
     ("QLabel#statValue", "green", "base"),
     ("QLabel#statLabel", "overlay2", "base"),
     ("QStatusBar", "subtext0", "mantle"),
@@ -4009,11 +4064,13 @@ class _ThumbnailLoader(QThread):
 
 
 class _RunNowWorker(QThread):
-    finished_run = pyqtSignal(int, int, int)  # ok, fail, skipped
+    scan_ready = pyqtSignal(int)
+    progress = pyqtSignal(int, int)
+    finished_run = pyqtSignal(int, int, int, str)  # ok, fail, skipped, error
 
-    def __init__(self, files: list[Path], output_dir: Path, opts: "ConvertOptions"):
+    def __init__(self, source_dir: Path, output_dir: Path, opts: "ConvertOptions"):
         super().__init__()
-        self._files = list(files)
+        self._source_dir = Path(source_dir)
         self._output_dir = output_dir
         self._opts = opts
         self._stop = False
@@ -4023,7 +4080,14 @@ class _RunNowWorker(QThread):
 
     def run(self):
         ok = fail = skipped = 0
-        for seq_i, f in enumerate(self._files, start=1):
+        try:
+            scan = scan_directory(self._source_dir, recursive=True)
+        except Exception as exc:
+            self.finished_run.emit(0, 0, 0, str(exc))
+            return
+        files = list(scan.files)
+        self.scan_ready.emit(len(files))
+        for seq_i, f in enumerate(files, start=1):
             if self._stop:
                 break
             r = convert_file(f, self._output_dir, seq=seq_i, opts=self._opts)
@@ -4033,7 +4097,8 @@ class _RunNowWorker(QThread):
                 skipped += 1
             else:
                 fail += 1
-        self.finished_run.emit(ok, fail, skipped)
+            self.progress.emit(seq_i, len(files))
+        self.finished_run.emit(ok, fail, skipped, "")
 
 
 def _set_process_priority_low():
@@ -4401,6 +4466,7 @@ def normalize_preset(preset: dict) -> dict:
         "avif_speed": int,
         "target_kb": float,
         "target_psnr": float,
+        "target_ssimulacra2": float,
         "only_if_smaller": float,
         "watch_interval": float,
         "backend": str,
@@ -4476,6 +4542,73 @@ def normalize_preset(preset: dict) -> dict:
     if "exclude" in preset:
         norm["exclude"] = _split_patterns(preset["exclude"])
     return norm
+
+
+def _convert_options_from_preset(preset: dict | None, base_dir: Path | None = None) -> ConvertOptions:
+    """Build the full conversion boundary used by watch-profile runs."""
+    norm = normalize_preset(preset or {})
+    strip_fields: set[str] = set()
+    if norm.get("strip_metadata"):
+        strip_fields.add("all")
+    else:
+        if norm.get("strip_gps"):
+            strip_fields.add("gps")
+        if norm.get("strip_device"):
+            strip_fields.add("device")
+
+    resize_mode = "none"
+    resize_value = int(norm.get("resize_value", 1920))
+    if norm.get("resize_enabled", bool(norm.get("resize"))):
+        resize_mode = str(norm.get("resize_mode", "max_dim"))
+
+    quality_mode = None
+    for key, mode in (
+        ("target_kb", "target-kb"),
+        ("target_psnr", "target-psnr"),
+        ("target_ssimulacra2", "target-ssimulacra2"),
+    ):
+        if norm.get(key) is not None:
+            quality_mode = (mode, float(norm[key]))
+            break
+
+    dpi_value = int(norm.get("dpi", 0) or 0)
+    return ConvertOptions(
+        fmt=str(norm.get("format", "auto")),
+        jpeg_quality=int(norm.get("quality", 92)),
+        preserve_metadata="all" not in strip_fields,
+        preserve_structure=not bool(norm.get("no_structure", False)),
+        base_dir=base_dir,
+        in_place=bool(norm.get("in_place", False)),
+        skip_existing=bool(norm.get("skip_existing", False)),
+        resize_mode=resize_mode,
+        resize_value=resize_value,
+        prefix=str(norm.get("prefix", "")),
+        suffix=str(norm.get("suffix", "")),
+        lossless_webp=bool(norm.get("lossless", False)),
+        progressive_jpeg=bool(norm.get("progressive", False)),
+        chroma_subsampling=bool(norm.get("chroma_420", False)),
+        convert_to_srgb=bool(norm.get("srgb", False)),
+        tiff_compression=str(norm.get("tiff_compression", "none")),
+        png_compress_level=int(norm.get("png_level", 6)),
+        use_exiftool=not bool(norm.get("no_exiftool", False)),
+        name_template=str(norm["template"]) if norm.get("template") else None,
+        only_if_smaller_pct=float(norm["only_if_smaller"]) if norm.get("only_if_smaller") is not None else None,
+        dpi=(dpi_value, dpi_value) if dpi_value > 0 else None,
+        icc_override=str(norm["icc"]) if norm.get("icc") else None,
+        emit_xmp_sidecar=bool(norm.get("xmp_sidecar", False)),
+        recompress_lossless=bool(norm.get("recompress", False)),
+        quality_mode=quality_mode,
+        watermark=str(norm["watermark"]) if norm.get("watermark") else None,
+        canvas=_parse_canvas(str(norm["canvas"])) if norm.get("canvas") else None,
+        canvas_bg=str(norm.get("canvas_bg", "transparent")),
+        tone_map=str(norm.get("tone_map", "none")),
+        avif_speed=int(norm.get("avif_speed", 6)),
+        avif_codec=str(norm.get("avif_codec", "auto")),
+        png_lossy=bool(norm.get("png_lossy", False)),
+        backend=str(norm.get("backend", "pillow")),
+        cpu_priority=str(norm.get("cpu_priority", "normal")),
+        strip_fields=frozenset(strip_fields),
+    )
 
 
 
@@ -5350,6 +5483,38 @@ def _restore_dialog_geometry(dialog: QDialog, default_w: int, default_h: int):
     dialog.finished.connect(_on_close)
 
 
+def _add_dialog_header(layout: QVBoxLayout, eyebrow: str, title: str, description: str):
+    """Add the shared visible hierarchy used by every secondary surface."""
+    frame = QFrame()
+    frame.setObjectName("dialogHeader")
+    header_layout = QVBoxLayout(frame)
+    header_layout.setContentsMargins(12, 10, 12, 10)
+    header_layout.setSpacing(2)
+
+    eyebrow_label = QLabel(eyebrow.upper())
+    eyebrow_label.setObjectName("dialogEyebrow")
+    eyebrow_label.setAccessibleName(f"{title} category")
+    title_label = QLabel(title)
+    title_label.setObjectName("dialogTitle")
+    description_label = QLabel(description)
+    description_label.setObjectName("dialogDescription")
+    description_label.setWordWrap(True)
+
+    header_layout.addWidget(eyebrow_label)
+    header_layout.addWidget(title_label)
+    header_layout.addWidget(description_label)
+    layout.addWidget(frame)
+
+
+def _set_dialog_status(label: QLabel, message: str, tone: str = "ready"):
+    """Update inline dialog feedback with semantic text and visual tone."""
+    label.setText(message)
+    label.setProperty("tone", tone)
+    label.setAccessibleDescription(message)
+    label.setStatusTip(message)
+    _refresh_widget_style(label)
+
+
 class PluginTrustDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -5361,12 +5526,23 @@ class PluginTrustDialog(QDialog):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
+        _add_dialog_header(
+            layout,
+            self.tr("Extensions"),
+            self.tr("Plugin trust"),
+            self.tr("Review locally installed plugins before allowing their code to run."),
+        )
+
         self.status_label = QLabel(self.tr("Loading plugin trust inventory..."))
-        self.status_label.setObjectName("dialogHint")
+        self.status_label.setObjectName("dialogStatus")
+        self.status_label.setProperty("tone", "active")
         self.status_label.setAccessibleName(self.tr("Plugin trust summary"))
         layout.addWidget(self.status_label)
 
-        self.empty_label = QLabel(self.tr("No local plugin files or package entry points were found."))
+        self.empty_label = QLabel(self.tr(
+            "No plugins found. Add a plugin under ~/.imgconverter/plugins or install a package "
+            "that exposes an ImgConverter plugin entry point, then refresh."
+        ))
         self.empty_label.setObjectName("emptyState")
         self.empty_label.setWordWrap(True)
         self.empty_label.setVisible(False)
@@ -5386,8 +5562,8 @@ class PluginTrustDialog(QDialog):
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
         self.refresh_btn = QPushButton(self.tr("Refresh"))
-        self.trust_btn = QPushButton(self.tr("Trust"))
-        self.untrust_btn = QPushButton(self.tr("Untrust"))
+        self.trust_btn = QPushButton(self.tr("Trust Selected"))
+        self.untrust_btn = QPushButton(self.tr("Remove Trust"))
         self.close_btn = QPushButton(self.tr("Close"))
         self.trust_btn.setObjectName("primaryBtn")
         self.untrust_btn.setObjectName("dangerBtn")
@@ -5418,7 +5594,7 @@ class PluginTrustDialog(QDialog):
         self._refresh()
         self._update_actions()
 
-    def _refresh(self):
+    def _refresh(self, announcement: str | None = None, tone: str | None = None):
         self._rows = get_plugin_trust_rows()
         self.table.setRowCount(len(self._rows))
         for row_idx, row in enumerate(self._rows):
@@ -5430,12 +5606,15 @@ class PluginTrustDialog(QDialog):
         total = len(self._rows)
         needs_review = sum(1 for r in self._rows if r.get("status") in {"untrusted", "changed"})
         if total == 0:
-            text = self.tr("No plugin files or package entry points found.")
+            text = self.tr("No plugins are currently available for review.")
+            summary_tone = "ready"
         elif needs_review:
             text = self.tr(f"{total} plugin entr{'y' if total == 1 else 'ies'} found; {needs_review} need review.")
+            summary_tone = "warning"
         else:
-            text = self.tr(f"{total} plugin entr{'y' if total == 1 else 'ies'} found.")
-        self.status_label.setText(text)
+            text = self.tr(f"{total} plugin entr{'y' if total == 1 else 'ies'} found; all trust decisions are current.")
+            summary_tone = "success"
+        _set_dialog_status(self.status_label, announcement or text, tone or summary_tone)
         self.empty_label.setVisible(total == 0)
         self.table.setEnabled(total > 0)
         self._update_actions()
@@ -5451,24 +5630,40 @@ class PluginTrustDialog(QDialog):
         status = row.get("status") if row else None
         self.trust_btn.setEnabled(status in {"untrusted", "changed"})
         self.untrust_btn.setEnabled(status in {"trusted", "changed", "missing"})
+        self.trust_btn.setToolTip(
+            self.tr("Record the selected plugin's current hash as trusted")
+            if self.trust_btn.isEnabled()
+            else self.tr("Select an untrusted or changed plugin to enable this action")
+        )
+        self.untrust_btn.setToolTip(
+            self.tr("Remove the selected plugin from the local trust manifest")
+            if self.untrust_btn.isEnabled()
+            else self.tr("Select a trusted plugin entry to enable this action")
+        )
 
     def _trust_selected(self):
         row = self._selected_row()
         if not row or row.get("status") == "missing":
-            QMessageBox.information(self, self.tr("Plugin Trust"), self.tr("Select a plugin that needs review."))
+            _set_dialog_status(
+                self.status_label,
+                self.tr("Select an available untrusted or changed plugin first."),
+                "warning",
+            )
             return
         ok, msg = _trust_plugin(row.get("trust_ref") or row["path"])
-        (QMessageBox.information if ok else QMessageBox.warning)(self, self.tr("Plugin Trust"), msg)
-        self._refresh()
+        self._refresh(msg, "success" if ok else "danger")
 
     def _untrust_selected(self):
         row = self._selected_row()
         if not row:
-            QMessageBox.information(self, self.tr("Plugin Trust"), self.tr("Select a plugin entry to untrust."))
+            _set_dialog_status(
+                self.status_label,
+                self.tr("Select a trusted plugin entry first."),
+                "warning",
+            )
             return
         ok, msg = _untrust_plugin(row.get("trust_ref") or row["name"])
-        (QMessageBox.information if ok else QMessageBox.warning)(self, self.tr("Plugin Trust"), msg)
-        self._refresh()
+        self._refresh(msg, "success" if ok else "danger")
 
 
 class BatchHistoryDialog(QDialog):
@@ -5482,12 +5677,22 @@ class BatchHistoryDialog(QDialog):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
+        _add_dialog_header(
+            layout,
+            self.tr("Activity"),
+            self.tr("Batch history"),
+            self.tr("Review private, redacted summaries of completed conversions stored on this device."),
+        )
+
         self.status_label = QLabel(self.tr("Loading batch history..."))
-        self.status_label.setObjectName("dialogHint")
+        self.status_label.setObjectName("dialogStatus")
+        self.status_label.setProperty("tone", "active")
         self.status_label.setAccessibleName(self.tr("Batch history summary"))
         layout.addWidget(self.status_label)
 
-        self.empty_label = QLabel(self.tr("No completed batch sessions have been recorded yet."))
+        self.empty_label = QLabel(self.tr(
+            "No completed batches yet. Finish a conversion and its redacted summary will appear here."
+        ))
         self.empty_label.setObjectName("emptyState")
         self.empty_label.setWordWrap(True)
         self.empty_label.setVisible(False)
@@ -5541,12 +5746,15 @@ class BatchHistoryDialog(QDialog):
         total = len(self._records)
         failed = sum(1 for r in self._records if r.get("counts", {}).get("failed", 0))
         if total == 0:
-            text = self.tr("No completed batch sessions recorded.")
+            text = self.tr("No completed batches have been recorded on this device.")
+            tone = "ready"
         elif failed:
-            text = self.tr(f"{total} batch session{'s' if total != 1 else ''}; {failed} with failures.")
+            text = self.tr(f"{total} completed batch{'es' if total != 1 else ''}; {failed} need review.")
+            tone = "warning"
         else:
-            text = self.tr(f"{total} completed batch session{'s' if total != 1 else ''}.")
-        self.status_label.setText(text)
+            text = self.tr(f"{total} completed batch{'es' if total != 1 else ''}; no failures recorded.")
+            tone = "success"
+        _set_dialog_status(self.status_label, text, tone)
         self.empty_label.setVisible(total == 0)
         self.table.setEnabled(total > 0)
 
@@ -5555,15 +5763,16 @@ class BatchHistoryDialog(QDialog):
         byte_info = record.get("bytes", {}) if isinstance(record.get("bytes"), dict) else {}
         options = record.get("options", {}) if isinstance(record.get("options"), dict) else {}
         artifacts = record.get("artifacts", {}) if isinstance(record.get("artifacts"), dict) else {}
+        fmt = str(options.get("format", "auto")).upper()
         option_bits = [
-            f"fmt={options.get('format', 'auto')}",
-            f"q={options.get('quality', '-')}",
-            f"workers={options.get('workers', '-')}",
+            self.tr(f"{fmt} output"),
+            self.tr(f"Quality {options.get('quality', '—')}"),
+            self.tr(f"{options.get('workers', '—')} workers"),
         ]
         if options.get("resize"):
-            option_bits.append(f"resize={options.get('resize')}")
+            option_bits.append(self.tr(f"Resize {options.get('resize')}"))
         if options.get("metadata_mode") and options.get("metadata_mode") != "preserve":
-            option_bits.append(str(options.get("metadata_mode")))
+            option_bits.append(str(options.get("metadata_mode")).replace("_", " ").title())
         result = (
             f"{counts.get('converted', 0)} converted, "
             f"{counts.get('skipped', 0)} skipped, "
@@ -5580,12 +5789,14 @@ class BatchHistoryDialog(QDialog):
             artifact_bits.append(f"support: {artifacts['support_bundle']}")
         return [
             str(record.get("timestamp", "")),
-            str(record.get("surface", "")),
+            {"gui": self.tr("Desktop app"), "cli": self.tr("Command line")}.get(
+                str(record.get("surface", "")).lower(), str(record.get("surface", ""))
+            ),
             str(record.get("preset", "Manual")),
-            ", ".join(option_bits),
+            " · ".join(option_bits),
             result,
             bytes_text,
-            "; ".join(artifact_bits) if artifact_bits else "None",
+            "; ".join(artifact_bits) if artifact_bits else self.tr("No exports"),
         ]
 
 
@@ -5642,21 +5853,38 @@ class WatchFolderDialog(QDialog):
         _restore_dialog_geometry(self, 860, 460)
         self._profiles: list[dict] = _load_watch_profiles()
         self._run_now_worker: _RunNowWorker | None = None
+        self._run_active = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
+        _add_dialog_header(
+            layout,
+            self.tr("Automation"),
+            self.tr("Watch folder profiles"),
+            self.tr("Save repeatable local folder-to-folder conversion workflows and run them on demand."),
+        )
+
         self.status_label = QLabel(self.tr("Loading watch profiles..."))
-        self.status_label.setObjectName("dialogHint")
+        self.status_label.setObjectName("dialogStatus")
+        self.status_label.setProperty("tone", "active")
         self.status_label.setAccessibleName(self.tr("Watch folder summary"))
         layout.addWidget(self.status_label)
 
-        self.empty_label = QLabel(self.tr("No watch profiles yet."))
+        self.empty_label = QLabel(self.tr(
+            "No watch profiles yet. Add one to pair a source folder, output folder, and conversion preset."
+        ))
         self.empty_label.setObjectName("emptyState")
         self.empty_label.setWordWrap(True)
         self.empty_label.setVisible(False)
         layout.addWidget(self.empty_label)
+
+        self.run_progress = QProgressBar()
+        self.run_progress.setAccessibleName(self.tr("Watch profile run progress"))
+        self.run_progress.setFormat(self.tr("Preparing run..."))
+        self.run_progress.setVisible(False)
+        layout.addWidget(self.run_progress)
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels([
@@ -5739,10 +5967,12 @@ class WatchFolderDialog(QDialog):
         enabled = sum(1 for p in self._profiles if p.get("enabled"))
         total = len(self._profiles)
         if total == 0:
-            text = self.tr("No watch profiles yet.")
+            text = self.tr("No watch profiles have been configured.")
+            tone = "ready"
         else:
             text = self.tr(f"{total} watch profile{'s' if total != 1 else ''}; {enabled} enabled.")
-        self.status_label.setText(text)
+            tone = "success" if enabled else "warning"
+        _set_dialog_status(self.status_label, text, tone)
         self.empty_label.setVisible(total == 0)
         self.table.setEnabled(total > 0)
         self._update_actions()
@@ -5755,7 +5985,8 @@ class WatchFolderDialog(QDialog):
 
     def _update_actions(self):
         _row, profile = self._selected_profile()
-        has_selection = profile is not None
+        has_selection = profile is not None and not self._run_active
+        self.add_btn.setEnabled(not self._run_active)
         self.remove_btn.setEnabled(has_selection)
         self.toggle_btn.setEnabled(has_selection)
         self.run_now_btn.setEnabled(has_selection)
@@ -5822,32 +6053,65 @@ class WatchFolderDialog(QDialog):
         out = profile.get("output", "")
         preset_name = profile.get("preset", "Default")
         if not src or not Path(src).is_dir():
-            self.status_label.setText(self.tr(f"Source folder not found: {src}"))
+            _set_dialog_status(self.status_label, self.tr(f"Source folder not found: {src}"), "danger")
             return
-        self.run_now_btn.setEnabled(False)
-        self.add_btn.setEnabled(False)
-        self.remove_btn.setEnabled(False)
-        self.toggle_btn.setEnabled(False)
-        self.status_label.setText(self.tr(f"Running one-shot conversion for {Path(src).name}..."))
+        self._run_active = True
+        self._update_actions()
+        _set_dialog_status(
+            self.status_label,
+            self.tr(f"Scanning {Path(src).name} for files to convert..."),
+            "active",
+        )
+        self.run_progress.setRange(0, 0)
+        self.run_progress.setFormat(self.tr("Scanning source folder..."))
+        self.run_progress.setProperty("tone", "active")
+        _refresh_widget_style(self.run_progress)
+        self.run_progress.setVisible(True)
 
         preset = load_preset(preset_name)
-        opts = ConvertOptions(
-            fmt=preset.get("format", "auto") if preset else "auto",
-            jpeg_quality=int(preset.get("quality", 92)) if preset else 92,
-        )
+        opts = _convert_options_from_preset(preset, Path(src))
         if not out:
             out = str(Path(src) / "converted")
         output_dir = Path(out)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._run_active = False
+            self.run_progress.setVisible(False)
+            self._update_actions()
+            _set_dialog_status(
+                self.status_label,
+                self.tr(f"Could not create the output folder: {exc}"),
+                "danger",
+            )
+            return
 
-        scan = scan_directory(Path(src), recursive=True)
         self._run_now_row = row
-        self._run_now_total = len(scan.files)
-        self._run_now_worker = _RunNowWorker(scan.files, output_dir, opts)
+        self._run_now_worker = _RunNowWorker(Path(src), output_dir, opts)
+        self._run_now_worker.scan_ready.connect(self._on_run_now_scan_ready)
+        self._run_now_worker.progress.connect(self._on_run_now_progress)
         self._run_now_worker.finished_run.connect(self._on_run_now_done)
         self._run_now_worker.start()
 
-    def _on_run_now_done(self, ok_count: int, fail_count: int, skipped: int):
+    def _on_run_now_scan_ready(self, total: int):
+        self._run_now_total = total
+        self.run_progress.setRange(0, max(total, 1))
+        self.run_progress.setValue(0)
+        self.run_progress.setFormat(
+            self.tr(f"Converting %v of {total} files") if total else self.tr("No supported files found")
+        )
+        if total:
+            _set_dialog_status(
+                self.status_label,
+                self.tr(f"Found {total} files. Conversion is running in the background..."),
+                "active",
+            )
+
+    def _on_run_now_progress(self, current: int, total: int):
+        self.run_progress.setMaximum(max(total, 1))
+        self.run_progress.setValue(current)
+
+    def _on_run_now_done(self, ok_count: int, fail_count: int, skipped: int, error: str):
         from datetime import datetime
         row = self._run_now_row
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -5855,11 +6119,24 @@ class WatchFolderDialog(QDialog):
         self._profiles[row]["last_count"] = ok_count
         self._profiles[row]["last_error"] = f"{fail_count} failed" if fail_count else None
         _save_watch_profiles(self._profiles)
+        self._run_active = False
         self._refresh()
-        self.status_label.setText(self.tr(
-            f"Run complete: {ok_count} converted, {fail_count} failed, "
-            f"{skipped} skipped."
-        ))
+        self.run_progress.setVisible(False)
+        self._update_actions()
+        if error:
+            _set_dialog_status(self.status_label, self.tr(f"Run failed: {error}"), "danger")
+        elif getattr(self, "_run_now_total", 0) == 0:
+            _set_dialog_status(
+                self.status_label,
+                self.tr("No supported files were found in this watch folder."),
+                "warning",
+            )
+        else:
+            tone = "warning" if fail_count else "success"
+            _set_dialog_status(self.status_label, self.tr(
+                f"Run complete: {ok_count} converted, {fail_count} failed, "
+                f"{skipped} skipped."
+            ), tone)
 
     def done(self, result):
         if self._run_now_worker and self._run_now_worker.isRunning():
@@ -5900,24 +6177,33 @@ class DuplicateReviewDialog(QDialog):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
+        _add_dialog_header(
+            layout,
+            self.tr("Review"),
+            self.tr("Near-duplicate choices"),
+            self.tr("Choose which files to skip before conversion. The largest file in each group is kept by default."),
+        )
+
         total_files = sum(len(g) for g in groups)
-        hint = QLabel(self.tr(f"{len(groups)} duplicate group{'s' if len(groups) != 1 else ''}, "
-                      f"{total_files} total files. Select files to skip during conversion."))
-        hint.setObjectName("dialogHint")
+        hint = QLabel(self.tr(f"{len(groups)} near-duplicate group{'s' if len(groups) != 1 else ''} · "
+                      f"{total_files} files reviewed."))
+        hint.setObjectName("dialogStatus")
+        hint.setProperty("tone", "warning")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels([self.tr("Group"), self.tr("File"), self.tr("Size"), self.tr("Action")])
+        self.table.setHorizontalHeaderLabels([self.tr("Group"), self.tr("File"), self.tr("Size"), self.tr("Skip")])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for c in (0, 2, 3):
             self.table.horizontalHeader().setSectionResizeMode(
                 c, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAccessibleName(self.tr("Duplicate image groups"))
+        self.table.setAccessibleDescription(self.tr("Check files to exclude from this conversion batch"))
+        _configure_inventory_table(self.table)
         layout.addWidget(self.table)
 
+        self._populating = True
         row_idx = 0
         for gi, group in enumerate(groups, start=1):
             sorted_group = sorted(group, key=lambda p: p.stat().st_size if p.exists() else 0, reverse=True)
@@ -5932,30 +6218,76 @@ class DuplicateReviewDialog(QDialog):
                 except OSError:
                     size = 0
                 self.table.setItem(row_idx, 2, QTableWidgetItem(_fmt_size(size)))
-                action = self.tr("Convert") if fi == 0 else self.tr("Skip (smaller)")
-                action_item = QTableWidgetItem(action)
+                action_item = QTableWidgetItem(self.tr("Keep") if fi == 0 else self.tr("Skip smaller file"))
+                action_item.setData(Qt.ItemDataRole.UserRole, str(f))
+                action_item.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                )
+                action_item.setCheckState(
+                    Qt.CheckState.Unchecked if fi == 0 else Qt.CheckState.Checked
+                )
                 if fi > 0:
                     action_item.setForeground(QColor(CAT["yellow"]))
                     self.skip_set.add(f)
                 self.table.setItem(row_idx, 3, action_item)
                 row_idx += 1
+        self._populating = False
+        self.table.itemChanged.connect(self._on_item_changed)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
-        skip_label = QLabel(self.tr(f"{len(self.skip_set)} file{'s' if len(self.skip_set) != 1 else ''} "
-                            f"marked for skip"))
-        skip_label.setObjectName("dialogHint")
-        buttons.addWidget(skip_label)
+        self.skip_label = QLabel()
+        self.skip_label.setObjectName("dialogHint")
+        self._update_skip_label()
+        buttons.addWidget(self.skip_label)
         buttons.addStretch()
         apply_btn = QPushButton(self.tr("Apply Skips"))
         apply_btn.setObjectName("primaryBtn")
         apply_btn.clicked.connect(self.accept)
         buttons.addWidget(apply_btn)
-        cancel_btn = QPushButton(self.tr("Convert All"))
-        cancel_btn.setObjectName("secondaryBtn")
-        cancel_btn.clicked.connect(self.reject)
-        buttons.addWidget(cancel_btn)
+        keep_all_btn = QPushButton(self.tr("Keep All Files"))
+        keep_all_btn.setObjectName("secondaryBtn")
+        keep_all_btn.clicked.connect(self._keep_all)
+        keep_all_btn.setAccessibleName(self.tr("Keep all duplicate files"))
+        keep_all_btn.setAccessibleDescription(self.tr("Convert every file without applying duplicate skips"))
+        buttons.addWidget(keep_all_btn)
         layout.addLayout(buttons)
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        if self._populating or item.column() != 3:
+            return
+        path = Path(str(item.data(Qt.ItemDataRole.UserRole)))
+        should_skip = item.checkState() == Qt.CheckState.Checked
+        if should_skip:
+            self.skip_set.add(path)
+            item.setText(self.tr("Skip this file"))
+            item.setForeground(QColor(CAT["yellow"]))
+        else:
+            self.skip_set.discard(path)
+            item.setText(self.tr("Keep"))
+            item.setForeground(QColor(CAT["text"]))
+        self._update_skip_label()
+
+    def _update_skip_label(self):
+        count = len(self.skip_set)
+        self.skip_label.setText(self.tr(
+            f"{count} file{'s' if count != 1 else ''} will be skipped; originals are unchanged."
+        ))
+
+    def _keep_all(self):
+        self._populating = True
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 3)
+            if item:
+                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setText(self.tr("Keep"))
+                item.setForeground(QColor(CAT["text"]))
+        self._populating = False
+        self.skip_set.clear()
+        self._update_skip_label()
+        self.accept()
 
 
 class CommandPaletteDialog(QDialog):
@@ -5974,10 +6306,18 @@ class CommandPaletteDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
+
+        _add_dialog_header(
+            layout,
+            self.tr("Navigate"),
+            self.tr("Commands"),
+            self.tr("Search available actions and review why an action is currently unavailable."),
+        )
 
         self._search = QLineEdit()
-        self._search.setPlaceholderText(self.tr("Type to filter commands..."))
+        self._search.setPlaceholderText(self.tr("Search commands by name..."))
+        self._search.setClearButtonEnabled(True)
         self._search.setAccessibleName(self.tr("Command search"))
         self._search.textChanged.connect(self._filter)
         layout.addWidget(self._search)
@@ -5994,6 +6334,12 @@ class CommandPaletteDialog(QDialog):
         self._list.setAccessibleName(self.tr("Available commands"))
         layout.addWidget(self._list)
 
+        self._empty = QLabel(self.tr("No commands match this search. Try a shorter or broader term."))
+        self._empty.setObjectName("noResults")
+        self._empty.setWordWrap(True)
+        self._empty.setVisible(False)
+        layout.addWidget(self._empty)
+
         self._populate(commands)
         self._search.setFocus()
 
@@ -6008,16 +6354,33 @@ class CommandPaletteDialog(QDialog):
             status = cmd.get("status", "")
             status_item = QTableWidgetItem(status)
             if "disabled" in status.lower():
-                status_item.setForeground(QColor(CAT["overlay0"]))
-                name_item.setForeground(QColor(CAT["overlay0"]))
+                status_item.setForeground(QColor(CAT["overlay2"]))
+                name_item.setForeground(QColor(CAT["overlay2"]))
+                name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
             self._list.setItem(i, 1, status_item)
+        for row in range(self._list.rowCount()):
+            if self._list.item(row, 0).flags() & Qt.ItemFlag.ItemIsEnabled:
+                self._list.selectRow(row)
+                break
 
     def _filter(self, text: str):
         needle = text.lower()
+        matches = 0
+        first_enabled = -1
         for row in range(self._list.rowCount()):
             item = self._list.item(row, 0)
-            match = needle in (item.text().lower() if item else "")
+            tooltip = item.toolTip().lower() if item else ""
+            match = needle in (item.text().lower() if item else "") or needle in tooltip
             self._list.setRowHidden(row, not match)
+            if match:
+                matches += 1
+                if first_enabled < 0 and item.flags() & Qt.ItemFlag.ItemIsEnabled:
+                    first_enabled = row
+        self._empty.setVisible(matches == 0)
+        self._list.setVisible(matches > 0)
+        if first_enabled >= 0:
+            self._list.selectRow(first_enabled)
 
     def _on_activate(self, index):
         item = self._list.item(index.row(), 0)
