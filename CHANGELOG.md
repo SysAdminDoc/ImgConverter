@@ -32,7 +32,7 @@ All notable changes to ImgConverter will be documented in this file.
 
 ### Added
 
-- **Five GUI regression tests**: Responsive reflow, dependent-state restoration, semantic summary mirroring, shortcut absence, and native checkbox rendering. 191 total tests.
+- **Six GUI and packaging regression tests**: Responsive reflow, dependent-state restoration, semantic summary mirroring, shortcut absence, native checkbox rendering, and packaged multiprocessing startup coverage. 192 total tests.
 
 ## [v3.4.3] — 2026-07-01
 
