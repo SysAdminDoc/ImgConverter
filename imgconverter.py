@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.4.3 - Universal image batch converter
+ImgConverter v3.5.0 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.4.3"
+APP_VERSION = "3.5.0"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -4461,19 +4461,33 @@ def _open_path(path: str):
         subprocess.Popen(["xdg-open", path])
 
 
-def _create_app_icon() -> QIcon:
-    """Create a simple app icon programmatically."""
-    pm = QPixmap(64, 64)
+def _create_app_icon(pixel_size: int = 64) -> QIcon:
+    """Create the ImgConverter stacked-image mark at any packaging size."""
+    pixel_size = max(16, int(pixel_size))
+    scale = pixel_size / 64.0
+    q = lambda value: int(round(value * scale))
+    pm = QPixmap(pixel_size, pixel_size)
     pm.fill(QColor(0, 0, 0, 0))
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setBrush(QColor(CAT["blue"]))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawRoundedRect(2, 2, 60, 60, 14, 14)
-    p.setPen(QColor(CAT["crust"]))
-    f = QFont("Segoe UI", 30, QFont.Weight.Bold)
-    p.setFont(f)
-    p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "I")
+    outer_pen = QPen(QColor(CAT["lavender"]))
+    outer_pen.setWidthF(max(1.0, 1.5 * scale))
+    p.setPen(outer_pen)
+    p.drawRoundedRect(q(2), q(2), q(60), q(60), q(14), q(14))
+
+    mark_pen = QPen(QColor(CAT["crust"]))
+    mark_pen.setWidthF(max(1.8, 3.2 * scale))
+    mark_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    mark_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(mark_pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawRoundedRect(q(17), q(14), q(32), q(29), q(5), q(5))
+    p.drawRoundedRect(q(12), q(20), q(34), q(30), q(5), q(5))
+    p.drawEllipse(q(35), q(25), q(5), q(5))
+    p.drawLine(q(16), q(43), q(25), q(33))
+    p.drawLine(q(25), q(33), q(31), q(39))
+    p.drawLine(q(31), q(39), q(39), q(31))
     p.end()
     return QIcon(pm)
 

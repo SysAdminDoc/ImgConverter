@@ -590,6 +590,15 @@ class TestPyInstallerGuards:
 
         assert freeze_idx < deps_idx < pillow_idx
 
+    def test_runtime_hook_guards_frozen_workers(self):
+        root = Path(__file__).resolve().parents[1]
+        hook = root / "packaging" / "runtime_hook_mp.py"
+        assert hook.exists()
+        assert "multiprocessing.freeze_support()" in hook.read_text(encoding="utf-8")
+
+        spec = (root / "ImgConverter.spec").read_text(encoding="utf-8")
+        assert "runtime_hooks=['packaging/runtime_hook_mp.py']" in spec
+
     def test_install_deps_refuses_frozen_executable(self, monkeypatch, capsys):
         import imgconverter
 

@@ -2,7 +2,7 @@
 
 Universal image batch converter with a modern, local-first GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
 
-![Version](https://img.shields.io/badge/Version-3.4.3-blue)
+![Version](https://img.shields.io/badge/Version-3.5.0-blue)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
@@ -76,9 +76,12 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **File count in title bar** — shows file count after scan, progress during conversion, summary when done
 - **Resize upscaling guard** — warns when image is already smaller than the resize target
 - **Conversion presets** — Web Optimized, Archive Quality, Mobile Friendly, Print/TIFF one-click presets
-- **Premium workflow UI** — compact source/output setup, tone-aware workflow status, refined action bar, collapsible input filters, and calmer first-run log state
-- **Polished management dialogs** — plugin trust and watch-folder profiles use clearer empty states, action roles, and keyboard-friendly table behavior
-- **True collapsed advanced controls** — advanced output controls stay out of the main flow until expanded
+- **Premium workflow workspace** — a clear Source → Output recipe → Batch summary layout keeps the next action visible and the activity log supporting, not dominant
+- **Responsive composition** — two-pane layout on wide screens, stacked source/summary flow on compact windows, and reachable expert controls from 760×560 through 4K+
+- **Contextual batch summary** — purposeful empty, scanning, ready, converting, stopped, partial-failure, failed, and complete states with dynamic “Convert N images” copy
+- **Unified line-icon system** — consistent theme-aware actions and an ImgConverter-specific app/package mark replace platform-dependent glyphs and legacy branding
+- **Polished management dialogs** — plugin trust, batch history, automation, duplicate review, commands, and file-manager integration share clear hierarchy, status feedback, and actionable empty states
+- **True collapsed advanced controls** — input-family filters and advanced output controls stay out of the primary Source → Recipe path until expanded
 - **Smart option visibility** — format-specific controls auto-show/hide based on output format
 - **Dark title bar** — native dark title bar on Windows 10/11 matching Catppuccin theme
 - **Conversion speed stats** — elapsed time + files/sec displayed in status bar during conversion
@@ -110,7 +113,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **Cancel support** — stop mid-conversion without corrupting output
 - **Settings persistence** — remembers all settings including format filter state across sessions
 - **Catppuccin Mocha dark theme** — including dark scrollbars and dark title bar
-- **Responsive UI scaling** — QScrollArea for controls, QSplitter between controls and log, works from 720p to 4K+
+- **Accessible interaction states** — visible focus, hover, pressed, selected, checked, disabled, validation, progress, and semantic status treatments across the full GUI
 - **Cross-platform** — native file manager integration on Windows, macOS, and Linux
 
 ## Installation
@@ -128,17 +131,17 @@ GitHub release binaries are unsigned until platform signing infrastructure is av
 
 ## Usage
 
-1. **Choose** or **drag & drop** a directory containing image files
-2. **Adjust output settings** — format, quality, workers, metadata, resize, and naming
-3. **Scan Source** to discover supported files
-4. Optionally expand **Input format filters** or **Advanced output controls**
-5. **Convert Batch** — output goes to `source/converted/` by default
+1. In **Source**, choose or drag in a folder (or individual images) and confirm the output folder
+2. In **Output recipe**, choose the format, quality, metadata policy, and optional preset
+3. Select **Scan source** to review matching files and estimated output details
+4. Select the contextual **Convert N images** action in **Batch summary**
+5. Expand **Advanced options** or **Input format filters** only when the workflow needs them; output defaults to `source/converted/`
 
 Toggle **"Convert in place after verified output"** to save output next to each source file and delete the original after validation succeeds.
 
 Enable **"Skip files that already have output"** to resume interrupted batches without re-converting.
 
-The log panel shows per-file results with size before/after and conversion time. Logs can be exported to a text file, CSV report, or redacted support bundle. Completed batches are also recorded in the local Batch History dialog without source images or full private paths. CSV and JSON reports include metadata/provenance presence checks for EXIF, ICC, XMP, IPTC, MakerNotes, and C2PA; warnings call out fields that were detected before conversion but missing afterward. Support bundles include app/platform/dependency/tool diagnostics and recent redacted logs, but never include source images.
+The collapsible Activity panel shows per-file results with size before/after and conversion time. Activity can be exported to text, CSV, or a redacted diagnostics bundle. Completed batches are also recorded in Batch History without source images or full private paths. CSV and JSON reports include metadata/provenance presence checks for EXIF, ICC, XMP, IPTC, MakerNotes, and C2PA; warnings call out fields that were detected before conversion but missing afterward. Diagnostics bundles include app/platform/dependency/tool details and recent redacted activity, but never include source images.
 
 ## CLI Usage
 

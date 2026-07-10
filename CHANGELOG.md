@@ -4,10 +4,35 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [Unreleased]
 
+## [v3.5.0] — 2026-07-09
+
 ### Changed
 
+- **Reimagined batch workspace**: Reframed the main window around a clear Source → Output recipe → Batch summary workflow with a persistent action dock and supporting Activity panel.
+- **Premium source experience**: Added a high-visibility drop surface, clearer local-first reassurance, recent-source access, aligned output routing, and progressive disclosure for input filters and advanced controls.
+- **Contextual batch summary**: Replaced six always-visible zero cards with an intentional empty state, scan/readiness feedback, responsive statistics, dynamic “Convert N images” copy, semantic progress, and output actions.
+- **Responsive composition**: Wide windows use the two-column workspace; compact windows stack the source/recipe and action surfaces while collapsing secondary controls to preserve reachability.
+- **Unified icon and app identity**: Replaced platform-dependent action glyphs and legacy HEICShift package artwork with a consistent line-icon system and ImgConverter stacked-image mark.
+- **Dialog hierarchy**: Standardized headers, inline status tones, empty states, human-readable labels, disabled-action explanations, and coherent actions across plugin trust, history, watch profiles, duplicate review, commands, and file-manager integration.
+- **Activity hierarchy**: Moved diagnostics below the primary workflow, made the panel collapsible, clarified export labels, and retained searchable local details without competing with Scan and Convert.
 - **Shared interaction system**: Strengthened focus rings, hover/pressed/disabled states, table selection, combo menus, sliders, splitters, validation fields, and progress tones across the main window and every dialog.
 - **Consistent geometry**: Normalized every stylesheet corner radius to the 0/4/6/8/10/12px product scale and added a regression test that rejects drift back to pill or off-scale shapes.
+
+### Fixed
+
+- **Default and compact layout clipping**: Removed the unreachable fixed-width action rows and added an explicit responsive breakpoint with horizontal-scroll fallback for expanded expert controls.
+- **Scan consistency**: Source, recipe, filter, and automation controls now lock during scanning so visible settings cannot drift away from the active scan result.
+- **Stale scan invalidation**: Editing the source clears the old review and disables conversion until the new source is scanned.
+- **Dependent-control restoration**: Resize and only-if-smaller inputs remain disabled after a busy cycle when their parent options are unchecked.
+- **Truthful completion state**: Cancelled batches now report Stopped, partial failures report Partial failure, and Open Output is enabled only when the current batch produced output.
+- **Truthful progress copy**: Completed-file feedback no longer claims a file is currently processing after its future has already finished.
+- **Checkbox accessibility**: Restored native checked glyphs so checkbox state is never communicated by color alone.
+- **Validation accessibility**: Source/output/size errors now use semantic validation properties with screen-reader descriptions and clear consistently on edit.
+- **Command discoverability**: Added a visible More entry point and normal Close/Open controls while removing hidden application shortcuts.
+
+### Added
+
+- **Five GUI regression tests**: Responsive reflow, dependent-state restoration, semantic summary mirroring, shortcut absence, and native checkbox rendering. 191 total tests.
 
 ## [v3.4.3] — 2026-07-01
 
