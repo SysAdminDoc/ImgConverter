@@ -1972,6 +1972,51 @@ class TestQtAccessibility:
 
         assert len(focus_chain) >= 8
 
+    def test_responsive_workspace_stacks_at_compact_width(self):
+        import imgconverter
+
+        w = self.window
+        w.resize(820, 700)
+        w._sync_responsive_layout()
+        _qt_app.processEvents()
+        assert w.workspace_splitter.orientation() == _Qt.Orientation.Vertical
+
+        w.resize(1200, 800)
+        w._sync_responsive_layout()
+        _qt_app.processEvents()
+        assert w.workspace_splitter.orientation() == _Qt.Orientation.Horizontal
+
+    def test_busy_restore_respects_dependent_controls(self):
+        w = self.window
+        w.resize_chk.setChecked(False)
+        w.only_if_smaller_chk.setChecked(False)
+
+        w._set_conversion_busy(True)
+        w._set_conversion_busy(False)
+
+        assert not w.resize_combo.isEnabled()
+        assert not w.resize_spin.isEnabled()
+        assert not w.only_if_smaller_spin.isEnabled()
+
+    def test_summary_mirrors_semantic_workflow_state(self):
+        w = self.window
+        w._set_workflow_state("Partial failure", "12 converted; 2 need review.")
+
+        assert w.summary_headline.text() == "Partial failure"
+        assert w.summary_headline.property("tone") == "warning"
+        assert w.summary_detail.text() == "12 converted; 2 need review."
+
+    def test_main_window_has_no_hidden_shortcuts(self):
+        import imgconverter
+
+        assert self.window.findChildren(imgconverter.QShortcut) == []
+
+    def test_checkbox_indicator_uses_native_check_glyph(self):
+        import imgconverter
+
+        assert "QCheckBox::indicator:checked" not in imgconverter.STYLESHEET
+        assert "QCheckBox:focus" in imgconverter.STYLESHEET
+
     def test_scan_button_is_keyboard_activatable(self):
         w = self.window
         assert w.scan_btn.isEnabled()
@@ -1996,12 +2041,13 @@ class TestQtAccessibility:
 
     def test_validation_style_clears_when_max_file_size_changes(self):
         w = self.window
+        w.max_file_size_edit.setText("500MB")
         w._set_line_error(w.max_file_size_edit, "Use a size like 500MB")
-        assert "border" in w.max_file_size_edit.styleSheet()
+        assert w.max_file_size_edit.property("validationState") == "error"
 
         w.max_file_size_edit.setText("600MB")
 
-        assert w.max_file_size_edit.styleSheet() == ""
+        assert w.max_file_size_edit.property("validationState") == ""
 
     def test_export_log_reports_write_failure(self, tmp_workdir, monkeypatch):
         import imgconverter
