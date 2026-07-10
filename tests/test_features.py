@@ -15,6 +15,12 @@ from PIL import Image
 
 from imgconverter import (
     _apply_canvas,
+    _apply_edits,
+    _has_edits,
+    _build_convert_options,
+    _parse_hex_rgb,
+    ADJUST_PRESETS,
+    SOCIAL_PRESETS,
     _build_parser,
     _build_quality_mode,
     _convert_animated_or_sequence,
@@ -2294,3 +2300,150 @@ class TestProofMode:
         assert exc_info.value.code == EXIT_OK
         converted = list(out.glob("*.png"))
         assert len(converted) == 2
+
+
+# ── Editing layer (folded in from ImageForge) ────────────────────────────────
+
+
+class TestEditingLayer:
+    """Batch adjustments, effects, border, presets, and social sizing."""
+
+    def _opts(self, **kw):
+        return ConvertOptions(**kw)
+
+    def test_has_edits_false_by_default(self):
+        assert _has_edits(ConvertOptions()) is False
+
+    def test_has_edits_true_when_set(self):
+        assert _has_edits(ConvertOptions(contrast=10)) is True
+        assert _has_edits(ConvertOptions(grayscale=True)) is True
+        assert _has_edits(ConvertOptions(tint="teal@20")) is True
+        assert _has_edits(ConvertOptions(border_width=5)) is True
+
+    def test_no_edits_returns_same_object(self, rgb_image):
+        out = _apply_edits(rgb_image, ConvertOptions())
+        assert out is rgb_image
+
+    def test_grayscale_removes_saturation(self, rgb_image):
+        out = _apply_edits(rgb_image, ConvertOptions(grayscale=True)).convert("RGB")
+        px = out.getpixel((20, 20))
+        assert px[0] == px[1] == px[2]
+
+    def test_invert_flips_channels(self, rgb_image):
+        before = rgb_image.getpixel((20, 20))
+        out = _apply_edits(rgb_image, ConvertOptions(invert=True)).convert("RGB")
+        after = out.getpixel((20, 20))
+        assert after == tuple(255 - c for c in before[:3])
+
+    def test_brightness_increases_luma(self, rgb_image):
+        before = sum(rgb_image.getpixel((100, 100))[:3])
+        out = _apply_edits(rgb_image, ConvertOptions(brightness=80)).convert("RGB")
+        after = sum(out.getpixel((100, 100))[:3])
+        assert after > before
+
+    def test_border_expands_dimensions(self, rgb_image):
+        w, h = rgb_image.size
+        out = _apply_edits(rgb_image, ConvertOptions(border_width=12, border_color="#ff0000"))
+        assert out.size == (w + 24, h + 24)
+        assert out.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
+
+    def test_alpha_is_preserved(self, rgba_image):
+        out = _apply_edits(rgba_image, ConvertOptions(contrast=20, saturation=15))
+        assert out.mode == "RGBA"
+        # Fully transparent corner stays transparent.
+        assert out.getpixel((0, 0))[3] == 0
+
+    def test_sepia_and_tint_and_effects_run(self, rgb_image):
+        opts = ConvertOptions(sepia=True, vignette=30, grain=15, tint="#3a6ea5@20")
+        out = _apply_edits(rgb_image, opts).convert("RGB")
+        assert out.size == rgb_image.size
+
+    def test_hue_rotation_changes_pixels(self, rgb_image):
+        out = _apply_edits(rgb_image, ConvertOptions(hue=120)).convert("RGB")
+        assert out.getpixel((20, 20)) != rgb_image.getpixel((20, 20))
+
+    def test_parse_hex_rgb_variants(self):
+        assert _parse_hex_rgb("#ff0000") == (255, 0, 0)
+        assert _parse_hex_rgb("00ff00") == (0, 255, 0)
+        assert _parse_hex_rgb("blue") == (0, 0, 255)
+        assert _parse_hex_rgb("not-a-color", (1, 2, 3)) == (1, 2, 3)
+
+    def test_parser_accepts_editing_flags(self):
+        args = _build_parser().parse_args([
+            "-i", "x", "--brightness", "20", "--contrast", "-10",
+            "--grayscale", "--vignette", "40", "--tint", "teal@30",
+            "--border", "8", "--adjust-preset", "vivid", "--social", "og-image",
+        ])
+        assert args.brightness == 20
+        assert args.contrast == -10
+        assert args.grayscale is True
+        assert args.adjust_preset == "vivid"
+        assert args.social == "og-image"
+
+    def test_adjust_preset_stacks_additively(self):
+        args = _build_parser().parse_args([
+            "-i", "x", "--adjust-preset", "vivid", "--contrast", "10",
+        ])
+        opts = _build_convert_options(args)
+        # vivid = saturation +30, contrast +15; explicit +10 stacks -> 25.
+        assert opts.saturation == 30
+        assert opts.contrast == 25
+
+    def test_adjust_preset_toggles_or_together(self):
+        args = _build_parser().parse_args(["-i", "x", "--adjust-preset", "bw"])
+        opts = _build_convert_options(args)
+        assert opts.grayscale is True
+        assert opts.contrast == 10
+
+    def test_social_maps_to_canvas(self):
+        args = _build_parser().parse_args(["-i", "x", "--social", "instagram-post"])
+        opts = _build_convert_options(args)
+        assert opts.canvas == SOCIAL_PRESETS["instagram-post"] == (1080, 1080)
+
+    def test_explicit_canvas_overrides_social(self):
+        args = _build_parser().parse_args([
+            "-i", "x", "--social", "instagram-post", "--canvas", "800x800",
+        ])
+        opts = _build_convert_options(args)
+        assert opts.canvas == (800, 800)
+
+    def test_edit_ranges_clamped(self):
+        args = _build_parser().parse_args(["-i", "x", "--brightness", "50"])
+        # Preset warm has no brightness; explicit stays within range.
+        opts = _build_convert_options(args)
+        assert -100 <= opts.brightness <= 100
+
+    def test_validation_rejects_out_of_range(self):
+        args = _build_parser().parse_args(["-i", "x", "--vignette", "500"])
+        errors = _validate_cli_args(args)
+        assert any("--vignette" in e for e in errors)
+
+    def test_validation_rejects_bad_blur(self):
+        args = _build_parser().parse_args(["-i", "x", "--blur", "99"])
+        errors = _validate_cli_args(args)
+        assert any("--blur" in e for e in errors)
+
+    def test_convert_file_applies_edits(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "in.bmp"
+        rgb_image.save(src)
+        out_dir = tmp_workdir / "out"
+        out_dir.mkdir()
+        result = convert_file(src, out_dir, opts=ConvertOptions(
+            fmt="png", grayscale=True, border_width=5, border_color="#000000"))
+        assert result.success
+        from PIL import Image as _I
+        with _I.open(result.dst) as im:
+            im = im.convert("RGB")
+            # Border adds 10 px total to each dimension.
+            assert im.size == (rgb_image.size[0] + 10, rgb_image.size[1] + 10)
+            # Grayscale interior pixel.
+            px = im.getpixel((im.size[0] // 2, im.size[1] // 2))
+            assert px[0] == px[1] == px[2]
+
+    def test_all_editing_flags_have_parity_entries(self):
+        for flag in ("--brightness", "--contrast", "--saturation", "--sharpness",
+                     "--blur", "--hue", "--grayscale", "--sepia", "--invert",
+                     "--vignette", "--grain", "--tint", "--border",
+                     "--border-color", "--adjust-preset", "--social"):
+            assert flag in CLI_FLAG_PARITY
+            assert CLI_FLAG_PARITY[flag]["surface"] == "cli-only"

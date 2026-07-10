@@ -4,6 +4,25 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [Unreleased]
 
+## [v3.6.0] — 2026-07-10
+
+### Added
+
+- **Batch editing layer** (folded in from the retired ImageForge project) — per-image adjustments and effects applied across the whole batch, alpha-preserving, and composable with the existing resize/canvas/watermark pipeline:
+  - Adjustments: `--brightness`, `--contrast`, `--saturation` (−100..100), `--sharpness` (0..100 unsharp mask), `--blur` (0..20 px Gaussian), `--hue` (0..360°).
+  - Tonal toggles: `--grayscale`, `--sepia`, `--invert`.
+  - Effects: `--vignette`, `--grain` (film noise), `--tint COLOR@STRENGTH` (multiply-blend colour cast).
+  - Framing: `--border` width + `--border-color`.
+  - `--adjust-preset` one-shot looks (`vivid`, `muted`, `bw`, `vintage`, `cold`, `warm`); numeric flags stack additively on the preset, boolean toggles OR together.
+  - `--social` size presets (`instagram-post`, `instagram-story`, `facebook-cover`, `facebook-header`, `x-header`, `youtube-thumbnail`, `linkedin-banner`, `og-image`) that pad output to platform dimensions; an explicit `--canvas` overrides them.
+- Editing operations apply on both the still and multi-frame/animated conversion paths.
+- 22 new tests covering the editing helpers, argument parsing, preset stacking, social→canvas mapping, validation ranges, and an end-to-end convert.
+
+### Notes
+
+- ImageForge's interactive-only features (freehand canvas annotation, the before/after comparison slider) are intentionally not carried over — they don't map onto a headless batch converter.
+- All new flags are classified `cli-only` in the parity matrix; GUI exposure is a follow-up.
+
 ## [v3.5.0] — 2026-07-09
 
 ### Changed

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.5.0 - Universal image batch converter
+ImgConverter v3.6.0 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -31,7 +31,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.5.0"
+APP_VERSION = "3.6.0"
 
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
@@ -2111,6 +2111,21 @@ class ConvertOptions:
     backend: str = "pillow"
     cpu_priority: str = "normal"
     strip_fields: frozenset[str] = field(default_factory=frozenset)
+    # Editing layer (folded in from ImageForge) — per-image adjustments/effects.
+    brightness: int = 0
+    contrast: int = 0
+    saturation: int = 0
+    sharpness: int = 0
+    blur: float = 0.0
+    hue: int = 0
+    grayscale: bool = False
+    sepia: bool = False
+    invert: bool = False
+    vignette: int = 0
+    grain: int = 0
+    tint: str | None = None
+    border_width: int = 0
+    border_color: str = "#ffffff"
 
 
 def _same_resolved_path(left: Path, right: Path) -> bool:
@@ -2425,6 +2440,194 @@ def _apply_canvas(img: "Image.Image", canvas_size: tuple[int, int],
     else:
         base.paste(img, offset)
     return base
+
+
+# ── Editing layer ─────────────────────────────────────────────────────────────
+# Folded in from ImageForge (Canvas/JS editor) as batch-appropriate per-image
+# operations. Interactive-only ImageForge features (freehand annotation, the
+# before/after slider) don't map onto a headless batch pipeline and are omitted.
+
+SOCIAL_PRESETS = {
+    "instagram-post": (1080, 1080),
+    "instagram-story": (1080, 1920),
+    "facebook-cover": (1200, 630),
+    "facebook-header": (820, 312),
+    "x-header": (1500, 500),
+    "youtube-thumbnail": (1280, 720),
+    "linkedin-banner": (1584, 396),
+    "og-image": (1200, 628),
+}
+
+# Adjustment presets mirror ImageForge's filter presets. Numeric values stack
+# additively with explicit flags; booleans OR together.
+ADJUST_PRESETS = {
+    "vivid": {"saturation": 30, "contrast": 15},
+    "muted": {"saturation": -30, "contrast": -10},
+    "bw": {"grayscale": True, "contrast": 10},
+    "vintage": {"sepia": True, "saturation": -15, "contrast": -5},
+    "cold": {"saturation": -10, "tint": "#3a6ea5@18"},
+    "warm": {"saturation": 8, "tint": "#e0a04a@16"},
+}
+
+
+def _parse_hex_rgb(spec, default=(255, 255, 255)) -> tuple[int, int, int]:
+    """Parse '#RRGGBB' / 'RRGGBB' / named color to an (r, g, b) tuple."""
+    if not spec:
+        return default
+    s = str(spec).strip()
+    hex_str = s[1:] if s.startswith("#") else s
+    if len(hex_str) == 6:
+        try:
+            return tuple(int(hex_str[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+        except ValueError:
+            pass
+    try:
+        from PIL import ImageColor
+        return ImageColor.getrgb(s)[:3]
+    except Exception:
+        return default
+
+
+def _has_edits(opts: "ConvertOptions") -> bool:
+    """True when any editing-layer field is active (skips the pass otherwise)."""
+    return bool(
+        getattr(opts, "brightness", 0) or getattr(opts, "contrast", 0)
+        or getattr(opts, "saturation", 0) or getattr(opts, "sharpness", 0)
+        or getattr(opts, "blur", 0) or getattr(opts, "hue", 0)
+        or getattr(opts, "grayscale", False) or getattr(opts, "sepia", False)
+        or getattr(opts, "invert", False) or getattr(opts, "vignette", 0)
+        or getattr(opts, "grain", 0) or getattr(opts, "tint", None)
+        or getattr(opts, "border_width", 0)
+    )
+
+
+def _split_alpha(img: "Image.Image"):
+    """Return (rgb_image, alpha_channel_or_None), preserving transparency."""
+    if img.mode in ("RGBA", "LA", "PA"):
+        rgba = img.convert("RGBA")
+        return rgba.convert("RGB"), rgba.getchannel("A")
+    return img.convert("RGB"), None
+
+
+def _merge_alpha(rgb: "Image.Image", alpha):
+    if alpha is None:
+        return rgb
+    out = rgb.convert("RGBA")
+    out.putalpha(alpha)
+    return out
+
+
+def _apply_hue_rotation(rgb: "Image.Image", degrees: int) -> "Image.Image":
+    """Rotate hue by ``degrees`` (0-360) via the HSV colour space."""
+    shift = int(round((degrees % 360) / 360.0 * 255)) & 0xFF
+    if shift == 0:
+        return rgb
+    from PIL import Image as _I
+    h, s, v = rgb.convert("HSV").split()
+    h = h.point(lambda x: (x + shift) & 0xFF)
+    return _I.merge("HSV", (h, s, v)).convert("RGB")
+
+
+def _apply_sepia(rgb: "Image.Image") -> "Image.Image":
+    from PIL import ImageOps
+    gray = ImageOps.grayscale(rgb)
+    return ImageOps.colorize(gray, black=(30, 18, 8), white=(255, 240, 200)).convert("RGB")
+
+
+def _apply_vignette(rgb: "Image.Image", strength: int) -> "Image.Image":
+    strength = max(0, min(100, int(strength)))
+    if strength <= 0:
+        return rgb
+    from PIL import Image as _I, ImageDraw, ImageFilter, ImageEnhance
+    w, h = rgb.size
+    mask = _I.new("L", (w, h), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((-w * 0.15, -h * 0.15, w * 1.15, h * 1.15), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(w, h) / 8.0))
+    factor = 1.0 - strength / 100.0 * 0.85
+    dark = ImageEnhance.Brightness(rgb).enhance(factor)
+    # mask=255 at centre keeps rgb; edges fall to the darkened copy.
+    return _I.composite(rgb, dark, mask)
+
+
+def _apply_grain(rgb: "Image.Image", strength: int) -> "Image.Image":
+    strength = max(0, min(100, int(strength)))
+    if strength <= 0:
+        return rgb
+    from PIL import Image as _I, ImageChops
+    w, h = rgb.size
+    sigma = strength / 100.0 * 48.0
+    noise = _I.effect_noise((w, h), sigma)  # L mode, mean ~128
+    noise_rgb = _I.merge("RGB", (noise, noise, noise))
+    grained = ImageChops.add(rgb, noise_rgb, scale=1.0, offset=-128)
+    return _I.blend(rgb, grained, min(1.0, strength / 100.0))
+
+
+def _apply_tint(rgb: "Image.Image", spec: str) -> "Image.Image":
+    """spec: 'COLOR@STRENGTH' (strength 0-100). Multiply-blend colour cast."""
+    color_part, strength = spec, 30
+    if "@" in spec:
+        color_part, _, s = spec.partition("@")
+        try:
+            strength = int(float(s))
+        except ValueError:
+            strength = 30
+    strength = max(0, min(100, strength))
+    from PIL import Image as _I, ImageChops
+    overlay = _I.new("RGB", rgb.size, _parse_hex_rgb(color_part, (255, 255, 255)))
+    tinted = ImageChops.multiply(rgb, overlay)
+    return _I.blend(rgb, tinted, strength / 100.0)
+
+
+def _apply_edits(img: "Image.Image", opts: "ConvertOptions",
+                 result: "ConvertResult | None" = None) -> "Image.Image":
+    """Apply the folded-in ImageForge editing layer to a single image.
+
+    Order: colour/tone adjustments -> tonal toggles -> effects -> border.
+    Alpha is split off up front and re-applied so transparency survives.
+    """
+    if not _has_edits(opts):
+        return img
+    from PIL import ImageEnhance, ImageOps, ImageFilter
+    rgb, alpha = _split_alpha(img)
+
+    if getattr(opts, "brightness", 0):
+        rgb = ImageEnhance.Brightness(rgb).enhance(max(0.0, 1 + opts.brightness / 100.0))
+    if getattr(opts, "contrast", 0):
+        rgb = ImageEnhance.Contrast(rgb).enhance(max(0.0, 1 + opts.contrast / 100.0))
+    if getattr(opts, "saturation", 0):
+        rgb = ImageEnhance.Color(rgb).enhance(max(0.0, 1 + opts.saturation / 100.0))
+    if getattr(opts, "hue", 0):
+        rgb = _apply_hue_rotation(rgb, opts.hue)
+    if getattr(opts, "sharpness", 0):
+        rgb = ImageEnhance.Sharpness(rgb).enhance(1 + max(0, min(100, opts.sharpness)) / 100.0 * 2.0)
+    if getattr(opts, "blur", 0):
+        rgb = rgb.filter(ImageFilter.GaussianBlur(radius=max(0.0, min(20.0, float(opts.blur)))))
+    if getattr(opts, "grayscale", False):
+        rgb = ImageOps.grayscale(rgb).convert("RGB")
+    if getattr(opts, "sepia", False):
+        rgb = _apply_sepia(rgb)
+    if getattr(opts, "invert", False):
+        rgb = ImageOps.invert(rgb)
+    if getattr(opts, "vignette", 0):
+        rgb = _apply_vignette(rgb, opts.vignette)
+    if getattr(opts, "grain", 0):
+        rgb = _apply_grain(rgb, opts.grain)
+    if getattr(opts, "tint", None):
+        rgb = _apply_tint(rgb, opts.tint)
+
+    out = _merge_alpha(rgb, alpha)
+
+    bw = getattr(opts, "border_width", 0) or 0
+    if bw > 0:
+        color = _parse_hex_rgb(getattr(opts, "border_color", "#ffffff"), (255, 255, 255))
+        if out.mode == "RGBA":
+            color = color + (255,)
+        out = ImageOps.expand(out, border=int(bw), fill=color)
+
+    if result is not None:
+        result.warnings.append("edit: applied image adjustments")
+    return out
 
 
 def _detect_hdr(img: "Image.Image", icc_profile: bytes | None = None) -> str | None:
@@ -2885,6 +3088,9 @@ def _apply_multiframe_transforms(
             (max(1, int(w * factor)), max(1, int(h * factor))),
             Image.Resampling.LANCZOS,
         )
+
+    if _has_edits(opts):
+        frame = _apply_edits(frame, opts, result)
 
     if opts.canvas:
         bg_spec = opts.canvas_bg or "transparent"
@@ -3645,6 +3851,12 @@ def convert_file(
             new_w = max(1, int(w * factor))
             new_h = max(1, int(h * factor))
             img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        # Editing layer (folded in from ImageForge) — adjustments, effects,
+        # colored border. Applied after resize so effects match output pixels,
+        # before canvas/watermark so those still sit on top.
+        if _has_edits(opts):
+            img = _apply_edits(img, opts, result)
 
         # Canvas resize — pad to a fixed canvas with a background fill.
         if canvas:
@@ -10003,6 +10215,47 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--canvas-bg", type=str, default="transparent", metavar="COLOR",
                    help="Canvas background: 'transparent' (default), '#RRGGBB', "
                         "'#RRGGBBAA', or named color")
+    # ── Editing layer (folded in from ImageForge) ──────────────────────────
+    edit = p.add_argument_group("editing (batch adjustments & effects)")
+    edit.add_argument("--brightness", type=int, default=None, metavar="N",
+                      help="Brightness adjustment -100..100 (0 = none)")
+    edit.add_argument("--contrast", type=int, default=None, metavar="N",
+                      help="Contrast adjustment -100..100 (0 = none)")
+    edit.add_argument("--saturation", type=int, default=None, metavar="N",
+                      help="Saturation adjustment -100..100 (0 = none)")
+    edit.add_argument("--sharpness", type=int, default=None, metavar="N",
+                      help="Sharpen 0..100 via unsharp mask (0 = none)")
+    edit.add_argument("--blur", type=float, default=None, metavar="PX",
+                      help="Gaussian blur radius 0..20 px (0 = none)")
+    edit.add_argument("--hue", type=int, default=None, metavar="DEG",
+                      help="Hue rotation 0..360 degrees")
+    edit.add_argument("--grayscale", action="store_true",
+                      help="Convert output to grayscale")
+    edit.add_argument("--sepia", action="store_true",
+                      help="Apply a sepia tone")
+    edit.add_argument("--invert", action="store_true",
+                      help="Invert colours (negative)")
+    edit.add_argument("--vignette", type=int, default=None, metavar="N",
+                      help="Radial edge darkening 0..100 (0 = none)")
+    edit.add_argument("--grain", type=int, default=None, metavar="N",
+                      help="Film-grain noise overlay 0..100 (0 = none)")
+    edit.add_argument("--tint", type=str, default=None, metavar="COLOR@N",
+                      help="Colour tint, e.g. '#3a6ea5@20' or 'teal@30' "
+                           "(strength 0..100). Multiply-blend colour cast.")
+    edit.add_argument("--border", type=int, default=None, metavar="PX",
+                      help="Solid border width in px (0 = none)")
+    edit.add_argument("--border-color", type=str, default="#ffffff", metavar="COLOR",
+                      help="Border colour: '#RRGGBB' or named (default #ffffff)")
+    edit.add_argument("--adjust-preset", type=str, default=None,
+                      choices=sorted(ADJUST_PRESETS),
+                      help="Named look applied before explicit flags "
+                           "(vivid, muted, bw, vintage, cold, warm). "
+                           "Numeric flags stack on top; toggles OR together.")
+    edit.add_argument("--social", type=str, default=None,
+                      choices=sorted(SOCIAL_PRESETS),
+                      help="Pad output to a social-media canvas size, e.g. "
+                           "instagram-post, youtube-thumbnail, og-image. "
+                           "Overridden by an explicit --canvas.")
     p.add_argument("--avif-speed", type=int, default=6, metavar="N",
                    help="AVIF encoding speed 0-10 (default: 6). Lower = smaller file, "
                         "slower encode. 0 = best compression, 10 = fastest.")
@@ -10139,6 +10392,22 @@ CLI_FLAG_PARITY = {
     "--watermark": {"surface": "gui", "gui": ("watermark_edit",), "readme": True, "note": "Watermark spec"},
     "--canvas": {"surface": "gui", "gui": ("canvas_edit",), "readme": True, "note": "Canvas size"},
     "--canvas-bg": {"surface": "gui", "gui": ("canvas_bg_edit",), "readme": True, "note": "Canvas fill"},
+    "--brightness": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: brightness adjustment"},
+    "--contrast": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: contrast adjustment"},
+    "--saturation": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: saturation adjustment"},
+    "--sharpness": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: unsharp mask"},
+    "--blur": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: gaussian blur"},
+    "--hue": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: hue rotation"},
+    "--grayscale": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: grayscale toggle"},
+    "--sepia": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: sepia toggle"},
+    "--invert": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: invert toggle"},
+    "--vignette": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: vignette effect"},
+    "--grain": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: film-grain effect"},
+    "--tint": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: colour tint"},
+    "--border": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: solid border width"},
+    "--border-color": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: border colour"},
+    "--adjust-preset": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: named look preset"},
+    "--social": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: social-media canvas preset"},
     "--avif-speed": {"surface": "gui", "gui": ("avif_speed_spin",), "readme": True, "note": "AVIF speed"},
     "--avif-codec": {"surface": "gui", "gui": ("avif_codec_combo",), "readme": True, "note": "AVIF codec"},
     "--max-file-size": {"surface": "gui", "gui": ("max_file_size_edit",), "readme": True, "note": "Large input guard"},
@@ -10623,6 +10892,30 @@ def _build_convert_options(args, *, resize_mode: str = "none",
         _sf.add("gps")
     if getattr(args, "strip_device", False):
         _sf.add("device")
+
+    # Editing layer: adjustment preset provides a base; explicit numeric flags
+    # stack additively, boolean toggles OR together. --social maps to a canvas.
+    _preset_edits = ADJUST_PRESETS.get(getattr(args, "adjust_preset", None) or "", {})
+
+    def _edit_num(field: str, lo: int, hi: int) -> int:
+        base = int(_preset_edits.get(field, 0) or 0)
+        val = getattr(args, field, None)
+        total = base + (int(val) if val is not None else 0)
+        return max(lo, min(hi, total))
+
+    def _edit_bool(field: str) -> bool:
+        return bool(_preset_edits.get(field, False)) or bool(getattr(args, field, False))
+
+    _blur = getattr(args, "blur", None)
+    _blur = max(0.0, min(20.0, float(_blur))) if _blur is not None else 0.0
+    _tint = getattr(args, "tint", None) or _preset_edits.get("tint")
+    _border = getattr(args, "border", None) or 0
+
+    _canvas = _parse_canvas(getattr(args, "canvas", None))
+    _social = getattr(args, "social", None)
+    if _social and _canvas is None:
+        _canvas = SOCIAL_PRESETS.get(_social)
+
     return ConvertOptions(
         fmt=args.format,
         jpeg_quality=args.quality,
@@ -10650,7 +10943,7 @@ def _build_convert_options(args, *, resize_mode: str = "none",
         recompress_lossless=getattr(args, "recompress", False),
         quality_mode=_build_quality_mode(args),
         watermark=getattr(args, "watermark", None),
-        canvas=_parse_canvas(getattr(args, "canvas", None)),
+        canvas=_canvas,
         canvas_bg=getattr(args, "canvas_bg", "transparent"),
         tone_map=getattr(args, "tone_map", "none"),
         avif_speed=getattr(args, "avif_speed", 6),
@@ -10659,6 +10952,20 @@ def _build_convert_options(args, *, resize_mode: str = "none",
         backend=getattr(args, "backend", "pillow"),
         cpu_priority=getattr(args, "cpu_priority", "normal"),
         strip_fields=frozenset(_sf),
+        brightness=_edit_num("brightness", -100, 100),
+        contrast=_edit_num("contrast", -100, 100),
+        saturation=_edit_num("saturation", -100, 100),
+        sharpness=_edit_num("sharpness", 0, 100),
+        blur=_blur,
+        hue=_edit_num("hue", 0, 360),
+        grayscale=_edit_bool("grayscale"),
+        sepia=_edit_bool("sepia"),
+        invert=_edit_bool("invert"),
+        vignette=_edit_num("vignette", 0, 100),
+        grain=_edit_num("grain", 0, 100),
+        tint=_tint,
+        border_width=max(0, int(_border)),
+        border_color=getattr(args, "border_color", "#ffffff"),
     )
 
 
@@ -10717,6 +11024,27 @@ def _validate_cli_args(args) -> list[str]:
             errors.append(f"{flag_name} must not contain path separators or '..'")
     if getattr(args, "canvas", None) and _parse_canvas(args.canvas) is None:
         errors.append("--canvas must be WIDTHxHEIGHT with positive integers")
+    # Editing-layer ranges (None = flag not supplied).
+    for _flag, _attr, _lo, _hi in (
+        ("--brightness", "brightness", -100, 100),
+        ("--contrast", "contrast", -100, 100),
+        ("--saturation", "saturation", -100, 100),
+        ("--sharpness", "sharpness", 0, 100),
+        ("--hue", "hue", 0, 360),
+        ("--vignette", "vignette", 0, 100),
+        ("--grain", "grain", 0, 100),
+    ):
+        _v = getattr(args, _attr, None)
+        if _v is not None and (_v < _lo or _v > _hi):
+            errors.append(f"{_flag} must be between {_lo} and {_hi}")
+    _blur = getattr(args, "blur", None)
+    if _blur is not None and (_blur < 0 or _blur > 20):
+        errors.append("--blur must be between 0 and 20")
+    _border = getattr(args, "border", None)
+    if _border is not None and _border < 0:
+        errors.append("--border must be 0 or greater")
+    if getattr(args, "tint", None) and _parse_hex_rgb(str(args.tint).split("@")[0], None) is None:
+        errors.append("--tint colour must be '#RRGGBB' or a named colour, optionally '@STRENGTH'")
     if getattr(args, "max_file_size", None):
         if _parse_size_spec(args.max_file_size) is None:
             errors.append("--max-file-size must be a size like 500MB, 2GB, or 100KB")
@@ -10750,6 +11078,15 @@ def _validate_cli_args(args) -> list[str]:
             unsupported.append("--target-ssimulacra2")
         if getattr(args, "png_lossy", False):
             unsupported.append("--png-lossy")
+        for _ef in ("brightness", "contrast", "saturation", "sharpness", "blur",
+                    "hue", "vignette", "grain", "tint", "border", "social"):
+            if getattr(args, _ef, None):
+                unsupported.append("--" + _ef.replace("_", "-"))
+        for _ef in ("grayscale", "sepia", "invert"):
+            if getattr(args, _ef, False):
+                unsupported.append("--" + _ef)
+        if getattr(args, "adjust_preset", None):
+            unsupported.append("--adjust-preset")
         if unsupported:
             errors.append("--backend vips does not support: " + ", ".join(unsupported))
     return errors

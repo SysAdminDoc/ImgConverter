@@ -2,7 +2,7 @@
 
 Universal image batch converter with a modern, local-first GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
 
-![Version](https://img.shields.io/badge/Version-3.5.0-blue)
+![Version](https://img.shields.io/badge/Version-3.6.0-blue)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
@@ -58,6 +58,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 
 ## Features
 
+- **Batch editing layer** — per-image adjustments (brightness, contrast, saturation, sharpness, blur, hue), tonal toggles (grayscale, sepia, invert), effects (vignette, film grain, color tint), a solid border, one-shot look presets (`--adjust-preset vivid|muted|bw|vintage|cold|warm`), and social-media size presets (`--social instagram-post`, …). Applied across the whole batch, alpha-preserving, and stackable with resize/canvas/watermark
 - **Auto format detection** — JPEG for photos, PNG when alpha channel is present
 - **12+ input formats** — JPEG, PNG, HEIC, AVIF, WebP, JXL, RAW, TIFF, BMP, JP2, QOI, ICO
 - **Cross-format conversion** — convert between any formats (JPEG to WebP, PNG to JPEG, etc.); same-format no-ops auto-skipped
@@ -178,6 +179,15 @@ python imgconverter.py --input ./photos --resize scale:50
 # TIFF with LZW compression
 python imgconverter.py --input ./photos --format tiff --tiff-compression lzw
 
+# Editing: apply a "vintage" look with extra contrast and a white border
+python imgconverter.py -i ./photos -f jpeg --adjust-preset vintage --contrast 10 --border 24
+
+# Editing: grayscale + vignette + film grain
+python imgconverter.py -i ./photos -f webp --grayscale --vignette 40 --grain 20
+
+# Editing: resize + tint + export at Instagram post size
+python imgconverter.py -i ./photos -f jpeg --tint "#3a6ea5@25" --social instagram-post
+
 # Progressive JPEG with filename prefix, skip already-converted
 python imgconverter.py -i ./photos -f jpeg --progressive --prefix "web_" --skip-existing
 
@@ -241,6 +251,22 @@ python imgconverter.py --history
 | `--watermark SPEC` | Text or PNG watermark. Spec: `TEXT\|position\|opacity` |
 | `--canvas WxH` | Pad output to canvas size with `--canvas-bg` fill |
 | `--canvas-bg COLOR` | Canvas fill: `transparent`, hex color, or named color |
+| `--brightness N` | Brightness adjustment `-100..100` (0 = none) |
+| `--contrast N` | Contrast adjustment `-100..100` (0 = none) |
+| `--saturation N` | Saturation adjustment `-100..100` (0 = none) |
+| `--sharpness N` | Sharpen `0..100` via unsharp mask (0 = none) |
+| `--blur PX` | Gaussian blur radius `0..20` px (0 = none) |
+| `--hue DEG` | Hue rotation `0..360` degrees |
+| `--grayscale` | Convert output to grayscale |
+| `--sepia` | Apply a sepia tone |
+| `--invert` | Invert colors (negative) |
+| `--vignette N` | Radial edge darkening `0..100` (0 = none) |
+| `--grain N` | Film-grain noise overlay `0..100` (0 = none) |
+| `--tint COLOR@N` | Color tint, e.g. `#3a6ea5@20` or `teal@30` (strength `0..100`) |
+| `--border PX` | Solid border width in px (0 = none) |
+| `--border-color COLOR` | Border color: `#RRGGBB` or named (default `#ffffff`) |
+| `--adjust-preset NAME` | Named look before explicit flags: `vivid`, `muted`, `bw`, `vintage`, `cold`, `warm`. Numeric flags stack on top; toggles OR together |
+| `--social PRESET` | Pad to a social-media canvas: `instagram-post`, `instagram-story`, `facebook-cover`, `facebook-header`, `x-header`, `youtube-thumbnail`, `linkedin-banner`, `og-image`. Overridden by an explicit `--canvas` |
 | `--dpi N` | Set output DPI tag for JPEG/PNG/TIFF |
 | `--icc PROFILE` | Embed ICC profile (`sRGB` or path to `.icc` file) |
 | `--tone-map CURVE` | HDR tone mapping: `none`, `reinhard`, `hable`, `clip` |
