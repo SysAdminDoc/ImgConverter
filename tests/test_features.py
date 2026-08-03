@@ -16,6 +16,9 @@ from PIL import Image
 from imgconverter import (
     _apply_canvas,
     _apply_edits,
+    _recompress_jpeg_lossless,
+    _split_alpha,
+    _strip_exif_fields,
     _has_edits,
     _build_convert_options,
     _parse_hex_rgb,
@@ -41,6 +44,7 @@ from imgconverter import (
     convert_file,
     ConvertOptions,
     count_frames,
+    has_transparency,
     list_presets,
     scan_directory,
     ConvertResult,
@@ -1257,6 +1261,33 @@ class TestSelectiveMetadataStripping:
         with Image.open(result.dst) as out_img:
             assert not out_img.getexif()
 
+    def test_malformed_exif_is_omitted_and_reported(self, rgb_image, tmp_workdir, monkeypatch):
+        """Selective stripping must fail closed when the EXIF parser fails."""
+        import imgconverter
+
+        src = tmp_workdir / "malformed.jpg"
+        exif = rgb_image.getexif()
+        exif[0x010F] = "TestCamera"
+        rgb_image.save(src, "JPEG", quality=92, exif=exif.tobytes())
+        monkeypatch.setattr(imgconverter, "_strip_exif_fields", lambda *_args: None)
+
+        result = convert_file(
+            src,
+            tmp_workdir / "out",
+            fmt="jpeg",
+            convert_to_srgb=True,
+            strip_fields=frozenset({"gps"}),
+        )
+
+        assert result.success
+        assert any("EXIF strip failed" in warning for warning in result.warnings)
+        assert not any("selectively stripped" in warning for warning in result.warnings)
+        with Image.open(result.dst) as out_img:
+            assert not out_img.getexif()
+
+    def test_malformed_exif_helper_returns_none(self):
+        assert _strip_exif_fields(b"not-valid-exif", frozenset({"gps"})) is None
+
     def test_cli_flags_parse_strip_gps_and_device(self):
         from imgconverter import _build_parser
         args = _build_parser().parse_args([
@@ -1488,6 +1519,30 @@ class TestRecompressJPEG:
         )
         # Falls through to normal conversion, which should still succeed.
         assert result.success
+
+    def test_recompress_failure_does_not_publish_copy(self, rgb_image, tmp_workdir, monkeypatch):
+        """A failed optimizer must not leave a raw copy at the final path."""
+        import imgconverter
+
+        src = tmp_workdir / "src.jpg"
+        dst = tmp_workdir / "out.jpg"
+        rgb_image.save(src, "JPEG", quality=95)
+        monkeypatch.setattr(imgconverter, "JPEGOPTIM_PATH", "jpegoptim")
+        monkeypatch.setattr(imgconverter, "JPEGTRAN_PATH", None)
+        monkeypatch.setattr(
+            imgconverter.subprocess,
+            "run",
+            lambda *args, **kwargs: types.SimpleNamespace(
+                returncode=1, stderr="optimizer failed"
+            ),
+        )
+
+        ok, message = _recompress_jpeg_lossless(src, dst, strip_metadata=False)
+
+        assert not ok
+        assert "optimizer failed" in message
+        assert not dst.exists()
+        assert not list(tmp_workdir.glob(".*.jpegtran.tmp"))
 
 
 # ── 11. BigTIFF auto-detect ───────────────────────────────────────────────────
@@ -1840,6 +1895,52 @@ class TestCanvasAlpha:
     def test_rgb_canvas_no_alpha_issue(self, rgb_image, tmp_workdir):
         canvas_img = _apply_canvas(rgb_image, (400, 300), (0, 0, 0))
         assert canvas_img.mode == "RGB"
+
+
+class TestEditInputModes:
+
+    def test_palette_trns_preserves_alpha_during_edit(self, tmp_workdir):
+        palette = Image.new("P", (2, 1))
+        palette.putpalette([255, 0, 0, 0, 255, 0] + [0] * (256 * 3 - 6))
+        palette.putdata([0, 1])
+        palette.info["transparency"] = 0
+        assert has_transparency(palette)
+
+        rgb, alpha = _split_alpha(palette)
+
+        assert alpha is not None
+        assert alpha.getpixel((0, 0)) == 0
+        assert alpha.getpixel((1, 0)) == 255
+        assert rgb.getpixel((0, 0)) == (255, 0, 0)
+
+        src = tmp_workdir / "palette.png"
+        palette.save(src, "PNG", transparency=0)
+        result = convert_file(
+            src, tmp_workdir / "out", fmt="auto", brightness=5,
+        )
+        assert result.success
+        assert result.dst.suffix.lower() == ".png"
+        with Image.open(result.dst) as output:
+            assert output.mode == "RGBA"
+            assert output.getchannel("A").getpixel((0, 0)) == 0
+
+    def test_16_bit_edit_scales_before_rgb_conversion(self, tmp_workdir):
+        source = Image.new("I;16", (2, 1))
+        source.putdata([40000, 1000])
+        rgb, alpha = _split_alpha(source)
+
+        assert alpha is None
+        assert rgb.getpixel((0, 0)) == (156, 156, 156)
+        assert rgb.getpixel((1, 0)) == (3, 3, 3)
+
+        src = tmp_workdir / "sixteen-bit.tiff"
+        source.save(src, "TIFF")
+        result = convert_file(
+            src, tmp_workdir / "out", fmt="png", contrast=10,
+        )
+        assert result.success
+        with Image.open(result.dst) as output:
+            assert output.getpixel((0, 0))[0] < 240
 
 
 # ── 18. Queue persistence ──────────────────────────────────────────────────

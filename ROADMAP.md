@@ -20,26 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — `_strip_exif_fields` fails open and caller falsely reports strip succeeded
-  Why: On any EXIF parse exception (malformed EXIF is common) it returns the ORIGINAL bytes with GPS intact, while callers unconditionally append "metadata: selectively stripped gps". Without ExifTool installed the leak is silent.
-  Where: `imgconverter.py:1067-1091`, callers `3131-3147, 4046-4065`. Fix: fail closed (return `b""` / omit exif kwarg) + append an explicit failure warning; only claim "stripped" on success.
-
-- [ ] P2 — Failed lossless recompress strands an unconverted copy at the expected output name
-  Why: `_recompress_jpeg_lossless` does `shutil.copy2(src, dst)` first; on jpegoptim/jpegtran failure or timeout the copy is never removed. Fallback re-encode then: with `--skip-existing` marks the file skipped (raw copy reported as output); without, collision loop writes real output to `stem_1.jpg` leaving the stray copy at the expected name.
-  Where: `imgconverter.py:1002-1035, 3958-3992, 4030-4042`. Fix: `dst.unlink(missing_ok=True)` in every failure branch (or copy to temp + `os.replace` on success).
-
-- [ ] P2 — `_split_alpha` destroys P-mode (palette) transparency under any edit
-  Why: Only RGBA/LA/PA treated as alpha-bearing; P + `transparency` info goes through `convert("RGB")` which flattens alpha. Transparent palette PNG/GIF + any edit flag + `-f png/webp` → fully opaque output. Animated path worse: Pillow yields frame 1 as P and later frames RGBA, so first frame flattens while the rest keep alpha.
-  Where: `imgconverter.py:2504-2509`. Fix: convert P (at least P with transparency) via `convert("RGBA")` first.
-
-- [ ] P2 — Any edit on 16-bit sources produces a blown-out near-white image
-  Why: `convert("RGB")` on `I;16` CLIPS at 255 instead of scaling by 256 (verified Pillow 12.3). 16-bit TIFF/PNG + `--contrast 10` + `-f tiff` → solid white. Non-edit conversions keep I;16 intact — edit-layer-only regression surface.
-  Where: `imgconverter.py:2504-2509`. Fix: pre-scale `I;16*/I` to 8-bit (`img.point(lambda v: v >> 8, "L")`) before RGB convert, or refuse edits on 16-bit modes with a warning.
-
-- [ ] P2 — `has_transparency()` ignores P-mode tRNS → auto mode flattens transparent palette PNGs to JPEG
-  Why: Only RGBA/LA/PA checked; transparent palette PNG returns False → auto picks JPEG → alpha flattened onto arbitrary palette colors.
-  Where: `imgconverter.py:2853-2859`. Fix: `if img.mode == "P" and "transparency" in img.info: return True`.
-
 - [ ] P2 — QImage built without bytesPerLine — thumbnails shear/garble, possible OOB read
   Why: `QImage(data, w, h, Format_RGB888)` assumes 32-bit-aligned scanlines; PIL rows are tightly packed `w*3`. Any thumbnail width not divisible by 4 (portrait thumbs at width 45/47…) shears rows and reads past buffer end.
   Where: `imgconverter.py:4393-4394`. Fix: pass `rgb.width * 3` as bytesPerLine (and `w*4` on the RGBA branch for symmetry). Related: `QPixmap.fromImage` runs in the worker thread (GUI-thread-only per Qt docs) — emit the QImage and convert in the slot.

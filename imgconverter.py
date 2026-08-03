@@ -1050,39 +1050,61 @@ HAS_JPEG_RECOMPRESS = JPEGOPTIM_PATH is not None or JPEGTRAN_PATH is not None
 
 
 def _recompress_jpeg_lossless(src: Path, dst: Path, strip_metadata: bool) -> tuple[bool, str]:
-    """Copy src -> dst then run jpegoptim/jpegtran on dst. Pixel-preserving."""
+    """Run a pixel-preserving JPEG recompressor and publish only on success."""
+    work_path = None
+    jpegtran_path = None
     try:
-        shutil.copy2(src, dst)
-    except OSError as e:
-        return False, f"copy failed: {e}"
-    if JPEGOPTIM_PATH:
-        cmd = [JPEGOPTIM_PATH, "--overwrite", "--quiet"]
-        if strip_metadata:
-            cmd.append("--strip-all")
-        cmd.append(str(dst))
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        fd, work_name = tempfile.mkstemp(
+            prefix=f".{dst.name}.", suffix=dst.suffix, dir=str(dst.parent)
+        )
+        os.close(fd)
+        work_path = Path(work_name)
+        shutil.copy2(src, work_path)
+
+        if JPEGOPTIM_PATH:
+            cmd = [JPEGOPTIM_PATH, "--overwrite", "--quiet"]
+            if strip_metadata:
+                cmd.append("--strip-all")
+            cmd.append(str(work_path))
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                return False, "jpegoptim timed out"
             if proc.returncode != 0:
                 return False, (proc.stderr or "jpegoptim failed").strip()
+            os.replace(str(work_path), str(dst))
+            work_path = None
             return True, "jpegoptim"
-        except subprocess.TimeoutExpired:
-            return False, "jpegoptim timed out"
-    if JPEGTRAN_PATH:
-        # jpegtran -copy all -optimize -progressive -outfile <tmp> <src>
-        tmp = dst.with_suffix(dst.suffix + ".jpegtran.tmp")
-        cmd = [JPEGTRAN_PATH, "-copy", "none" if strip_metadata else "all",
-               "-optimize", "-outfile", str(tmp), str(dst)]
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+        if JPEGTRAN_PATH:
+            # jpegtran -copy all -optimize -outfile <tmp> <src>
+            fd, jpegtran_name = tempfile.mkstemp(
+                prefix=f".{dst.name}.", suffix=dst.suffix + ".jpegtran.tmp",
+                dir=str(dst.parent),
+            )
+            os.close(fd)
+            jpegtran_path = Path(jpegtran_name)
+            cmd = [JPEGTRAN_PATH, "-copy", "none" if strip_metadata else "all",
+                   "-optimize", "-outfile", str(jpegtran_path), str(work_path)]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                return False, "jpegtran timed out"
             if proc.returncode != 0:
-                tmp.unlink(missing_ok=True)
                 return False, (proc.stderr or "jpegtran failed").strip()
-            os.replace(str(tmp), str(dst))
+            os.replace(str(jpegtran_path), str(dst))
+            jpegtran_path = None
+            work_path = None
             return True, "jpegtran"
-        except subprocess.TimeoutExpired:
-            tmp.unlink(missing_ok=True)
-            return False, "jpegtran timed out"
-    return False, "no jpegoptim or jpegtran on PATH"
+
+        return False, "no jpegoptim or jpegtran on PATH"
+    except OSError as e:
+        return False, f"recompress failed: {e}"
+    finally:
+        if work_path is not None:
+            work_path.unlink(missing_ok=True)
+        if jpegtran_path is not None:
+            jpegtran_path.unlink(missing_ok=True)
 
 
 # ── Metadata Operations (Part 1/2: stripping + ExifTool) ─────────────────────
@@ -1114,8 +1136,8 @@ DEVICE_EXIF_TAGS = {
 }
 
 
-def _strip_exif_fields(exif_bytes: bytes, groups: frozenset[str]) -> bytes:
-    """Remove selected tag groups from EXIF data. Returns modified EXIF bytes."""
+def _strip_exif_fields(exif_bytes: bytes, groups: frozenset[str]) -> bytes | None:
+    """Remove selected tag groups, or return None when parsing fails."""
     if not exif_bytes or not groups or "all" in groups:
         return exif_bytes
     try:
@@ -1138,7 +1160,10 @@ def _strip_exif_fields(exif_bytes: bytes, groups: frozenset[str]) -> bytes:
 
         return exif.tobytes()
     except Exception:
-        return exif_bytes
+        # Never pass malformed EXIF through after the caller requested a
+        # selective privacy edit.  Omitting EXIF is safer than leaking GPS or
+        # device identifiers while claiming that they were removed.
+        return None
 
 
 def _run_exiftool_copy(src: Path, dst: Path,
@@ -2568,11 +2593,28 @@ def _has_edits(opts: "ConvertOptions") -> bool:
     )
 
 
+_HIGH_BIT_TO_8_LUT = bytes(min(255, value >> 8) for value in range(65536))
+
+
 def _split_alpha(img: "Image.Image"):
     """Return (rgb_image, alpha_channel_or_None), preserving transparency."""
-    if img.mode in ("RGBA", "LA", "PA"):
+    if img.mode in ("RGBA", "LA", "PA") or (
+        img.mode == "P" and "transparency" in img.info
+    ):
         rgba = img.convert("RGBA")
         return rgba.convert("RGB"), rgba.getchannel("A")
+    if img.mode in ("I;16", "I;16B", "I;16L"):
+        # Pillow clips I;16 to 255 when converting directly to RGB.  Convert
+        # through an explicit 8-bit LUT so edits retain the high-byte range.
+        gray = img.convert("I").point(_HIGH_BIT_TO_8_LUT, "L")
+        return gray.convert("RGB"), None
+    if img.mode == "I":
+        lo, hi = img.getextrema()
+        if lo < 0 or hi > 255:
+            gray = img.point(_HIGH_BIT_TO_8_LUT, "L")
+        else:
+            gray = img.convert("L")
+        return gray.convert("RGB"), None
     return img.convert("RGB"), None
 
 
@@ -2923,6 +2965,14 @@ def has_transparency(img: Image.Image) -> bool:
         alpha = img.getchannel("A")
         extrema = alpha.getextrema()
         return extrema[0] < 255  # has non-opaque pixels
+    if img.mode == "P" and "transparency" in img.info:
+        try:
+            alpha = img.convert("RGBA").getchannel("A")
+            return alpha.getextrema()[0] < 255
+        except Exception:
+            # A malformed tRNS chunk is safer treated as transparent than
+            # flattened into a lossy JPEG by auto format selection.
+            return True
     return False
 
 
@@ -3194,18 +3244,25 @@ def _multiframe_save_kwargs(
 ) -> dict:
     save_kwargs: dict = {}
     active_strip = opts.strip_fields or frozenset()
+    selective_strip_ok = True
 
     if opts.preserve_metadata and meta and "all" not in active_strip:
         if "exif" in meta and fmt_pil in ("JPEG", "PNG", "WEBP", "TIFF"):
             exif_data = meta["exif"]
             if active_strip:
                 exif_data = _strip_exif_fields(exif_data, active_strip)
-            save_kwargs["exif"] = exif_data
+                if exif_data is None:
+                    selective_strip_ok = False
+                    result.warnings.append(
+                        "metadata: selective EXIF strip failed; EXIF omitted"
+                    )
+            if exif_data is not None:
+                save_kwargs["exif"] = exif_data
         if "icc_profile" in meta:
             save_kwargs["icc_profile"] = meta["icc_profile"]
         if "xmp" in meta and fmt_pil in ("JPEG", "WEBP", "TIFF", "AVIF", "JXL"):
             save_kwargs["xmp"] = meta["xmp"]
-        if active_strip:
+        if active_strip and "all" not in active_strip and selective_strip_ok:
             result.warnings.append(
                 f"metadata: selectively stripped {', '.join(sorted(active_strip))}"
             )
@@ -4113,17 +4170,25 @@ def convert_file(
         # Gather metadata
         save_kwargs = {}
         _active_strip = strip_fields or frozenset()
+        selective_strip_ok = True
         if preserve_metadata and meta:
             if "exif" in meta:
                 exif_data = meta["exif"]
                 if _active_strip and "all" not in _active_strip:
                     exif_data = _strip_exif_fields(exif_data, _active_strip)
-                save_kwargs["exif"] = exif_data
+                    if exif_data is None:
+                        selective_strip_ok = False
+                        result.warnings.append(
+                            "metadata: selective EXIF strip failed; EXIF omitted"
+                        )
+                if exif_data is not None:
+                    save_kwargs["exif"] = exif_data
             if "icc_profile" in meta:
                 save_kwargs["icc_profile"] = meta["icc_profile"]
             if "xmp" in meta and out_fmt in ("JPEG", "WEBP", "TIFF", "AVIF", "JXL"):
                 save_kwargs["xmp"] = meta["xmp"]
-            if _active_strip:
+            if (_active_strip and "all" not in _active_strip
+                    and selective_strip_ok):
                 result.warnings.append(
                     f"metadata: selectively stripped {', '.join(sorted(_active_strip))}"
                 )
