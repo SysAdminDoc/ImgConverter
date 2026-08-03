@@ -59,6 +59,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 ## Features
 
 - **Batch editing layer** — per-image adjustments (brightness, contrast, saturation, sharpness, blur, hue), tonal toggles (grayscale, sepia, invert), effects (vignette, film grain, color tint), a solid border, one-shot look presets (`--adjust-preset vivid|muted|bw|vintage|cold|warm`), and social-media size presets (`--social instagram-post`, …). Applied across the whole batch, alpha-preserving, and stackable with resize/canvas/watermark
+- **GUI editing controls** — the Advanced options > Batch edits group exposes the same 16 adjustment, effect, border, look-preset, and social-canvas controls as the CLI, with the recipe persisted between launches
 - **Auto format detection** — JPEG for photos, PNG when alpha channel is present
 - **12+ input formats** — JPEG, PNG, HEIC, AVIF, WebP, JXL, RAW, TIFF, BMP, JP2, QOI, ICO
 - **Cross-format conversion** — convert between any formats (JPEG to WebP, PNG to JPEG, etc.); same-format no-ops auto-skipped

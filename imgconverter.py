@@ -1225,7 +1225,7 @@ try:
     )
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QLabel, QPushButton, QFileDialog, QComboBox, QSpinBox, QSlider,
+        QLabel, QPushButton, QFileDialog, QComboBox, QSpinBox, QDoubleSpinBox, QSlider,
         QProgressBar, QPlainTextEdit, QCheckBox, QGroupBox, QGridLayout,
         QFrame, QSplitter, QStatusBar, QMessageBox, QLineEdit, QStyle,
         QSystemTrayIcon, QMenu, QToolButton, QScrollArea, QSizePolicy,
@@ -1254,7 +1254,7 @@ except ImportError:
     QFont = QColor = QPalette = QIcon = QPixmap = QPainter = QPen = QAction = _Stub
     QDragEnterEvent = QDropEvent = QShortcut = QKeySequence = _Stub
     QApplication = QVBoxLayout = QHBoxLayout = _Stub
-    QLabel = QPushButton = QFileDialog = QComboBox = QSpinBox = QSlider = _Stub
+    QLabel = QPushButton = QFileDialog = QComboBox = QSpinBox = QDoubleSpinBox = QSlider = _Stub
     QProgressBar = QPlainTextEdit = QCheckBox = QGroupBox = QGridLayout = _Stub
     QFrame = QSplitter = QStatusBar = QMessageBox = QLineEdit = QStyle = _Stub
     QSystemTrayIcon = QMenu = QToolButton = QScrollArea = QSizePolicy = _Stub
@@ -4977,7 +4977,7 @@ BATCH_HISTORY_LIMIT = 200
 
 # QSettings shape version — bump when on-disk settings layout changes so the
 # migration in _maybe_migrate_settings() runs once on startup.
-SETTINGS_SCHEMA = 2
+SETTINGS_SCHEMA = 3
 PRESET_SCHEMA_VERSION = 2
 
 FORMAT_CHOICES = ("auto", "jpeg", "png", "webp", "avif", "tiff", "jxl")
@@ -5087,6 +5087,40 @@ def normalize_preset(preset: dict) -> dict:
                 norm[key] = caster(preset[key])
             except (TypeError, ValueError):
                 continue
+    edit_ints = {
+        "brightness": (-100, 100),
+        "contrast": (-100, 100),
+        "saturation": (-100, 100),
+        "sharpness": (0, 100),
+        "hue": (0, 360),
+        "vignette": (0, 100),
+        "grain": (0, 100),
+        "border_width": (0, 100),
+    }
+    for key, (lo, hi) in edit_ints.items():
+        raw = preset.get(key, preset.get("border" if key == "border_width" else key))
+        if raw not in (None, ""):
+            try:
+                norm[key] = max(lo, min(hi, int(raw)))
+            except (TypeError, ValueError):
+                pass
+    if preset.get("blur") not in (None, ""):
+        try:
+            norm["blur"] = max(0.0, min(20.0, float(preset["blur"])))
+        except (TypeError, ValueError):
+            pass
+    for key in ("grayscale", "sepia", "invert"):
+        if key in preset:
+            norm[key] = _preset_bool(preset[key])
+    for key in ("tint", "border_color"):
+        if preset.get(key) not in (None, ""):
+            norm[key] = str(preset[key])
+    if preset.get("adjust_preset"):
+        norm["adjust_preset"] = str(preset["adjust_preset"])
+    if preset.get("social"):
+        social = str(preset["social"]).strip().lower()
+        if social in SOCIAL_PRESETS:
+            norm["social"] = social
     bool_aliases = {
         "progressive": ("progressive_jpeg", "progressive"),
         "chroma_420": ("chroma_subsampling", "chroma_420"),
@@ -5182,6 +5216,15 @@ def _convert_options_from_preset(preset: dict | None, base_dir: Path | None = No
             break
 
     dpi_value = int(norm.get("dpi", 0) or 0)
+    edit_base = ADJUST_PRESETS.get(str(norm.get("adjust_preset", "")), {})
+
+    def _edit_num(field: str, lo: int, hi: int) -> int:
+        raw = int(norm.get(field, 0) or 0) + int(edit_base.get(field, 0) or 0)
+        return max(lo, min(hi, raw))
+
+    canvas = _parse_canvas(str(norm["canvas"])) if norm.get("canvas") else None
+    if canvas is None and norm.get("social") in SOCIAL_PRESETS:
+        canvas = SOCIAL_PRESETS[norm["social"]]
     return ConvertOptions(
         fmt=str(norm.get("format", "auto")),
         jpeg_quality=int(norm.get("quality", 92)),
@@ -5209,7 +5252,7 @@ def _convert_options_from_preset(preset: dict | None, base_dir: Path | None = No
         recompress_lossless=bool(norm.get("recompress", False)),
         quality_mode=quality_mode,
         watermark=str(norm["watermark"]) if norm.get("watermark") else None,
-        canvas=_parse_canvas(str(norm["canvas"])) if norm.get("canvas") else None,
+        canvas=canvas,
         canvas_bg=str(norm.get("canvas_bg", "transparent")),
         tone_map=str(norm.get("tone_map", "none")),
         avif_speed=int(norm.get("avif_speed", 6)),
@@ -5218,6 +5261,20 @@ def _convert_options_from_preset(preset: dict | None, base_dir: Path | None = No
         backend=str(norm.get("backend", "pillow")),
         cpu_priority=str(norm.get("cpu_priority", "normal")),
         strip_fields=frozenset(strip_fields),
+        brightness=_edit_num("brightness", -100, 100),
+        contrast=_edit_num("contrast", -100, 100),
+        saturation=_edit_num("saturation", -100, 100),
+        sharpness=_edit_num("sharpness", 0, 100),
+        blur=max(0.0, min(20.0, float(norm.get("blur", 0.0) or 0.0))),
+        hue=_edit_num("hue", 0, 360),
+        grayscale=bool(norm.get("grayscale", False)) or bool(edit_base.get("grayscale", False)),
+        sepia=bool(norm.get("sepia", False)) or bool(edit_base.get("sepia", False)),
+        invert=bool(norm.get("invert", False)) or bool(edit_base.get("invert", False)),
+        vignette=_edit_num("vignette", 0, 100),
+        grain=_edit_num("grain", 0, 100),
+        tint=str(norm.get("tint") or edit_base.get("tint") or "") or None,
+        border_width=_edit_num("border_width", 0, 100),
+        border_color=str(norm.get("border_color", "#ffffff")),
     )
 
 
@@ -6053,6 +6110,42 @@ def _apply_preset_to_gui_controls(window, preset: dict):
         window.only_if_smaller_spin.setValue(int(norm["only_if_smaller"]))
     if "target_kb" in norm:
         window.target_kb_spin.setValue(int(norm["target_kb"]))
+    for key, attr in (
+        ("brightness", "brightness_spin"),
+        ("contrast", "contrast_spin"),
+        ("saturation", "saturation_spin"),
+        ("sharpness", "sharpness_spin"),
+        ("blur", "blur_spin"),
+        ("hue", "hue_spin"),
+        ("vignette", "vignette_spin"),
+        ("grain", "grain_spin"),
+        ("border_width", "border_width_spin"),
+    ):
+        if key in norm and hasattr(window, attr):
+            getattr(window, attr).setValue(norm[key])
+    for key, attr in (
+        ("grayscale", "grayscale_chk"),
+        ("sepia", "sepia_chk"),
+        ("invert", "invert_chk"),
+    ):
+        if key in norm and hasattr(window, attr):
+            getattr(window, attr).setChecked(norm[key])
+    for key, attr in (
+        ("tint", "tint_edit"),
+        ("border_color", "border_color_edit"),
+    ):
+        if key in norm and hasattr(window, attr):
+            getattr(window, attr).setText(norm[key])
+    for key, attr in (
+        ("adjust_preset", "edit_preset_combo"),
+        ("social", "social_combo"),
+    ):
+        value = norm.get(key)
+        if value and hasattr(window, attr):
+            combo = getattr(window, attr)
+            index = combo.findData(value)
+            if index >= 0:
+                combo.setCurrentIndex(index)
 
 
 # ── Disk Space Estimation ─────────────────────────────────────────────────────
@@ -7279,6 +7372,22 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("canvas_bg_edit",      "Canvas background",        "Canvas background color: transparent, hex, or named color"),
     ("exclude_edit",        "Exclude patterns",         "Semicolon-separated glob patterns to skip during scan"),
     ("max_file_size_edit",  "Maximum input file size",  "Skip files larger than this size, such as 500MB or 2GB"),
+    ("edit_preset_combo",   "Edit look preset",          "Named adjustment look applied before explicit edit controls"),
+    ("social_combo",        "Social canvas preset",      "Pad output to a selected social-media canvas when Canvas is blank"),
+    ("brightness_spin",     "Brightness adjustment",     "Adjust brightness from minus 100 to plus 100"),
+    ("contrast_spin",       "Contrast adjustment",       "Adjust contrast from minus 100 to plus 100"),
+    ("saturation_spin",     "Saturation adjustment",     "Adjust saturation from minus 100 to plus 100"),
+    ("sharpness_spin",      "Sharpness adjustment",      "Adjust sharpening from 0 to 100"),
+    ("blur_spin",           "Gaussian blur",             "Apply Gaussian blur from 0 to 20 pixels"),
+    ("hue_spin",            "Hue rotation",              "Rotate hue from 0 to 360 degrees"),
+    ("grayscale_chk",       "Grayscale effect",          "Convert output colors to grayscale"),
+    ("sepia_chk",           "Sepia effect",              "Apply a warm sepia tone to output"),
+    ("invert_chk",          "Invert effect",             "Invert output colors"),
+    ("vignette_spin",       "Vignette effect",            "Darken image edges from 0 to 100 percent"),
+    ("grain_spin",          "Film grain effect",         "Add film grain from 0 to 100 percent"),
+    ("tint_edit",           "Color tint",                "Apply a COLOR@STRENGTH tint"),
+    ("border_width_spin",   "Border width",              "Add a solid border from 0 to 100 pixels"),
+    ("border_color_edit",   "Border color",              "Choose border color as #RRGGBB or a named color"),
     ("xmp_sidecar_chk",     "Emit XMP sidecar",         "Write .xmp sidecar alongside output"),
     ("recompress_chk",      "Lossless JPEG recompress", "Pixel-lossless JPEG size reduction via jpegoptim/jpegtran"),
     ("only_if_smaller_chk", "Only if smaller",          "Discard output when not meaningfully smaller than input"),
@@ -8210,6 +8319,111 @@ class MainWindow(QMainWindow):
         self.max_file_size_edit.setToolTip(self.tr("Skip files larger than this size (B, KB, MB, GB, TB)"))
         self.max_file_size_edit.textChanged.connect(lambda _text: self._clear_line_error(self.max_file_size_edit))
         adv_grid.addWidget(self.max_file_size_edit, 9, 3)
+
+        # ── Batch editing layer ──
+        self.edit_group = QGroupBox(self.tr("Batch edits"))
+        self.edit_group.setToolTip(
+            self.tr("Apply the same adjustments, effects, border, or social canvas to every output")
+        )
+        edit_grid = QGridLayout(self.edit_group)
+        edit_grid.setHorizontalSpacing(10)
+        edit_grid.setVerticalSpacing(8)
+        edit_grid.setColumnStretch(1, 1)
+        edit_grid.setColumnStretch(3, 1)
+
+        edit_preset_label = QLabel(self.tr("Look preset"))
+        edit_preset_label.setObjectName("fieldLabel")
+        edit_grid.addWidget(edit_preset_label, 0, 0)
+        self.edit_preset_combo = QComboBox()
+        self.edit_preset_combo.addItem(self.tr("(none)"), "")
+        for name in sorted(ADJUST_PRESETS):
+            self.edit_preset_combo.addItem(name.title(), name)
+        self.edit_preset_combo.setToolTip(
+            self.tr("Apply a named look; numeric controls below stack on top of it")
+        )
+        edit_grid.addWidget(self.edit_preset_combo, 0, 1)
+
+        social_label = QLabel(self.tr("Social canvas"))
+        social_label.setObjectName("fieldLabel")
+        edit_grid.addWidget(social_label, 0, 2)
+        self.social_combo = QComboBox()
+        self.social_combo.addItem(self.tr("(none)"), "")
+        for name in sorted(SOCIAL_PRESETS):
+            self.social_combo.addItem(name, name)
+        self.social_combo.setToolTip(
+            self.tr("Pad output to a platform canvas when Canvas is blank")
+        )
+        edit_grid.addWidget(self.social_combo, 0, 3)
+
+        def _add_edit_spin(attr, label_text, row, column, minimum, maximum, value=0, suffix=""):
+            label = QLabel(self.tr(label_text))
+            label.setObjectName("fieldLabel")
+            edit_grid.addWidget(label, row, column)
+            spin = QSpinBox()
+            spin.setRange(minimum, maximum)
+            spin.setValue(value)
+            if suffix:
+                spin.setSuffix(suffix)
+            spin.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            setattr(self, attr, spin)
+            edit_grid.addWidget(spin, row, column + 1)
+
+        _add_edit_spin("brightness_spin", "Brightness", 1, 0, -100, 100)
+        _add_edit_spin("contrast_spin", "Contrast", 1, 2, -100, 100)
+        _add_edit_spin("saturation_spin", "Saturation", 2, 0, -100, 100)
+        _add_edit_spin("sharpness_spin", "Sharpness", 2, 2, 0, 100)
+
+        blur_label = QLabel(self.tr("Blur"))
+        blur_label.setObjectName("fieldLabel")
+        edit_grid.addWidget(blur_label, 3, 0)
+        self.blur_spin = QDoubleSpinBox()
+        self.blur_spin.setRange(0.0, 20.0)
+        self.blur_spin.setDecimals(1)
+        self.blur_spin.setSingleStep(0.5)
+        self.blur_spin.setSuffix(" px")
+        self.blur_spin.setToolTip(self.tr("Gaussian blur radius, 0-20 pixels"))
+        edit_grid.addWidget(self.blur_spin, 3, 1)
+
+        _add_edit_spin("hue_spin", "Hue", 3, 2, 0, 360, suffix="°")
+        _add_edit_spin("vignette_spin", "Vignette", 4, 0, 0, 100, suffix=" %")
+        _add_edit_spin("grain_spin", "Film grain", 4, 2, 0, 100, suffix=" %")
+
+        self.grayscale_chk = QCheckBox(self.tr("Grayscale"))
+        self.grayscale_chk.setToolTip(self.tr("Convert output colors to grayscale"))
+        edit_grid.addWidget(self.grayscale_chk, 5, 0)
+        self.sepia_chk = QCheckBox(self.tr("Sepia"))
+        self.sepia_chk.setToolTip(self.tr("Apply a warm sepia tone"))
+        edit_grid.addWidget(self.sepia_chk, 5, 1)
+        self.invert_chk = QCheckBox(self.tr("Invert"))
+        self.invert_chk.setToolTip(self.tr("Invert output colors"))
+        edit_grid.addWidget(self.invert_chk, 5, 2)
+
+        tint_label = QLabel(self.tr("Tint"))
+        tint_label.setObjectName("fieldLabel")
+        edit_grid.addWidget(tint_label, 6, 0)
+        self.tint_edit = QLineEdit()
+        self.tint_edit.setPlaceholderText(self.tr("#3a6ea5@25"))
+        self.tint_edit.setToolTip(self.tr("Color tint as COLOR@STRENGTH, for example #3a6ea5@25"))
+        edit_grid.addWidget(self.tint_edit, 6, 1)
+
+        border_label = QLabel(self.tr("Border"))
+        border_label.setObjectName("fieldLabel")
+        edit_grid.addWidget(border_label, 6, 2)
+        self.border_width_spin = QSpinBox()
+        self.border_width_spin.setRange(0, 100)
+        self.border_width_spin.setSuffix(" px")
+        self.border_width_spin.setToolTip(self.tr("Solid border width; 0 disables the border"))
+        edit_grid.addWidget(self.border_width_spin, 6, 3)
+
+        border_color_label = QLabel(self.tr("Border color"))
+        border_color_label.setObjectName("fieldLabel")
+        edit_grid.addWidget(border_color_label, 7, 0)
+        self.border_color_edit = QLineEdit("#ffffff")
+        self.border_color_edit.setPlaceholderText(self.tr("#ffffff"))
+        self.border_color_edit.setToolTip(self.tr("Border color as #RRGGBB or a named color"))
+        edit_grid.addWidget(self.border_color_edit, 7, 1, 1, 3)
+
+        adv_grid.addWidget(self.edit_group, 10, 0, 1, 4)
 
         scroll_layout.addWidget(adv_group)
 
@@ -9752,6 +9966,41 @@ class MainWindow(QMainWindow):
                 self._log("[INFO] No supported image files found. Check the source folder and input format filters.")
                 self.filter_toggle.setChecked(True)
 
+    def _gui_edit_values(self) -> dict[str, object]:
+        """Return GUI editing values using the same stacking rules as the CLI."""
+        preset_name = self.edit_preset_combo.currentData() or ""
+        preset = ADJUST_PRESETS.get(str(preset_name), {})
+
+        def _num(field: str, lo: int, hi: int) -> int:
+            value = int(getattr(self, f"{field}_spin").value())
+            value += int(preset.get(field, 0) or 0)
+            return max(lo, min(hi, value))
+
+        tint = self.tint_edit.text().strip() or preset.get("tint") or None
+        canvas = _parse_canvas(self.canvas_edit.text())
+        social_name = self.social_combo.currentData() or ""
+        if canvas is None and social_name:
+            canvas = SOCIAL_PRESETS.get(str(social_name))
+        return {
+            "brightness": _num("brightness", -100, 100),
+            "contrast": _num("contrast", -100, 100),
+            "saturation": _num("saturation", -100, 100),
+            "sharpness": _num("sharpness", 0, 100),
+            "blur": max(0.0, min(20.0, float(self.blur_spin.value()))),
+            "hue": _num("hue", 0, 360),
+            "grayscale": self.grayscale_chk.isChecked() or bool(preset.get("grayscale", False)),
+            "sepia": self.sepia_chk.isChecked() or bool(preset.get("sepia", False)),
+            "invert": self.invert_chk.isChecked() or bool(preset.get("invert", False)),
+            "vignette": _num("vignette", 0, 100),
+            "grain": _num("grain", 0, 100),
+            "tint": tint,
+            "border_width": int(self.border_width_spin.value()),
+            "border_color": self.border_color_edit.text().strip() or "#ffffff",
+            "canvas": canvas,
+            "adjust_preset": str(preset_name) or None,
+            "social": str(social_name) or None,
+        }
+
     # ── Convert ──
     def _convert(self):
         if self._worker and self._worker.isRunning():
@@ -9860,6 +10109,7 @@ class MainWindow(QMainWindow):
         if in_place:
             self._log("In-place mode: converted files saved next to originals, source files will be deleted")
 
+        edit_values = self._gui_edit_values()
         gui_opts = ConvertOptions(
             fmt=fmt,
             jpeg_quality=self.quality_slider.value(),
@@ -9886,13 +10136,27 @@ class MainWindow(QMainWindow):
             recompress_lossless=self.recompress_chk.isChecked(),
             quality_mode=("target-kb", float(self.target_kb_spin.value())) if self.target_kb_spin.value() > 0 else None,
             watermark=self.watermark_edit.text() or None,
-            canvas=_parse_canvas(self.canvas_edit.text()),
+            canvas=edit_values["canvas"],
             canvas_bg=self.canvas_bg_edit.text() or "transparent",
             tone_map=["none", "reinhard", "hable", "clip"][self.tone_map_combo.currentIndex()],
             avif_speed=self.avif_speed_spin.value(),
             avif_codec=["auto", "aom", "rav1e", "svt"][self.avif_codec_combo.currentIndex()],
             png_lossy=self.png_lossy_chk.isChecked(),
             strip_fields=self._gui_strip_fields(),
+            brightness=edit_values["brightness"],
+            contrast=edit_values["contrast"],
+            saturation=edit_values["saturation"],
+            sharpness=edit_values["sharpness"],
+            blur=edit_values["blur"],
+            hue=edit_values["hue"],
+            grayscale=edit_values["grayscale"],
+            sepia=edit_values["sepia"],
+            invert=edit_values["invert"],
+            vignette=edit_values["vignette"],
+            grain=edit_values["grain"],
+            tint=edit_values["tint"],
+            border_width=edit_values["border_width"],
+            border_color=edit_values["border_color"],
         )
         self._worker = ConvertWorker(
             files=self._scan_result.files,
@@ -10220,6 +10484,22 @@ class MainWindow(QMainWindow):
         self.settings.setValue("only_if_smaller_pct", self.only_if_smaller_spin.value())
         self.settings.setValue("target_kb", self.target_kb_spin.value())
         self.settings.setValue("png_lossy", self.png_lossy_chk.isChecked())
+        self.settings.setValue("edit_preset", self.edit_preset_combo.currentData() or "")
+        self.settings.setValue("social_canvas", self.social_combo.currentData() or "")
+        self.settings.setValue("edit_brightness", self.brightness_spin.value())
+        self.settings.setValue("edit_contrast", self.contrast_spin.value())
+        self.settings.setValue("edit_saturation", self.saturation_spin.value())
+        self.settings.setValue("edit_sharpness", self.sharpness_spin.value())
+        self.settings.setValue("edit_blur", self.blur_spin.value())
+        self.settings.setValue("edit_hue", self.hue_spin.value())
+        self.settings.setValue("edit_grayscale", self.grayscale_chk.isChecked())
+        self.settings.setValue("edit_sepia", self.sepia_chk.isChecked())
+        self.settings.setValue("edit_invert", self.invert_chk.isChecked())
+        self.settings.setValue("edit_vignette", self.vignette_spin.value())
+        self.settings.setValue("edit_grain", self.grain_spin.value())
+        self.settings.setValue("edit_tint", self.tint_edit.text())
+        self.settings.setValue("edit_border_width", self.border_width_spin.value())
+        self.settings.setValue("edit_border_color", self.border_color_edit.text())
         self.settings.setValue("filters_expanded", self.filter_toggle.isChecked())
         self.settings.setValue("adv_expanded", self.adv_toggle.isChecked())
         self.settings.setValue("geometry", self.saveGeometry())
@@ -10365,6 +10645,44 @@ class MainWindow(QMainWindow):
             self.target_kb_spin.setValue(n)
         if (v := self.settings.value("png_lossy")) is not None:
             self.png_lossy_chk.setChecked(v == "true" or v is True)
+        for key, widget in (
+            ("edit_brightness", self.brightness_spin),
+            ("edit_contrast", self.contrast_spin),
+            ("edit_saturation", self.saturation_spin),
+            ("edit_sharpness", self.sharpness_spin),
+            ("edit_hue", self.hue_spin),
+            ("edit_vignette", self.vignette_spin),
+            ("edit_grain", self.grain_spin),
+            ("edit_border_width", self.border_width_spin),
+        ):
+            if (n := self._safe_int(self.settings.value(key))) is not None:
+                widget.setValue(n)
+        if (v := self.settings.value("edit_blur")) is not None:
+            try:
+                self.blur_spin.setValue(float(v))
+            except (TypeError, ValueError):
+                pass
+        for key, widget in (
+            ("edit_grayscale", self.grayscale_chk),
+            ("edit_sepia", self.sepia_chk),
+            ("edit_invert", self.invert_chk),
+        ):
+            if (v := self.settings.value(key)) is not None:
+                widget.setChecked(v == "true" or v is True)
+        for key, widget in (
+            ("edit_tint", self.tint_edit),
+            ("edit_border_color", self.border_color_edit),
+        ):
+            if (v := self.settings.value(key)) is not None:
+                widget.setText(str(v))
+        for key, widget in (
+            ("edit_preset", self.edit_preset_combo),
+            ("social_canvas", self.social_combo),
+        ):
+            if (v := self.settings.value(key)) is not None:
+                index = widget.findData(str(v))
+                if index >= 0:
+                    widget.setCurrentIndex(index)
         if (v := self.settings.value("filters_expanded")) is not None:
             expanded = v == "true" or v is True
             self.filter_toggle.setChecked(expanded)
@@ -10721,22 +11039,22 @@ CLI_FLAG_PARITY = {
     "--watermark": {"surface": "gui", "gui": ("watermark_edit",), "readme": True, "note": "Watermark spec"},
     "--canvas": {"surface": "gui", "gui": ("canvas_edit",), "readme": True, "note": "Canvas size"},
     "--canvas-bg": {"surface": "gui", "gui": ("canvas_bg_edit",), "readme": True, "note": "Canvas fill"},
-    "--brightness": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: brightness adjustment"},
-    "--contrast": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: contrast adjustment"},
-    "--saturation": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: saturation adjustment"},
-    "--sharpness": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: unsharp mask"},
-    "--blur": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: gaussian blur"},
-    "--hue": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: hue rotation"},
-    "--grayscale": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: grayscale toggle"},
-    "--sepia": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: sepia toggle"},
-    "--invert": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: invert toggle"},
-    "--vignette": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: vignette effect"},
-    "--grain": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: film-grain effect"},
-    "--tint": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: colour tint"},
-    "--border": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: solid border width"},
-    "--border-color": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: border colour"},
-    "--adjust-preset": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: named look preset"},
-    "--social": {"surface": "cli-only", "gui": (), "readme": True, "note": "Editing: social-media canvas preset"},
+    "--brightness": {"surface": "gui", "gui": ("brightness_spin",), "readme": True, "note": "Editing: brightness adjustment"},
+    "--contrast": {"surface": "gui", "gui": ("contrast_spin",), "readme": True, "note": "Editing: contrast adjustment"},
+    "--saturation": {"surface": "gui", "gui": ("saturation_spin",), "readme": True, "note": "Editing: saturation adjustment"},
+    "--sharpness": {"surface": "gui", "gui": ("sharpness_spin",), "readme": True, "note": "Editing: unsharp mask"},
+    "--blur": {"surface": "gui", "gui": ("blur_spin",), "readme": True, "note": "Editing: gaussian blur"},
+    "--hue": {"surface": "gui", "gui": ("hue_spin",), "readme": True, "note": "Editing: hue rotation"},
+    "--grayscale": {"surface": "gui", "gui": ("grayscale_chk",), "readme": True, "note": "Editing: grayscale toggle"},
+    "--sepia": {"surface": "gui", "gui": ("sepia_chk",), "readme": True, "note": "Editing: sepia toggle"},
+    "--invert": {"surface": "gui", "gui": ("invert_chk",), "readme": True, "note": "Editing: invert toggle"},
+    "--vignette": {"surface": "gui", "gui": ("vignette_spin",), "readme": True, "note": "Editing: vignette effect"},
+    "--grain": {"surface": "gui", "gui": ("grain_spin",), "readme": True, "note": "Editing: film-grain effect"},
+    "--tint": {"surface": "gui", "gui": ("tint_edit",), "readme": True, "note": "Editing: colour tint"},
+    "--border": {"surface": "gui", "gui": ("border_width_spin",), "readme": True, "note": "Editing: solid border width"},
+    "--border-color": {"surface": "gui", "gui": ("border_color_edit",), "readme": True, "note": "Editing: border colour"},
+    "--adjust-preset": {"surface": "gui", "gui": ("edit_preset_combo",), "readme": True, "note": "Editing: named look preset"},
+    "--social": {"surface": "gui", "gui": ("social_combo",), "readme": True, "note": "Editing: social-media canvas preset"},
     "--avif-speed": {"surface": "gui", "gui": ("avif_speed_spin",), "readme": True, "note": "AVIF speed"},
     "--avif-codec": {"surface": "gui", "gui": ("avif_codec_combo",), "readme": True, "note": "AVIF codec"},
     "--max-file-size": {"surface": "gui", "gui": ("max_file_size_edit",), "readme": True, "note": "Large input guard"},

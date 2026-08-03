@@ -20,10 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — GUI exposure of the v3.6.0 editing layer
-  Why: All 16 edit flags are CLI-only (intentional at merge time, "GUI exposure = follow-up"). The GUI recipe has no adjustments/effects/border/social controls.
-  Where: `imgconverter.py` MainWindow advanced controls; parity matrix `CLI_FLAG_PARITY`. Fix: design a compact "Edits" group in advanced controls, wire to `ConvertOptions`, persist via QSettings, update parity matrix.
-
 ### P3 — Edge cases, polish, maintainability
 
 - [ ] P3 — Hue rotation scale uses 255 instead of 256

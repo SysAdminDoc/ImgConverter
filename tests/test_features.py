@@ -2597,6 +2597,42 @@ class TestQtAccessibility:
                 named.append(attr)
         assert len(named) >= 6
 
+    def test_edit_controls_build_stacked_convert_options(self):
+        w = self.window
+        w.brightness_spin.setValue(10)
+        w.blur_spin.setValue(1.5)
+        w.grayscale_chk.setChecked(True)
+        w.tint_edit.setText("#3a6ea5@25")
+        w.border_width_spin.setValue(6)
+        w.border_color_edit.setText("#101010")
+        w.edit_preset_combo.setCurrentIndex(w.edit_preset_combo.findData("vivid"))
+        w.social_combo.setCurrentIndex(w.social_combo.findData("og-image"))
+
+        values = w._gui_edit_values()
+
+        assert values["brightness"] == 10
+        assert values["contrast"] == 15  # vivid preset stacks on explicit controls
+        assert values["saturation"] == 30
+        assert values["blur"] == 1.5
+        assert values["grayscale"] is True
+        assert values["tint"] == "#3a6ea5@25"
+        assert values["border_width"] == 6
+        assert values["border_color"] == "#101010"
+        assert values["canvas"] == (1200, 628)
+
+        # An explicit canvas remains the higher-priority framing choice.
+        w.canvas_edit.setText("800x600")
+        assert w._gui_edit_values()["canvas"] == (800, 600)
+        w.canvas_edit.clear()
+        w.edit_preset_combo.setCurrentIndex(0)
+        w.social_combo.setCurrentIndex(0)
+        w.brightness_spin.setValue(0)
+        w.blur_spin.setValue(0)
+        w.grayscale_chk.setChecked(False)
+        w.tint_edit.clear()
+        w.border_width_spin.setValue(0)
+        w.border_color_edit.setText("#ffffff")
+
     def test_tab_order_covers_primary_flow(self):
         w = self.window
         focus_chain = []
@@ -3285,4 +3321,5 @@ class TestEditingLayer:
                      "--vignette", "--grain", "--tint", "--border",
                      "--border-color", "--adjust-preset", "--social"):
             assert flag in CLI_FLAG_PARITY
-            assert CLI_FLAG_PARITY[flag]["surface"] == "cli-only"
+            assert CLI_FLAG_PARITY[flag]["surface"] == "gui"
+            assert CLI_FLAG_PARITY[flag]["gui"]
