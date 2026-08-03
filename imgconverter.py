@@ -11995,12 +11995,19 @@ def _collect_cli_input_refs(args) -> tuple[Path, list[Path], list[Path]]:
             print("[ERROR] --stdin-files is mutually exclusive with --input and --files.",
                   file=sys.stderr)
             sys.exit(EXIT_INPUT_ERROR)
-        delim = "\0" if getattr(args, "stdin_null", False) else "\n"
-        raw = sys.stdin.read()
-        for line in raw.split(delim):
-            line = line.strip()
-            if line:
-                refs.append(Path(line).expanduser().resolve())
+        stream = getattr(sys.stdin, "buffer", sys.stdin)
+        raw = stream.read()
+        text = raw.decode("utf-8", errors="surrogateescape") if isinstance(raw, bytes) else str(raw)
+        if getattr(args, "stdin_null", False):
+            values = (value for value in text.split("\0") if value)
+        else:
+            values = (
+                line[:-1] if line.endswith("\r") else line
+                for line in text.split("\n")
+                if line.rstrip("\r")
+            )
+        for value in values:
+            refs.append(Path(value).expanduser().resolve())
 
     if not refs:
         print("[ERROR] Provide --input, --files, or --stdin-files.", file=sys.stderr)

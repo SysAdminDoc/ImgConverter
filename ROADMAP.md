@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `--stdin-files` reads text-mode stdin; `.strip()` mangles legal filenames
-  Why: Windows pipe decodes with locale code page → UnicodeDecodeError on UTF-8 bytes aborts before any work; `line.strip()` strips whitespace that is legal in filenames.
-  Where: `imgconverter.py:11107-11112`. Fix: `sys.stdin.buffer.read().decode("utf-8", errors="surrogateescape")`; split on `"\0"` in NUL mode without strip (at most `\r\n` in newline mode).
-
 - [ ] P3 — `_file_contains_marker` re-reads up to 2 MB up to 3× per conversion, uncached
   Why: Read in `_open_image` (3003), again via metadata presence (3755→2922), again on output (4314/3363).
   Where: `imgconverter.py:2886-2893`. Fix: always record `meta["c2pa"]` after the first read; have `_metadata_presence_from_image` trust a present key. (Output read is genuinely needed.)

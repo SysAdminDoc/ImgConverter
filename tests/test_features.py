@@ -1867,6 +1867,46 @@ class TestScanExclude:
 
         assert result.files == [scan_root / "photo.jpg"]
 
+    def test_stdin_files_preserves_utf8_and_filename_whitespace(self, tmp_workdir, monkeypatch):
+        import io
+        import imgconverter
+
+        first = tmp_workdir / "  Café photo .jpg"
+        second = tmp_workdir / "second image.png"
+        first.write_bytes(b"source")
+        second.write_bytes(b"source")
+        payload = f"{first}\r\n{second}\n".encode("utf-8")
+
+        class BinaryStdin:
+            buffer = io.BytesIO(payload)
+
+        monkeypatch.setattr(sys, "stdin", BinaryStdin())
+        args = _build_parser().parse_args(["--stdin-files"])
+
+        _base, _dirs, files = imgconverter._collect_cli_input_refs(args)
+
+        assert files == [first.resolve(), second.resolve()]
+
+    def test_stdin_null_does_not_strip_path_bytes(self, tmp_workdir, monkeypatch):
+        import io
+        import imgconverter
+
+        first = tmp_workdir / " leading.png"
+        second = tmp_workdir / "trailing .png"
+        first.write_bytes(b"source")
+        second.write_bytes(b"source")
+        payload = f"{first}\0{second}\0".encode("utf-8")
+
+        class BinaryStdin:
+            buffer = io.BytesIO(payload)
+
+        monkeypatch.setattr(sys, "stdin", BinaryStdin())
+        args = _build_parser().parse_args(["--stdin-files", "--stdin-null"])
+
+        _base, _dirs, files = imgconverter._collect_cli_input_refs(args)
+
+        assert files == [first.resolve(), second.resolve()]
+
     def test_scan_directory_honors_cancellation(self, tmp_workdir):
         import imgconverter
 

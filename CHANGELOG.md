@@ -33,6 +33,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Report entry-point discovery failures to the diagnostics log instead of silently hiding plugin metadata errors.
 - Pruned removed source paths from watch-mode state so re-dropped files with the same name can be processed again.
 - Serialized batch-history updates with a cross-platform lock and quarantined corrupt history before recovery.
+- Preserved UTF-8 and significant whitespace in `--stdin-files` and `--stdin-null` path streams.
 
 ## [v3.6.0] — 2026-07-10
 
