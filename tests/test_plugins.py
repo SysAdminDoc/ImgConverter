@@ -1,10 +1,30 @@
 """Plugin trust-gate regression tests."""
 
+import importlib.metadata
 import json
 import sys
 from pathlib import Path
 
 from PIL import Image
+
+
+def test_entrypoint_discovery_reports_metadata_failures(monkeypatch):
+    import imgconverter
+
+    diagnostics = []
+
+    def fail_entry_points(**_kwargs):
+        raise RuntimeError("metadata registry unavailable")
+
+    monkeypatch.setattr(importlib.metadata, "entry_points", fail_entry_points)
+    monkeypatch.setattr(
+        imgconverter,
+        "_diag_log",
+        lambda message, level="INFO": diagnostics.append((level, message)),
+    )
+
+    assert imgconverter._discover_entrypoint_plugins() == []
+    assert diagnostics == [("WARNING", "entry-point discovery failed: metadata registry unavailable")]
 
 
 def _plugin_source(marker, text):

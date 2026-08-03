@@ -1020,8 +1020,8 @@ def _discover_entrypoint_plugins() -> list[dict]:
                 "trust_key": f"ep:{pkg}=={ver}:{ep.name}",
                 "sha256": _entrypoint_distribution_digest(ep),
             })
-    except Exception:
-        pass
+    except Exception as exc:
+        _diag_log(f"entry-point discovery failed: {exc}", level="WARNING")
     return results
 
 
