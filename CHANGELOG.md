@@ -52,6 +52,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Converted dynamic GUI copy to stable Qt translation templates with post-translation formatting, including progress, dialogs, titles, and command previews.
 - Normalized recent source-directory keys for case-insensitive deduplication and ignored malformed recent-directory settings.
 - Validated scan filters and maximum file size before mutating the summary and progress panels.
+- Restored same-format review warnings for JPEG, PNG, and WebP inputs in Auto output mode.
 
 ## [v3.6.0] — 2026-07-10
 

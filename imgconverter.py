@@ -9173,8 +9173,7 @@ class MainWindow(QMainWindow):
             if suffix in (".ico", ".cur"):
                 warnings.append(self.tr("No EXIF/XMP"))
             if fmt == "auto" and suffix in JPEG_EXTS | PNG_EXTS | WEBP_EXTS:
-                if fmt == "auto" and suffix in JPEG_EXTS:
-                    warnings.append(self.tr("Same-format skip likely"))
+                warnings.append(self.tr("Same-format skip likely"))
 
             family = "?"
             for name, (exts, _avail) in FORMAT_FAMILIES.items():

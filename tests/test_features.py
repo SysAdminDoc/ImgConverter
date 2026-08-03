@@ -3064,6 +3064,24 @@ class TestQtAccessibility:
                 w._format_filters[name].setChecked(checked)
             w.max_file_size_edit.setText(original_max_size)
 
+    def test_review_table_warns_for_all_auto_same_format_families(self, tmp_workdir, rgb_image):
+        w = self.window
+        png = tmp_workdir / "graphic.png"
+        webp = tmp_workdir / "graphic.webp"
+        rgb_image.save(png, "PNG")
+        rgb_image.save(webp, "WEBP")
+        w.fmt_combo.setCurrentIndex(0)
+        w._populate_review_table([png, webp])
+
+        warnings = [
+            w._review_table.item(row, 6).text()
+            for row in range(w._review_table.rowCount())
+        ]
+        assert warnings == ["Same-format skip likely", "Same-format skip likely"]
+        if w._thumb_loader and w._thumb_loader.isRunning():
+            w._thumb_loader.stop()
+            assert w._thumb_loader.wait(3000)
+
     def test_file_progress_timer_starts_and_bar_text_is_visible(self):
         w = self.window
 

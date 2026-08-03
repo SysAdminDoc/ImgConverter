@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Review-table same-format warning: dead nested condition drops PNG/WebP cases
-  Why: Outer condition tests JPEG|PNG|WEBP suffixes but inner body only warns for JPEG; PNG→auto commonly no-ops with no warning.
-  Where: `imgconverter.py:8555-8557`. Fix: warn for all three or simplify.
-
 - [ ] P3 — `when_done_combo` persists Sleep/Shutdown across sessions
   Why: Picking Shutdown once shuts the machine down after every future batch, sessions later, with only the 30s countdown as a guard. Power actions should be per-run.
   Where: `imgconverter.py:9889, 10014-10016`. Fix: don't persist indexes > 0.
