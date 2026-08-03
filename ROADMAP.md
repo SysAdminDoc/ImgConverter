@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Update-check QThread not shut down on close
-  Why: Closing while a check is in flight destroys a running QThread with the window (same class as the ScanWorker item; low reach — opt-in + 24h throttle).
-  Where: `imgconverter.py:7258-7267, 10073-10085`. Fix: wait in closeEvent or use daemon thread + signal bridge.
-
 - [ ] P3 — closeEvent `terminate()` can't kill in-flight conversions
   Why: `stop()` cancels pending futures but running encodes join at executor exit; `wait(10000)` timeout → `terminate()` kills the QThread while pool threads keep running (interpreter joins them at exit anyway; terminated thread may hold executor locks).
   Where: `imgconverter.py:10078-10083, 4540-4613`. Fix: hide window + "finishing…" status instead of terminate.

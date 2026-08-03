@@ -47,6 +47,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Restored visible progress-bar text and made the per-file elapsed timer track active conversions.
 - Excluded an open pause interval from GUI batch wall-time summaries when stopping or finishing while paused.
 - Unified dialog geometry with the named application settings store and configured matching Qt app identity.
+- Shut down the opt-in update-check thread safely before the main window is destroyed.
 
 ## [v3.6.0] — 2026-07-10
 

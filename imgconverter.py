@@ -6041,6 +6041,19 @@ def _check_for_update(current_version: str, timeout: float = 3.0) -> str | None:
         return None
 
 
+class _UpdateCheckWorker(QThread):
+    """Run the optional release check without outliving the main window."""
+
+    result = pyqtSignal(str)
+
+    def run(self):
+        if self.isInterruptionRequested():
+            return
+        tag = _check_for_update(APP_VERSION)
+        if tag and not self.isInterruptionRequested():
+            self.result.emit(tag)
+
+
 
 
 def _seed_user_preset_dir():
@@ -7596,6 +7609,8 @@ class MainWindow(QMainWindow):
         self.settings = _app_settings()
         self._scan_result: ScanResult | None = None
         self._worker: ConvertWorker | None = None
+        self._update_worker: _UpdateCheckWorker | None = None
+        self._closing = False
         self._dedup_worker = None
         self._results: list[ConvertResult] = []
         self._result_dst_by_src: dict[str, Path] = {}  # keyed by str(src_path)
@@ -7724,6 +7739,8 @@ class MainWindow(QMainWindow):
         never freezes the GUI.
         """
         try:
+            if self._closing or (self._update_worker and self._update_worker.isRunning()):
+                return
             enabled_raw = self.settings.value("update_check_enabled", False)
             enabled = enabled_raw == "true" or enabled_raw is True
             if not enabled:
@@ -7734,20 +7751,15 @@ class MainWindow(QMainWindow):
                 return
             self.settings.setValue("last_update_check", _time.time())
 
-            class _UpdateWorker(QThread):
-                result = pyqtSignal(str)
-                def run(self_):
-                    tag = _check_for_update(APP_VERSION)
-                    if tag:
-                        self_.result.emit(tag)
-
-            self._update_worker = _UpdateWorker(self)
+            self._update_worker = _UpdateCheckWorker(self)
             self._update_worker.result.connect(self._on_update_result)
             self._update_worker.start()
         except Exception:
             pass
 
     def _on_update_result(self, latest: str):
+        if self._closing:
+            return
         self._log(f"[UPDATE] ImgConverter v{latest} is available "
                   f"(https://github.com/SysAdminDoc/ImgConverter/releases)")
         _diag_log(f"Update available: v{latest}")
@@ -10885,7 +10897,19 @@ class MainWindow(QMainWindow):
                 pass
 
     def closeEvent(self, event):
+        self._closing = True
         self._save_state()
+        if self._update_worker:
+            try:
+                self._update_worker.result.disconnect(self._on_update_result)
+            except (TypeError, RuntimeError):
+                pass
+            if self._update_worker.isRunning():
+                self._update_worker.requestInterruption()
+                if not self._update_worker.wait(5000):
+                    self.status_bar.showMessage(self.tr("Waiting for update check to stop..."))
+                    event.ignore()
+                    return
         if self._thumb_loader and self._thumb_loader.isRunning():
             self._thumb_loader.stop()
             self._thumb_loader.wait(1000)

@@ -2861,6 +2861,31 @@ class TestQtAccessibility:
                 named.append(attr)
         assert len(named) >= 6
 
+    def test_update_check_thread_stops_before_window_close(self, monkeypatch):
+        import threading
+        import imgconverter
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def fake_update_check(_current_version):
+            started.set()
+            release.wait(2)
+            return "99.0.0"
+
+        monkeypatch.setattr(imgconverter, "_check_for_update", fake_update_check)
+        self.window.settings.setValue("update_check_enabled", True)
+        self.window.settings.setValue("last_update_check", 0)
+        self.window._maybe_check_for_update()
+        assert started.wait(1)
+
+        threading.Timer(0.05, release.set).start()
+        worker = self.window._update_worker
+        self.window.close()
+
+        assert worker is not None
+        assert not worker.isRunning()
+
     def test_edit_controls_build_stacked_convert_options(self):
         w = self.window
         w.brightness_spin.setValue(10)
