@@ -26,6 +26,7 @@ from imgconverter import (
     _parse_hex_rgb,
     _prune_watch_state,
     _size_or_zero,
+    _watch_error_is_transient,
     ADJUST_PRESETS,
     SOCIAL_PRESETS,
     _build_parser,
@@ -3281,6 +3282,17 @@ class TestWatchModeIntegration:
             seen_sizes[src] = size2
 
         assert current == [src], "Second poll with same size should proceed"
+
+    def test_watch_retry_whitelists_transient_error_numbers(self):
+        import errno
+
+        assert _watch_error_is_transient(errno.EAGAIN)
+        assert _watch_error_is_transient(errno.EBUSY)
+        assert _watch_error_is_transient(errno.EINTR)
+        assert not _watch_error_is_transient(errno.EACCES)
+        assert not _watch_error_is_transient(errno.ENOENT)
+        assert not _watch_error_is_transient(errno.ENOSPC)
+        assert not _watch_error_is_transient(None)
 
     def test_watch_state_prunes_removed_paths(self, tmp_workdir):
         stale = tmp_workdir / "removed.bmp"

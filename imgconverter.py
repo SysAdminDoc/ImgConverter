@@ -11,6 +11,7 @@ XMP. CLI + GUI parity. See ROADMAP.md for current planning state.
 import multiprocessing
 multiprocessing.freeze_support()
 
+import errno
 import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil, tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -11420,6 +11421,14 @@ def _prune_watch_state(
     return removed
 
 
+def _watch_error_is_transient(error_code: int | None) -> bool:
+    """Return whether a watch conversion error is worth retrying."""
+    transient = {errno.EAGAIN, errno.EBUSY, errno.EINTR}
+    if hasattr(errno, "ETIMEDOUT"):
+        transient.add(errno.ETIMEDOUT)
+    return error_code in transient
+
+
 def _watch_directory(args, input_dir: Path, output_dir: Path,
                      resize_mode: str = "none", resize_value: int = 1920) -> int:
     """Watch mode with optional watchdog filesystem events and polling fallback.
@@ -11568,7 +11577,7 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                         converted.add(f)
                         retry_queue.pop(f, None)
                     else:
-                        is_transient = r.error_code is not None
+                        is_transient = _watch_error_is_transient(r.error_code)
                         if is_transient and attempt < MAX_RETRIES:
                             delay = interval * (2 ** attempt)
                             retry_queue[f] = (attempt + 1, time.time() + delay)
@@ -11578,7 +11587,8 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                             converted.add(f)
                             retry_queue.pop(f, None)
                 except Exception as e:
-                    if attempt < MAX_RETRIES:
+                    is_transient = isinstance(e, OSError) and _watch_error_is_transient(e.errno)
+                    if is_transient and attempt < MAX_RETRIES:
                         delay = interval * (2 ** attempt)
                         retry_queue[f] = (attempt + 1, time.time() + delay)
                         print(f"[watch] error on {f.name}: {e} (retry {attempt + 1}/{MAX_RETRIES} in {delay:.0f}s)")

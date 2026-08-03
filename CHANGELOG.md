@@ -40,6 +40,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Guarded CLI and GUI size summaries against files disappearing between scan and use.
 - Rejected CLI flag combinations that would otherwise be silently ignored by watch, in-place, or stdin modes.
 - Expanded `--output` and `--report` user-home paths consistently with CLI inputs.
+- Limited watch-mode retries to transient filesystem error numbers instead of retrying permanent failures.
 
 ## [v3.6.0] — 2026-07-10
 
