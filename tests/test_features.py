@@ -2825,6 +2825,42 @@ class TestQtAccessibility:
             dialog.close()
             dialog.deleteLater()
 
+    def test_batch_history_dialog_tolerates_foreign_nested_values(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        path = tmp_workdir / "batch-history.json"
+        path.write_text(json.dumps({
+            "records": [
+                {
+                    "timestamp": "2026-08-03T00:00:00Z",
+                    "surface": "foreign-tool",
+                    "preset": "Imported",
+                    "options": {"format": "png", "quality": "n/a", "workers": "?"},
+                    "counts": "3",
+                    "bytes": {"before": "n/a", "after": None},
+                },
+                {
+                    "timestamp": "2026-08-02T00:00:00Z",
+                    "surface": "cli",
+                    "counts": {"converted": "2", "failed": "2"},
+                    "bytes": {"before": "4096", "after": "2048"},
+                },
+            ],
+        }), encoding="utf-8")
+        monkeypatch.setattr(imgconverter, "BATCH_HISTORY_PATH", path)
+
+        dialog = imgconverter.BatchHistoryDialog(self.window)
+        try:
+            assert dialog.table.rowCount() == 2
+            assert "2 converted" in dialog.table.item(0, 4).text()
+            assert "4.0 KB" in dialog.table.item(0, 5).text()
+            assert "0 converted" in dialog.table.item(1, 4).text()
+            assert "0.0 B" in dialog.table.item(1, 5).text()
+            assert "1 need review" in dialog.status_label.text()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
     def test_export_csv_writes_report(self, tmp_workdir, monkeypatch):
         import imgconverter
 

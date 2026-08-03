@@ -20,10 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — BatchHistoryDialog aborts on corrupt/foreign history records
-  Why: `_load_batch_history` validates only that records are dicts; nested `counts`/`bytes` values untrusted. `"counts": "3"` or `"bytes": {"before": "n/a"}` → AttributeError/ValueError in `_refresh` inside the constructor slot → abort.
-  Where: `imgconverter.py:6195, 6229-6232` (contrast guarded `_row_values` 6210-6213). Fix: apply the same isinstance/coercion guards + try/except around int conversions.
-
 - [ ] P2 — WatchFolderDialog close during Run Now: up-to-5s GUI freeze; cancelled run recorded as completed
   Why: `done()` blocks the GUI thread in `wait(5000)` (single large AVIF/JXL encodes exceed 5s → thread orphaned). Either way `_on_run_now_done` still writes `last_run`/`last_count`/`last_error` for a run the user cancelled — displayed as if it completed.
   Where: `imgconverter.py:6590-6594, 6563-6588`. Fix: record `last_error = "cancelled"` (or skip the update) when `_stop` was set; replace blocking wait with a non-blocking finish.

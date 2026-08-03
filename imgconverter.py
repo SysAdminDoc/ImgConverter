@@ -4810,6 +4810,14 @@ def _fmt_size(b: int) -> str:
     return f"{b:.1f} TB"
 
 
+def _safe_history_int(value, default: int = 0) -> int:
+    """Coerce a history number without letting foreign JSON break the UI."""
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def _fmt_eta(seconds: float) -> str:
     """Format seconds as human-readable ETA string."""
     if seconds < 60:
@@ -6350,7 +6358,12 @@ class BatchHistoryDialog(QDialog):
                 self.table.setItem(row_idx, col_idx, item)
         self.table.resizeColumnsToContents()
         total = len(self._records)
-        failed = sum(1 for r in self._records if r.get("counts", {}).get("failed", 0))
+        failed = 0
+        for record in self._records:
+            counts = record.get("counts") if isinstance(record.get("counts"), dict) else {}
+            failed_raw = counts.get("failed", counts.get("failure_count", 0))
+            if _safe_history_int(failed_raw) > 0:
+                failed += 1
         if total == 0:
             text = self.tr("No completed batches have been recorded on this device.")
             tone = "ready"
@@ -6380,13 +6393,13 @@ class BatchHistoryDialog(QDialog):
         if options.get("metadata_mode") and options.get("metadata_mode") != "preserve":
             option_bits.append(str(options.get("metadata_mode")).replace("_", " ").title())
         result = (
-            f"{counts.get('converted', 0)} converted, "
-            f"{counts.get('skipped', 0)} skipped, "
-            f"{counts.get('failed', counts.get('failure_count', 0))} failed"
+            f"{_safe_history_int(counts.get('converted', 0))} converted, "
+            f"{_safe_history_int(counts.get('skipped', 0))} skipped, "
+            f"{_safe_history_int(counts.get('failed', counts.get('failure_count', 0)))} failed"
         )
         bytes_text = (
-            f"{_fmt_size(int(byte_info.get('before', 0) or 0))} -> "
-            f"{_fmt_size(int(byte_info.get('after', 0) or 0))}"
+            f"{_fmt_size(_safe_history_int(byte_info.get('before', 0) or 0))} -> "
+            f"{_fmt_size(_safe_history_int(byte_info.get('after', 0) or 0))}"
         )
         artifact_bits = []
         if artifacts.get("report"):
