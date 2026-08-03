@@ -3237,6 +3237,14 @@ class TestEditingLayer:
         out = _apply_edits(rgb_image, ConvertOptions(hue=120)).convert("RGB")
         assert out.getpixel((20, 20)) != rgb_image.getpixel((20, 20))
 
+    def test_hue_rotation_uses_full_pillow_hsv_range(self):
+        import imgconverter
+        from PIL import Image
+
+        source = Image.new("RGB", (1, 1), (255, 0, 0))
+        out = imgconverter._apply_hue_rotation(source, 270)
+        assert out.convert("HSV").getpixel((0, 0))[0] == 192
+
     def test_parse_hex_rgb_variants(self):
         assert _parse_hex_rgb("#ff0000") == (255, 0, 0)
         assert _parse_hex_rgb("00ff00") == (0, 255, 0)

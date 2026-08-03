@@ -2628,7 +2628,7 @@ def _merge_alpha(rgb: "Image.Image", alpha):
 
 def _apply_hue_rotation(rgb: "Image.Image", degrees: int) -> "Image.Image":
     """Rotate hue by ``degrees`` (0-360) via the HSV colour space."""
-    shift = int(round((degrees % 360) / 360.0 * 255)) & 0xFF
+    shift = int(round((degrees % 360) / 360.0 * 256)) & 0xFF
     if shift == 0:
         return rgb
     from PIL import Image as _I

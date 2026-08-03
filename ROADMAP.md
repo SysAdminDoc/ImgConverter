@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Hue rotation scale uses 255 instead of 256
-  Why: PIL HSV hue wraps at 256 steps; `degrees/360*255` compresses the circle (~1.4° max error).
-  Where: `imgconverter.py:2522`. Fix: `int(round((degrees % 360) / 360.0 * 256)) & 0xFF`.
-
 - [ ] P3 — Animated save uses the LAST frame's duration for all frames
   Why: `img.info.get("duration")` is read after the iterator has seeked to the final frame; variable-delay GIFs re-encode with wrong constant timing.
   Where: `imgconverter.py:3319-3337`. Fix: collect per-frame durations during iteration, pass the list.

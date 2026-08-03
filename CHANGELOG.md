@@ -22,6 +22,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Hardened batch history rendering against foreign nested JSON shapes and non-numeric count/byte values so corrupt records remain reviewable instead of aborting the dialog.
 - Made Run Now cancellation explicit, recorded cancelled profile runs, and removed the close-time GUI wait while retaining safe worker ownership until completion.
 - Added the full 16-flag editing layer to the GUI Advanced options, including stacked look presets, social canvases, persistent controls, and updated CLI/GUI parity coverage.
+- Corrected hue rotation to use all 256 Pillow HSV hue slots.
 
 ## [v3.6.0] — 2026-07-10
 
