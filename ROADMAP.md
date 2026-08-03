@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `--progress` help promises `file_start` that is never emitted; animated files emit no `file_done`
-  Why: `file_start` appears only in help text; the `--frames all/animate` pre-pass appends results without emitting `file_done`, so machine consumers see fewer events than `scan_done.count`.
-  Where: `imgconverter.py:10321-10323, 11594-11618, 11678-11688`. Fix: emit `file_start` before each submit and `file_done` in the animated loop (or fix the help).
-
 - [ ] P3 — Unhandled OSError from `stat()` on files that vanish between scan and use (CLI + GUI)
   Why: `--resume` total-size recompute (11473), dedup max-size pick (11498, 11502), GUI post-dedup sum (8819-8821), DuplicateReviewDialog sort key TOCTOU (6661 — `exists()` then `stat()`) all raise on vanished files → traceback/abort.
   Where: as listed. Fix: `_size_or_zero(p)` helper returning 0 on OSError, use everywhere.

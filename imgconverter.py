@@ -12586,6 +12586,10 @@ def _run_cli(args):
             print(f"[multi-frame] {len(animated_files)} sources have >1 frame; "
                   f"--frames={args.frames} active")
             for f in animated_files:
+                _emit_progress("file_start", {
+                    "file": str(f),
+                    "total": total,
+                }, enabled=_progress_on)
                 r = _convert_animated_or_sequence(
                     f, output_dir, args.format,
                     extract_frames=(args.frames == "all"),
@@ -12595,16 +12599,28 @@ def _run_cli(args):
                     strip_metadata=args.strip_metadata,
                     opts=cli_opts,
                 )
-                if r.success:
+                done_count += 1
+                if r.skipped:
+                    skip_count += 1
+                    print(f"[SKIP*] {f.name}")
+                elif r.success:
                     ok_count += 1
                     print(f"[OK*] {f.name}: {r.warnings[-1]}")
                 else:
                     fail_count += 1
                     print(f"[FAIL*] {f.name}: {r.error}")
                 all_results.append(r)
+                _emit_progress("file_done", {
+                    "file": str(r.src),
+                    "status": "ok" if r.success else ("skip" if r.skipped else "fail"),
+                    "size_before": r.size_before,
+                    "size_after": r.size_after,
+                    "elapsed": round(r.elapsed, 3),
+                    "current": done_count,
+                    "total": total,
+                }, enabled=_progress_on)
             animated_set = set(animated_files)
             scan.files = [f for f in scan.files if f not in animated_set]
-            total = len(scan.files)
 
     # Free-threaded Python: ThreadPoolExecutor scales linearly with cores.
     # Older Python: ProcessPoolExecutor bypasses the GIL at fork cost.
@@ -12668,6 +12684,10 @@ def _run_cli(args):
                     seq_i, f = next(file_iter)
                 except StopIteration:
                     return
+                _emit_progress("file_start", {
+                    "file": str(f),
+                    "total": total,
+                }, enabled=_progress_on)
                 fut = pool.submit(
                     convert_file, f, output_dir, seq=seq_i,
                     opts=cli_opts,

@@ -36,6 +36,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Preserved UTF-8 and significant whitespace in `--stdin-files` and `--stdin-null` path streams.
 - Cached source C2PA marker detection in the opened-image metadata path to avoid duplicate scans.
 - Clarified that `--max-memory` reports a warning threshold and does not throttle worker submissions.
+- Completed CLI progress events with `file_start` and animated-source `file_done` records.
 
 ## [v3.6.0] — 2026-07-10
 

@@ -694,6 +694,44 @@ class TestSelectedFileCLI:
         assert (out / "first.png").exists()
         assert (out / "second.png").exists()
 
+    def test_progress_events_cover_static_and_animated_inputs(self, tmp_workdir, capsys):
+        import imgconverter
+
+        source_dir = tmp_workdir / "sources"
+        source_dir.mkdir()
+        static = source_dir / "static.bmp"
+        Image.new("RGB", (8, 8), (20, 30, 40)).save(static)
+        animated = source_dir / "animated.tiff"
+        Image.new("RGB", (8, 8), (255, 0, 0)).save(
+            animated,
+            format="TIFF",
+            save_all=True,
+            append_images=[Image.new("RGB", (8, 8), (0, 0, 255))],
+            duration=[40, 80],
+            loop=0,
+        )
+        out = tmp_workdir / "out"
+        args = _build_parser().parse_args([
+            "--input", str(source_dir), "--output", str(out),
+            "--format", "png", "--frames", "all", "--workers", "1",
+            "--progress",
+        ])
+
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        events = [
+            json.loads(line) for line in capsys.readouterr().err.splitlines()
+            if line.startswith("{")
+        ]
+        starts = [event for event in events if event["event"] == "file_start"]
+        dones = [event for event in events if event["event"] == "file_done"]
+        assert exc.value.code == EXIT_OK
+        assert {Path(event["file"]).name for event in starts} == {"static.bmp", "animated.tiff"}
+        assert {Path(event["file"]).name for event in dones} == {"static.bmp", "animated.tiff"}
+        assert all(event["total"] == 2 for event in starts + dones)
+        assert {event["status"] for event in dones} == {"ok"}
+
 
 class TestWhenDoneCLI:
 
