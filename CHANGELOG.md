@@ -11,6 +11,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Prevented watch and CLI scans from re-ingesting their own output folders, re-queued unstable watchdog candidates, excluded profile output from Run Now scans, and keyed conversion cache entries from the complete argument set.
 - Made shell file commands space-safe, made directory scans cancellable with close-time waiting, and converted invalid GUI output-folder creation into inline validation feedback.
 - Made selective EXIF stripping fail closed, published lossless JPEG recompression only after success, preserved palette transparency during edits, and scaled high-bit-depth inputs before RGB edits.
+- Fixed thumbnail scanline strides, moved QPixmap creation to the GUI thread, and keyed thumbnail results by source path so stale loader signals cannot corrupt a refreshed review table.
 
 ## [v3.6.0] — 2026-07-10
 

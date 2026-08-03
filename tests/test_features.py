@@ -19,6 +19,7 @@ from imgconverter import (
     _recompress_jpeg_lossless,
     _split_alpha,
     _strip_exif_fields,
+    _ThumbnailLoader,
     _has_edits,
     _build_convert_options,
     _parse_hex_rgb,
@@ -1941,6 +1942,50 @@ class TestEditInputModes:
         assert result.success
         with Image.open(result.dst) as output:
             assert output.getpixel((0, 0))[0] < 240
+
+
+class TestThumbnailLoader:
+
+    def test_emits_detached_qimage_with_tight_stride(self, tmp_workdir):
+        from PyQt6.QtGui import QImage
+
+        src = tmp_workdir / "thumbnail.png"
+        source = Image.new("RGB", (47, 13))
+        source.putdata([
+            (row, row + 1, row + 2)
+            for row in range(13)
+            for _column in range(47)
+        ])
+        source.save(src, "PNG")
+        loader = _ThumbnailLoader([src], size=48)
+        events = []
+        loader.thumbnail_ready.connect(lambda path, image: events.append((path, image)))
+
+        # Calling run directly keeps this regression test deterministic while
+        # exercising the same worker conversion code used by QThread.start().
+        loader.run()
+
+        assert len(events) == 1
+        path, image = events[0]
+        assert path == str(src)
+        assert isinstance(image, QImage)
+        assert image.bytesPerLine() >= 47 * 3
+        assert image.pixelColor(0, 0).getRgb()[:3] == (0, 1, 2)
+        assert image.pixelColor(0, 12).getRgb()[:3] == (12, 13, 14)
+
+    def test_rgba_stride_is_explicit(self, tmp_workdir):
+        from PyQt6.QtGui import QImage
+
+        src = tmp_workdir / "thumbnail-alpha.png"
+        Image.new("RGBA", (47, 13), (20, 40, 60, 127)).save(src, "PNG")
+        loader = _ThumbnailLoader([src], size=48)
+        events = []
+        loader.thumbnail_ready.connect(lambda path, image: events.append((path, image)))
+        loader.run()
+
+        assert len(events) == 1
+        assert isinstance(events[0][1], QImage)
+        assert events[0][1].bytesPerLine() == 47 * 4
 
 
 # ── 18. Queue persistence ──────────────────────────────────────────────────

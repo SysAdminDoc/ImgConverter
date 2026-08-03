@@ -20,14 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — QImage built without bytesPerLine — thumbnails shear/garble, possible OOB read
-  Why: `QImage(data, w, h, Format_RGB888)` assumes 32-bit-aligned scanlines; PIL rows are tightly packed `w*3`. Any thumbnail width not divisible by 4 (portrait thumbs at width 45/47…) shears rows and reads past buffer end.
-  Where: `imgconverter.py:4393-4394`. Fix: pass `rgb.width * 3` as bytesPerLine (and `w*4` on the RGBA branch for symmetry). Related: `QPixmap.fromImage` runs in the worker thread (GUI-thread-only per Qt docs) — emit the QImage and convert in the slot.
-
-- [ ] P2 — Thumbnail-loader swap race: stale queued `thumbnail_ready` indexes the NEW loader's file list
-  Why: `_on_thumbnail_ready` does `self._thumb_loader._files[idx]`; queued cross-thread emissions from the OLD loader are delivered after the swap. Shorter new list (dedup Apply Skips, smaller drop) → IndexError in slot → abort; in-range stale indexes paint wrong thumbnails. The v3.4.x UserRole fix covers same-loader sorting only.
-  Where: `imgconverter.py:8624-8632, 8530-8532, 8596, 4368/4396`. Fix: emit the path in the signal, or guard `if self.sender() is not self._thumb_loader or idx >= len(...): return`.
-
 - [ ] P2 — Drag & drop not gated by the busy lock — drops mid-conversion clobber live batch state
   Why: While converting, drops still rewrite `src_edit`, replace `self._scan_result`, restart the thumbnail loader, ENABLE the Convert button mid-run, and overwrite stats/title. Same clobber during scans.
   Where: `imgconverter.py:8833-8904`. Fix: `event.ignore()` in dragEnter/drop when worker or scanner is running.

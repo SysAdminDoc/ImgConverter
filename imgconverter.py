@@ -4500,7 +4500,7 @@ def convert_file(
 
 
 class _ThumbnailLoader(QThread):
-    thumbnail_ready = pyqtSignal(int, object)  # row, QPixmap
+    thumbnail_ready = pyqtSignal(str, object)  # source path, QImage
 
     def __init__(self, files: list[Path], size: int = 48):
         super().__init__()
@@ -4523,12 +4523,17 @@ class _ThumbnailLoader(QThread):
                     from PyQt6.QtGui import QImage
                     if rgb.mode == "RGBA":
                         data = rgb.tobytes("raw", "RGBA")
-                        qimg = QImage(data, rgb.width, rgb.height, QImage.Format.Format_RGBA8888)
+                        qimg = QImage(
+                            data, rgb.width, rgb.height, rgb.width * 4,
+                            QImage.Format.Format_RGBA8888,
+                        ).copy()
                     else:
                         data = rgb.tobytes("raw", "RGB")
-                        qimg = QImage(data, rgb.width, rgb.height, QImage.Format.Format_RGB888)
-                    pix = QPixmap.fromImage(qimg)
-                    self.thumbnail_ready.emit(idx, pix)
+                        qimg = QImage(
+                            data, rgb.width, rgb.height, rgb.width * 3,
+                            QImage.Format.Format_RGB888,
+                        ).copy()
+                    self.thumbnail_ready.emit(str(path), qimg)
             except Exception:
                 pass
 
@@ -8774,10 +8779,10 @@ class MainWindow(QMainWindow):
             drag.setMimeData(mime)
             drag.exec(Qt.DropAction.CopyAction)
 
-    def _on_thumbnail_ready(self, idx: int, pixmap):
-        path_str = str(self._thumb_loader._files[idx]) if self._thumb_loader else None
-        if not path_str:
+    def _on_thumbnail_ready(self, path_str: str, qimage):
+        if not path_str or qimage is None or qimage.isNull():
             return
+        pixmap = QPixmap.fromImage(qimage)
         for row in range(self._review_table.rowCount()):
             item = self._review_table.item(row, 0)
             if item and item.data(Qt.ItemDataRole.UserRole) == path_str:
