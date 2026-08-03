@@ -875,6 +875,20 @@ class TestShellIntegration:
         assert "Python Folder" in exec_line
         assert "App Folder" in exec_line
 
+    def test_linux_desktop_entry_includes_selected_preset(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(imgconverter.Path, "home", classmethod(lambda cls: tmp_workdir))
+
+        assert _install_shell_integration(False, preset_name="Web Optimized") == EXIT_OK
+        desktop = tmp_workdir / ".local" / "share" / "applications" / "imgconverter.desktop"
+        exec_line = next(
+            line for line in desktop.read_text(encoding="utf-8").splitlines()
+            if line.startswith("Exec=")
+        )
+        assert '--preset "Web Optimized"' in exec_line
+
     def test_windows_registry_commands_use_files_and_directory_paths(self, monkeypatch):
         import imgconverter
 
@@ -911,6 +925,41 @@ class TestShellIntegration:
         assert values[(r"Software\Classes\*\shell\ImgConverter", "MultiSelectModel")] == "Player"
         assert '--input "%1"' in values[(r"Software\Classes\Directory\shell\ImgConverter\command", "")]
 
+    def test_windows_registry_commands_include_selected_preset(self, monkeypatch):
+        import imgconverter
+
+        values = {}
+
+        class Key:
+            def __init__(self, name):
+                self.name = name
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeWinreg:
+            HKEY_CURRENT_USER = object()
+            REG_SZ = 1
+            KEY_SET_VALUE = 2
+
+            @staticmethod
+            def CreateKeyEx(root, key, reserved, access):
+                return Key(key)
+
+            @staticmethod
+            def SetValueEx(key, name, reserved, typ, value):
+                values[(key.name, name)] = value
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Windows")
+        monkeypatch.setitem(sys.modules, "winreg", FakeWinreg)
+
+        assert _install_shell_integration(False, preset_name="Archive Quality") == EXIT_OK
+        command = values[(r"Software\Classes\*\shell\ImgConverter\command", "")]
+        assert '--preset "Archive Quality"' in command
+
     def test_shell_file_command_quotes_single_path_in_preview(self, monkeypatch):
         import imgconverter
 
@@ -921,6 +970,10 @@ class TestShellIntegration:
         try:
             assert '--files "%1"' in dialog.cmd_view.toPlainText()
             assert "--files %*" not in dialog.cmd_view.toPlainText()
+            index = dialog.preset_combo.findText("Web Optimized")
+            assert index >= 0
+            dialog.preset_combo.setCurrentIndex(index)
+            assert '--preset "Web Optimized"' in dialog.cmd_view.toPlainText()
         finally:
             dialog.close()
             dialog.deleteLater()
@@ -975,7 +1028,7 @@ class TestShellIntegration:
         monkeypatch.setattr(
             imgconverter,
             "_install_shell_integration",
-            lambda uninstall=False: (_ for _ in ()).throw(RuntimeError("installer exploded")),
+            lambda uninstall=False, **kwargs: (_ for _ in ()).throw(RuntimeError("installer exploded")),
         )
         dialog = imgconverter.ShellIntegrationDialog()
         try:

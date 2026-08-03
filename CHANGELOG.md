@@ -17,6 +17,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Made CLI Ctrl-C return the documented cancellation code while preserving queue/report/history/progress state, made redirected output UTF-8 safe, validated proof counts, and required matching resume recipes.
 - Made watchdog mode process pre-existing files consistently with polling and handle atomic-renamed files through their destination path.
 - Hardened shell integration permission and filesystem failures so CLI operations return input errors and the Qt dialog keeps actionable error details inline.
+- Connected the shell integration preset selector to command previews and installed context-menu commands with validated, platform-safe preset arguments.
 
 ## [v3.6.0] — 2026-07-10
 

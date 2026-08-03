@@ -7070,12 +7070,6 @@ class ShellIntegrationDialog(QDialog):
         self.cmd_view.setMaximumHeight(90)
         self.cmd_view.setAccessibleName(self.tr("Registered command preview"))
         self.cmd_view.setAccessibleDescription(self.tr("Read-only preview of the commands added to the file manager"))
-        exe = sys.executable
-        script = str(Path(__file__).resolve())
-        self.cmd_view.setPlainText(
-            f'Files:   "{exe}" "{script}" --files "%1"\n'
-            f'Folders: "{exe}" "{script}" --input "%1"'
-        )
         layout.addWidget(self.cmd_view)
 
         preset_row = QHBoxLayout()
@@ -7084,15 +7078,17 @@ class ShellIntegrationDialog(QDialog):
         preset_label.setObjectName("fieldLabel")
         preset_row.addWidget(preset_label)
         self.preset_combo = QComboBox()
-        self.preset_combo.addItem(self.tr("(none)"))
+        self.preset_combo.addItem(self.tr("(none)"), None)
         for name in sorted(list_presets().keys()):
-            self.preset_combo.addItem(name)
+            self.preset_combo.addItem(name, name)
         self.preset_combo.setToolTip(self.tr("Preset applied when converting via shell context menu"))
         self.preset_combo.setAccessibleName(self.tr("Default file manager preset"))
         self.preset_combo.setFixedWidth(180)
+        self.preset_combo.currentIndexChanged.connect(self._update_command_preview)
         preset_row.addWidget(self.preset_combo)
         preset_row.addStretch()
         layout.addLayout(preset_row)
+        self._update_command_preview()
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
@@ -7121,6 +7117,23 @@ class ShellIntegrationDialog(QDialog):
         layout.addStretch()
 
         self._detect_state()
+
+    def _selected_preset_name(self) -> str | None:
+        value = self.preset_combo.currentData()
+        return str(value) if value else None
+
+    def _update_command_preview(self):
+        exe = sys.executable
+        script = str(Path(__file__).resolve())
+        preset_name = self._selected_preset_name()
+        preset_arg = (
+            f" --preset {subprocess.list2cmdline([preset_name])}"
+            if preset_name else ""
+        )
+        self.cmd_view.setPlainText(
+            f'Files:   "{exe}" "{script}"{preset_arg} --files "%1"\n'
+            f'Folders: "{exe}" "{script}"{preset_arg} --input "%1"'
+        )
 
     def _detect_state(self):
         system = platform.system()
@@ -7162,7 +7175,10 @@ class ShellIntegrationDialog(QDialog):
     def _install(self):
         error_detail = ""
         try:
-            rc = _install_shell_integration(uninstall=False)
+            rc = _install_shell_integration(
+                uninstall=False,
+                preset_name=self._selected_preset_name(),
+            )
         except Exception as exc:
             rc = EXIT_INPUT_ERROR
             error_detail = f"{type(exc).__name__}: {exc}".strip()
@@ -11075,7 +11091,25 @@ def _desktop_exec_arg(value: str) -> str:
     return f'"{escaped}"'
 
 
-def _install_shell_integration(uninstall: bool = False) -> int:
+def _normalize_shell_preset_name(preset_name: str | None) -> str | None:
+    """Validate and normalize a preset name before embedding it in a shell command."""
+    if preset_name is None:
+        return None
+    name = str(preset_name).strip()
+    if not name or name == "(none)":
+        return None
+    if "\r" in name or "\n" in name:
+        raise ValueError("preset name cannot contain line breaks")
+    if load_preset(name) is None:
+        raise ValueError(f"unknown preset: {name}")
+    return name
+
+
+def _install_shell_integration(
+    uninstall: bool = False,
+    *,
+    preset_name: str | None = None,
+) -> int:
     """Install / uninstall OS-level shell integration.
 
     Windows : adds 'Convert with ImgConverter' to the Explorer right-click menu
@@ -11088,8 +11122,21 @@ def _install_shell_integration(uninstall: bool = False) -> int:
     system = platform.system()
     exe = sys.executable
     script = str(Path(__file__).resolve())
-    file_cmd_args = f'"{exe}" "{script}" --files "%1"'
-    dir_cmd_args = f'"{exe}" "{script}" --input "%1"'
+    try:
+        preset_name = _normalize_shell_preset_name(preset_name)
+    except ValueError as exc:
+        print(f"[shell-integration] failed: {exc}", file=sys.stderr)
+        return EXIT_INPUT_ERROR
+    preset_args = (
+        f" --preset {subprocess.list2cmdline([preset_name])}"
+        if preset_name else ""
+    )
+    desktop_preset_args = (
+        f" --preset {_desktop_exec_arg(preset_name)}"
+        if preset_name else ""
+    )
+    file_cmd_args = f'"{exe}" "{script}"{preset_args} --files "%1"'
+    dir_cmd_args = f'"{exe}" "{script}"{preset_args} --input "%1"'
 
     if system == "Windows":
         try:
@@ -11172,7 +11219,8 @@ def _install_shell_integration(uninstall: bool = False) -> int:
                 "[Desktop Entry]\n"
                 "Type=Application\n"
                 "Name=Convert with ImgConverter\n"
-                f"Exec={_desktop_exec_arg(exe)} {_desktop_exec_arg(script)} --files %F\n"
+                f"Exec={_desktop_exec_arg(exe)} {_desktop_exec_arg(script)}"
+                f"{desktop_preset_args} --files %F\n"
                 "MimeType=image/heic;image/heif;image/avif;image/jpeg;image/png;image/webp;image/tiff;\n"
                 "Terminal=false\n"
                 "Categories=Graphics;\n"

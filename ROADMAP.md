@@ -20,10 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — ShellIntegrationDialog "Default preset" combo is dead UI
-  Why: The combo is built with a tooltip promising "Preset applied when converting via shell context menu" but its value is never read; registered commands contain no `--preset`. Users select, install, get success feedback, shell conversions use defaults.
-  Where: `imgconverter.py:6928-6935, 7004-7011, 10767-10867`. Fix: append `--preset "<name>"` to registered commands, or remove the combo.
-
 - [ ] P2 — Watch-profile "Enabled/Paused" toggle has no effect — nothing watches the folders
   Why: The `enabled` flag is written by the dialog and read back only for display; no QFileSystemWatcher/timer/startup hook runs enabled profiles, and CLI `--watch` never reads `watch-profiles.json`. Accessible description says "monitored for automatic conversion" — automation that doesn't exist. Only Run Now executes (and ignores `enabled`).
   Where: `imgconverter.py:6356, 6377, 6490-6495, 6346, 6422, 8786`. Fix: wire enabled profiles to a real watcher in MainWindow, or drop the toggle and reword copy to "on-demand profiles".
