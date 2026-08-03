@@ -2931,6 +2931,55 @@ class TestWatchModeIntegration:
 
         assert captured["exclude_roots"] == [output]
 
+    def test_run_now_worker_reports_cancellation(self, tmp_workdir):
+        import imgconverter
+
+        worker = imgconverter._RunNowWorker(
+            tmp_workdir, tmp_workdir / "out", ConvertOptions(fmt="png"),
+        )
+        events = []
+        worker.finished_run.connect(lambda *args: events.append(args))
+        worker.stop()
+        worker.run()
+
+        assert events == [(0, 0, 0, "cancelled")]
+
+    def test_watch_folder_close_is_nonblocking_and_records_cancelled(self, tmp_workdir, monkeypatch):
+        import imgconverter
+        from PyQt6.QtWidgets import QDialog
+
+        path = tmp_workdir / "watch-profiles.json"
+        path.write_text(json.dumps([{"source": str(tmp_workdir / "src")}]), encoding="utf-8")
+        monkeypatch.setattr(imgconverter, "WATCH_PROFILES_FILE", path)
+
+        class FakeSignal:
+            def disconnect(self, _slot):
+                pass
+
+        class FakeWorker:
+            scan_ready = FakeSignal()
+            progress = FakeSignal()
+            finished_run = FakeSignal()
+            stop_called = False
+
+            def stop(self):
+                self.stop_called = True
+
+        dialog = imgconverter.WatchFolderDialog()
+        try:
+            dialog._run_now_row = 0
+            dialog._run_active = True
+            worker = FakeWorker()
+            dialog._run_now_worker = worker
+            dialog.done(QDialog.DialogCode.Rejected)
+            assert worker.stop_called
+            assert dialog._profiles[0]["last_error"] == "cancelled"
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            assert saved[0]["last_error"] == "cancelled"
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
     def test_debounce_size_stability(self, tmp_workdir):
         """Debounce logic: file must have stable size across two polls."""
         src = tmp_workdir / "growing.bmp"

@@ -20,10 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — WatchFolderDialog close during Run Now: up-to-5s GUI freeze; cancelled run recorded as completed
-  Why: `done()` blocks the GUI thread in `wait(5000)` (single large AVIF/JXL encodes exceed 5s → thread orphaned). Either way `_on_run_now_done` still writes `last_run`/`last_count`/`last_error` for a run the user cancelled — displayed as if it completed.
-  Where: `imgconverter.py:6590-6594, 6563-6588`. Fix: record `last_error = "cancelled"` (or skip the update) when `_stop` was set; replace blocking wait with a non-blocking finish.
-
 - [ ] P2 — GUI exposure of the v3.6.0 editing layer
   Why: All 16 edit flags are CLI-only (intentional at merge time, "GUI exposure = follow-up"). The GUI recipe has no adjustments/effects/border/social controls.
   Where: `imgconverter.py` MainWindow advanced controls; parity matrix `CLI_FLAG_PARITY`. Fix: design a compact "Edits" group in advanced controls, wire to `ConvertOptions`, persist via QSettings, update parity matrix.

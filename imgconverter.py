@@ -4541,10 +4541,10 @@ class _ThumbnailLoader(QThread):
 class _RunNowWorker(QThread):
     scan_ready = pyqtSignal(int)
     progress = pyqtSignal(int, int)
-    finished_run = pyqtSignal(int, int, int, str)  # ok, fail, skipped, error
+    finished_run = pyqtSignal(int, int, int, str)  # ok, fail, skipped, error/cancelled
 
-    def __init__(self, source_dir: Path, output_dir: Path, opts: "ConvertOptions"):
-        super().__init__()
+    def __init__(self, source_dir: Path, output_dir: Path, opts: "ConvertOptions", parent=None):
+        super().__init__(parent)
         self._source_dir = Path(source_dir)
         self._output_dir = output_dir
         self._opts = opts
@@ -4581,7 +4581,7 @@ class _RunNowWorker(QThread):
             else:
                 fail += 1
             self.progress.emit(seq_i, len(files))
-        self.finished_run.emit(ok, fail, skipped, "")
+        self.finished_run.emit(ok, fail, skipped, "cancelled" if self._stop else "")
 
 
 def _set_process_priority_low():
@@ -6478,6 +6478,7 @@ class WatchFolderDialog(QDialog):
         self._profiles: list[dict] = _load_watch_profiles()
         self._run_now_worker: _RunNowWorker | None = None
         self._run_active = False
+        self._run_now_cancelled = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -6662,6 +6663,7 @@ class WatchFolderDialog(QDialog):
             _set_dialog_status(self.status_label, self.tr(f"Source folder not found: {src}"), "danger")
             return
         self._run_active = True
+        self._run_now_cancelled = False
         self._update_actions()
         _set_dialog_status(
             self.status_label,
@@ -6693,10 +6695,12 @@ class WatchFolderDialog(QDialog):
             return
 
         self._run_now_row = row
-        self._run_now_worker = _RunNowWorker(Path(src), output_dir, opts)
+        worker_parent = self.parent() or QApplication.instance()
+        self._run_now_worker = _RunNowWorker(Path(src), output_dir, opts, parent=worker_parent)
         self._run_now_worker.scan_ready.connect(self._on_run_now_scan_ready)
         self._run_now_worker.progress.connect(self._on_run_now_progress)
         self._run_now_worker.finished_run.connect(self._on_run_now_done)
+        self._run_now_worker.finished.connect(self._run_now_worker.deleteLater)
         self._run_now_worker.start()
 
     def _on_run_now_scan_ready(self, total: int):
@@ -6721,11 +6725,17 @@ class WatchFolderDialog(QDialog):
         from datetime import datetime
         row = self._run_now_row
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self._profiles[row]["last_run"] = now_str
-        self._profiles[row]["last_count"] = ok_count
-        self._profiles[row]["last_error"] = f"{fail_count} failed" if fail_count else None
-        _save_watch_profiles(self._profiles)
+        cancelled = error == "cancelled" or self._run_now_cancelled
+        if row is not None and 0 <= row < len(self._profiles):
+            self._profiles[row]["last_run"] = now_str
+            self._profiles[row]["last_count"] = ok_count
+            self._profiles[row]["last_error"] = "cancelled" if cancelled else (
+                f"{fail_count} failed" if fail_count else None
+            )
+            _save_watch_profiles(self._profiles)
         self._run_active = False
+        self._run_now_cancelled = False
+        self._run_now_worker = None
         self._refresh()
         self.run_progress.setVisible(False)
         self._update_actions()
@@ -6745,9 +6755,26 @@ class WatchFolderDialog(QDialog):
             ), tone)
 
     def done(self, result):
-        if self._run_now_worker and self._run_now_worker.isRunning():
-            self._run_now_worker.stop()
-            self._run_now_worker.wait(5000)
+        worker = self._run_now_worker
+        if self._run_active:
+            self._run_now_cancelled = True
+            row = getattr(self, "_run_now_row", None)
+            if row is not None and 0 <= row < len(self._profiles):
+                self._profiles[row]["last_error"] = "cancelled"
+                _save_watch_profiles(self._profiles)
+            self._run_active = False
+        if worker is not None:
+            for signal, slot in (
+                (worker.scan_ready, self._on_run_now_scan_ready),
+                (worker.progress, self._on_run_now_progress),
+                (worker.finished_run, self._on_run_now_done),
+            ):
+                try:
+                    signal.disconnect(slot)
+                except (TypeError, RuntimeError):
+                    pass
+            worker.stop()
+            self._run_now_worker = None
         super().done(result)
 
 
