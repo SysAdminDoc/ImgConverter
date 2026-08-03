@@ -20,10 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — Shell-integration install/uninstall error paths raise into PyQt slots → app abort
-  Why: Windows uninstall guards only FileNotFoundError (`PermissionError` → crash); Linux install `mkdir`/`_write_text_atomic` unguarded (re-raises). The "Removal failed. Check permissions" message is unreachable for exactly the failure it describes; uninstall returns EXIT_OK unconditionally.
-  Where: `imgconverter.py:10795-10849`, slots `7004, 7013`. Fix: broaden excepts to OSError, return EXIT_INPUT_ERROR on failure, wrap slot bodies.
-
 - [ ] P2 — ShellIntegrationDialog "Default preset" combo is dead UI
   Why: The combo is built with a tooltip promising "Preset applied when converting via shell context menu" but its value is never read; registered commands contain no `--preset`. Users select, install, get success feedback, shell conversions use defaults.
   Where: `imgconverter.py:6928-6935, 7004-7011, 10767-10867`. Fix: append `--preset "<name>"` to registered commands, or remove the combo.

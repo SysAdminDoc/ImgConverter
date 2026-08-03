@@ -7160,21 +7160,37 @@ class ShellIntegrationDialog(QDialog):
             ), "ready")
 
     def _install(self):
-        rc = _install_shell_integration(uninstall=False)
+        error_detail = ""
+        try:
+            rc = _install_shell_integration(uninstall=False)
+        except Exception as exc:
+            rc = EXIT_INPUT_ERROR
+            error_detail = f"{type(exc).__name__}: {exc}".strip()
         self.result_label.setVisible(True)
         if rc == EXIT_OK:
             _set_dialog_status(self.result_label, self.tr("File manager integration installed successfully."), "success")
         else:
-            _set_dialog_status(self.result_label, self.tr("Installation failed. Check permissions and try again."), "danger")
+            message = self.tr("Installation failed. Check permissions and try again.")
+            if error_detail:
+                message += f" {error_detail}"
+            _set_dialog_status(self.result_label, message, "danger")
         self._detect_state()
 
     def _uninstall(self):
-        rc = _install_shell_integration(uninstall=True)
+        error_detail = ""
+        try:
+            rc = _install_shell_integration(uninstall=True)
+        except Exception as exc:
+            rc = EXIT_INPUT_ERROR
+            error_detail = f"{type(exc).__name__}: {exc}".strip()
         self.result_label.setVisible(True)
         if rc == EXIT_OK:
             _set_dialog_status(self.result_label, self.tr("File manager integration removed."), "success")
         else:
-            _set_dialog_status(self.result_label, self.tr("Removal failed. Check permissions and try again."), "danger")
+            message = self.tr("Removal failed. Check permissions and try again.")
+            if error_detail:
+                message += f" {error_detail}"
+            _set_dialog_status(self.result_label, message, "danger")
         self._detect_state()
 
 
@@ -11087,15 +11103,26 @@ def _install_shell_integration(uninstall: bool = False) -> int:
         dir_base = r"Software\Classes\Directory\shell\ImgConverter"
         dir_cmd_key = dir_base + r"\command"
         if uninstall:
+            failures = []
             for cmd_key, base in ((file_cmd_key, file_base), (dir_cmd_key, dir_base)):
                 try:
                     winreg.DeleteKey(root, cmd_key)
                 except FileNotFoundError:
                     pass
+                except OSError as exc:
+                    failures.append(f"{cmd_key}: {exc}")
                 try:
                     winreg.DeleteKey(root, base)
                 except FileNotFoundError:
                     pass
+                except OSError as exc:
+                    failures.append(f"{base}: {exc}")
+            if failures:
+                print(
+                    f"[shell-integration] removal failed: {'; '.join(failures)}",
+                    file=sys.stderr,
+                )
+                return EXIT_INPUT_ERROR
             print("[shell-integration] removed.")
             return EXIT_OK
         try:
@@ -11121,27 +11148,40 @@ def _install_shell_integration(uninstall: bool = False) -> int:
         apps_dir = share / "applications"
         actions_dir = share / "file-manager" / "actions"
         if uninstall:
+            failures = []
             for p in (apps_dir / "imgconverter.desktop",
                        actions_dir / "imgconverter.desktop"):
                 try:
                     p.unlink()
                 except FileNotFoundError:
                     pass
+                except OSError as exc:
+                    failures.append(f"{p}: {exc}")
+            if failures:
+                print(
+                    f"[shell-integration] removal failed: {'; '.join(failures)}",
+                    file=sys.stderr,
+                )
+                return EXIT_INPUT_ERROR
             print("[shell-integration] removed.")
             return EXIT_OK
-        apps_dir.mkdir(parents=True, exist_ok=True)
-        actions_dir.mkdir(parents=True, exist_ok=True)
-        desktop_content = (
-            "[Desktop Entry]\n"
-            "Type=Application\n"
-            "Name=Convert with ImgConverter\n"
-            f"Exec={_desktop_exec_arg(exe)} {_desktop_exec_arg(script)} --files %F\n"
-            "MimeType=image/heic;image/heif;image/avif;image/jpeg;image/png;image/webp;image/tiff;\n"
-            "Terminal=false\n"
-            "Categories=Graphics;\n"
-        )
-        _write_text_atomic(apps_dir / "imgconverter.desktop", desktop_content)
-        _write_text_atomic(actions_dir / "imgconverter.desktop", desktop_content)
+        try:
+            apps_dir.mkdir(parents=True, exist_ok=True)
+            actions_dir.mkdir(parents=True, exist_ok=True)
+            desktop_content = (
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Name=Convert with ImgConverter\n"
+                f"Exec={_desktop_exec_arg(exe)} {_desktop_exec_arg(script)} --files %F\n"
+                "MimeType=image/heic;image/heif;image/avif;image/jpeg;image/png;image/webp;image/tiff;\n"
+                "Terminal=false\n"
+                "Categories=Graphics;\n"
+            )
+            _write_text_atomic(apps_dir / "imgconverter.desktop", desktop_content)
+            _write_text_atomic(actions_dir / "imgconverter.desktop", desktop_content)
+        except OSError as exc:
+            print(f"[shell-integration] failed: {exc}", file=sys.stderr)
+            return EXIT_INPUT_ERROR
         print(f"[shell-integration] installed at {apps_dir / 'imgconverter.desktop'}")
         return EXIT_OK
 

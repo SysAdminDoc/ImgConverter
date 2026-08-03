@@ -925,6 +925,66 @@ class TestShellIntegration:
             dialog.close()
             dialog.deleteLater()
 
+    def test_linux_install_permission_error_returns_input_error(self, tmp_workdir, monkeypatch, capsys):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(imgconverter.Path, "home", classmethod(lambda cls: tmp_workdir))
+
+        def deny_mkdir(self, *args, **kwargs):
+            raise PermissionError("permission denied")
+
+        monkeypatch.setattr(imgconverter.Path, "mkdir", deny_mkdir)
+
+        assert _install_shell_integration(False) == imgconverter.EXIT_INPUT_ERROR
+        assert "permission denied" in capsys.readouterr().err
+
+    def test_linux_uninstall_permission_error_returns_input_error(self, tmp_workdir, monkeypatch, capsys):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(imgconverter.Path, "home", classmethod(lambda cls: tmp_workdir))
+
+        def deny_unlink(self, *args, **kwargs):
+            raise PermissionError("permission denied")
+
+        monkeypatch.setattr(imgconverter.Path, "unlink", deny_unlink)
+
+        assert _install_shell_integration(True) == imgconverter.EXIT_INPUT_ERROR
+        assert "removal failed" in capsys.readouterr().err
+
+    def test_windows_uninstall_permission_error_returns_input_error(self, monkeypatch, capsys):
+        import imgconverter
+
+        class FakeWinreg:
+            HKEY_CURRENT_USER = object()
+
+            @staticmethod
+            def DeleteKey(root, key):
+                raise PermissionError("registry access denied")
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Windows")
+        monkeypatch.setitem(sys.modules, "winreg", FakeWinreg)
+
+        assert _install_shell_integration(True) == imgconverter.EXIT_INPUT_ERROR
+        assert "registry access denied" in capsys.readouterr().err
+
+    def test_shell_dialog_surfaces_unexpected_installer_error(self, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setattr(
+            imgconverter,
+            "_install_shell_integration",
+            lambda uninstall=False: (_ for _ in ()).throw(RuntimeError("installer exploded")),
+        )
+        dialog = imgconverter.ShellIntegrationDialog()
+        try:
+            dialog._install()
+            assert "installer exploded" in dialog.result_label.text()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
 
 # ── 2. Preset loading ────────────────────────────────────────────────────────
 
