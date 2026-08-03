@@ -1042,6 +1042,33 @@ class TestShellIntegration:
 # ── 2. Preset loading ────────────────────────────────────────────────────────
 
 
+class TestC2PAVerification:
+
+    def test_sdk_reader_closes_when_manifest_parsing_fails(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        state = {"closed": False}
+
+        class Reader:
+            @staticmethod
+            def try_create(_path):
+                return Reader()
+
+            def json(self):
+                raise RuntimeError("manifest read failed")
+
+            def close(self):
+                state["closed"] = True
+
+        monkeypatch.setattr(imgconverter, "HAS_C2PA_PYTHON", True)
+        monkeypatch.setattr(imgconverter, "_c2pa_mod", types.SimpleNamespace(Reader=Reader))
+
+        result = imgconverter._verify_c2pa_sdk(tmp_workdir / "marked.jpg")
+
+        assert result["status"] == "not-verified"
+        assert state["closed"] is True
+
+
 def _advanced_preset_payload():
     return {
         "schema_version": 2,

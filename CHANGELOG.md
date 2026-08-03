@@ -27,6 +27,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Reduced watermark text measurement memory from the full image size to a 1×1 probe.
 - Made trusted local plugin execution compile the exact bytes used for the trust hash, closing the reload window.
 - Marked PEP 660 editable entry-point installs as requiring re-audit instead of granting metadata-only trust.
+- Guaranteed C2PA SDK reader cleanup when manifest parsing or validation fails.
 
 ## [v3.6.0] — 2026-07-10
 

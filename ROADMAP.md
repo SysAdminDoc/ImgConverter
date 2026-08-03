@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `_verify_c2pa_sdk` leaks the native Reader on exception
-  Why: `reader.close()` only on success path; `reader.json()`/`get_validation_state()` raise → handle leaked per C2PA-marked file.
-  Where: `imgconverter.py:319-349`. Fix: try/finally or context manager.
-
 - [ ] P3 — `--untrust-plugin` cannot remove entry-point records with dotless versions
   Why: `ep:pkg==2:plug` has no `Path.suffix` → `.py` appended → key mismatch → "no trusted entry". Dotted versions survive only by accident.
   Where: `imgconverter.py:807-814, 673-677`. Fix: bypass the `.py` mangling for `ep:`-prefixed refs.

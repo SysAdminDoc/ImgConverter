@@ -322,6 +322,7 @@ def _verify_c2pa(path: Path) -> dict[str, object] | None:
 
 def _verify_c2pa_sdk(path: Path) -> dict[str, object] | None:
     """Verify C2PA via the c2pa-python SDK (no subprocess)."""
+    reader = None
     try:
         reader = _c2pa_mod.Reader.try_create(str(path))
         if reader is None:
@@ -338,8 +339,6 @@ def _verify_c2pa_sdk(path: Path) -> dict[str, object] | None:
                 am = manifests.get(active, {})
                 claim_gen = am.get("claim_generator")
         state = reader.get_validation_state()
-        if hasattr(reader, "close"):
-            reader.close()
         if state is None:
             status = "not-verified"
         else:
@@ -351,6 +350,12 @@ def _verify_c2pa_sdk(path: Path) -> dict[str, object] | None:
         }
     except Exception as e:
         return {"status": "not-verified", "error": _redact_text(str(e)[:200])}
+    finally:
+        if reader is not None and hasattr(reader, "close"):
+            try:
+                reader.close()
+            except Exception as close_error:
+                _diag_log(f"c2pa reader close failed: {close_error}", level="WARNING")
 
 
 def _verify_c2pa_tool(path: Path) -> dict[str, object] | None:
