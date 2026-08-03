@@ -48,6 +48,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Excluded an open pause interval from GUI batch wall-time summaries when stopping or finishing while paused.
 - Unified dialog geometry with the named application settings store and configured matching Qt app identity.
 - Shut down the opt-in update-check thread safely before the main window is destroyed.
+- Replaced unsafe conversion-thread termination on close with a hidden finishing state that closes after the executor exits.
 
 ## [v3.6.0] — 2026-07-10
 

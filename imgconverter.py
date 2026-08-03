@@ -7611,6 +7611,7 @@ class MainWindow(QMainWindow):
         self._worker: ConvertWorker | None = None
         self._update_worker: _UpdateCheckWorker | None = None
         self._closing = False
+        self._deferred_close = False
         self._dedup_worker = None
         self._results: list[ConvertResult] = []
         self._result_dst_by_src: dict[str, Path] = {}  # keyed by str(src_path)
@@ -10350,6 +10351,7 @@ class MainWindow(QMainWindow):
         self._worker.current_file.connect(self._on_current_file)
         self._worker.file_done.connect(self._on_file_done)
         self._worker.finished_all.connect(self._on_convert_done)
+        self._worker.finished.connect(self._on_conversion_thread_finished)
         self._worker.start()
 
     def _on_progress(self, current, total):
@@ -10585,6 +10587,12 @@ class MainWindow(QMainWindow):
                     _execute_when_done(action)
             elif action == "close":
                 QTimer.singleShot(500, QApplication.instance().quit)
+
+    def _on_conversion_thread_finished(self):
+        """Finish a close request after the executor has fully shut down."""
+        if self._deferred_close:
+            self._deferred_close = False
+            self.close()
 
     def _stop(self):
         if self._dedup_worker and self._dedup_worker.isRunning():
@@ -10931,8 +10939,15 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(self.tr("Waiting for conversion to finish..."))
             self._worker.stop()
             if not self._worker.wait(10000):
-                self._worker.terminate()
-                self._worker.wait(2000)
+                self._deferred_close = True
+                self._set_workflow_state(
+                    self.tr("Finishing"),
+                    self.tr("The active conversion is finishing safely; the window will close when it is done."),
+                    "warning",
+                )
+                self.hide()
+                event.ignore()
+                return
         self._tray.hide()
         super().closeEvent(event)
 

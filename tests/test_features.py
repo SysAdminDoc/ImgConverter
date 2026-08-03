@@ -2886,6 +2886,50 @@ class TestQtAccessibility:
         assert worker is not None
         assert not worker.isRunning()
 
+    def test_close_timeout_hides_until_conversion_thread_finishes(self, monkeypatch):
+        import imgconverter
+
+        class BusyWorker:
+            def __init__(self):
+                self.stop_called = False
+                self.wait_timeout = None
+
+            def isRunning(self):
+                return True
+
+            def stop(self):
+                self.stop_called = True
+
+            def wait(self, timeout):
+                self.wait_timeout = timeout
+                return False
+
+        class CloseEvent:
+            ignored = False
+
+            def ignore(self):
+                self.ignored = True
+
+        worker = BusyWorker()
+        event = CloseEvent()
+        self.window._worker = worker
+        self.window.closeEvent(event)
+
+        assert worker.stop_called
+        assert worker.wait_timeout == 10000
+        assert event.ignored
+        assert self.window._deferred_close
+        assert self.window.isHidden()
+
+        closed = []
+        monkeypatch.setattr(self.window, "close", lambda: closed.append(True))
+        self.window._on_conversion_thread_finished()
+        assert closed == [True]
+        assert not self.window._deferred_close
+
+        self.window._worker = None
+        self.window.show()
+
     def test_edit_controls_build_stacked_convert_options(self):
         w = self.window
         w.brightness_spin.setValue(10)
