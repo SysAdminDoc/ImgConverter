@@ -193,6 +193,31 @@ class TestCLIValidation:
         errors = _validate_cli_args(args)
         assert any("mutually exclusive" in e for e in errors)
 
+    @pytest.mark.parametrize(
+        ("argv", "message"),
+        [
+            (["--input", "photos", "--watch", "--dry-run"], "--dry-run"),
+            (["--input", "photos", "--watch", "--report", "report.json"], "--report"),
+            (["--input", "photos", "--watch", "--progress"], "--progress"),
+            (["--input", "photos", "--watch", "--use-cache"], "--use-cache"),
+            (["--input", "photos", "--watch", "--resume"], "--resume"),
+            (["--input", "photos", "--watch", "--dedup-warn"], "--dedup-warn"),
+            (["--input", "photos", "--watch", "--when-done", "close"], "--when-done"),
+        ],
+    )
+    def test_watch_rejects_ignored_flags(self, argv, message):
+        args = _build_parser().parse_args(argv)
+        assert any(message in error for error in _validate_cli_args(args))
+
+    def test_other_ambiguous_cli_combinations_rejected(self):
+        cases = [
+            (["--input", "photos", "--in-place", "--output", "out"], "--in-place"),
+            (["--input", "photos", "--stdin-null"], "--stdin-null"),
+        ]
+        for argv, message in cases:
+            args = _build_parser().parse_args(argv)
+            assert any(message in error for error in _validate_cli_args(args))
+
     def test_prefix_suffix_path_separator_rejected(self):
         for flag, attr in (("--prefix", "prefix"), ("--suffix", "suffix")):
             args = _build_parser().parse_args(["--input", "photos", flag, "../escape"])

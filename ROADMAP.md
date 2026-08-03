@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Conflicting/ignored CLI flag combinations accepted silently
-  Why: `--watch --dry-run` watches for real (watch short-circuits before dry-run); `--watch` silently ignores `--report/--progress/--use-cache/--resume/--dedup-*/--when-done` and never writes history; `--in-place --output` ignores output without a word; `--stdin-null` without `--stdin-files` is a no-op.
-  Where: `imgconverter.py:11442-11446, 11512, 11357-11360, 11107`. Fix: reject or warn in `_validate_cli_args`.
-
 - [ ] P3 — `--output` and `--report` skip `expanduser()` while inputs get it
   Why: `-o ~/out` from cmd/PowerShell creates a literal `~` directory.
   Where: `imgconverter.py:11360, 11873`. Fix: `.expanduser()` both.

@@ -11880,6 +11880,29 @@ def _build_quality_mode(args) -> tuple[str, float] | None:
 def _validate_cli_args(args) -> list[str]:
     """Return user-facing validation errors for argparse values."""
     errors: list[str] = []
+    if getattr(args, "stdin_null", False) and not getattr(args, "stdin_files", False):
+        errors.append("--stdin-null requires --stdin-files")
+    if getattr(args, "in_place", False) and getattr(args, "output", None):
+        errors.append("--in-place cannot be combined with --output")
+    if getattr(args, "watch", False):
+        watch_conflicts = (
+            ("dry_run", "--dry-run"),
+            ("proof", "--proof"),
+            ("report", "--report"),
+            ("progress", "--progress"),
+            ("use_cache", "--use-cache"),
+            ("resume", "--resume"),
+            ("dedup_warn", "--dedup-warn"),
+            ("dedup_skip", "--dedup-skip"),
+            ("max_memory", "--max-memory"),
+        )
+        for attr, flag in watch_conflicts:
+            if getattr(args, attr, None):
+                errors.append(f"{flag} cannot be combined with --watch")
+        if getattr(args, "when_done", "nothing") != "nothing":
+            errors.append("--when-done cannot be combined with --watch")
+        if getattr(args, "frames", "first") != "first":
+            errors.append("--frames cannot be combined with --watch")
     if getattr(args, "workers", 1) < 1 or getattr(args, "workers", 1) > 32:
         errors.append("--workers must be between 1 and 32")
     if getattr(args, "proof", None) is not None and args.proof < 1:
