@@ -20,10 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — "Find similar" runs the full perceptual-hash scan synchronously on the GUI thread
-  Why: `_dedup_scan` decodes every scanned image + O(n²) hamming compare in the clicked slot; thousands of photos = minutes of "Not Responding" with no progress/cancel. The one hard UI freeze left (everything else is threaded).
-  Where: `imgconverter.py:8803, 11222-11248`. Fix: move to a QThread with progress/cancel like ScanWorker.
-
 - [ ] P2 — No KeyboardInterrupt handling in `_run_cli`; documented `EXIT_CANCELLED` (5) is dead
   Why: Ctrl-C propagates; executor `__exit__` does `shutdown(wait=True)` without cancel_futures so in-flight conversions keep running (appears hung), then traceback + wrong exit code; queue-state save, `--report`, history, and `batch_done` event all skipped. `EXIT_CANCELLED` defined at line 43 and referenced nowhere.
   Where: `imgconverter.py:11675-11815, 43`. Fix: try/except KeyboardInterrupt → `pool.shutdown(wait=False, cancel_futures=True)`, save queue state, exit 5; `_watch_directory` Ctrl-C returns 5 too (currently EXIT_OK at 10752).

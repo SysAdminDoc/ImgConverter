@@ -7276,6 +7276,7 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("ImgConverter", "ImgConverter")
         self._scan_result: ScanResult | None = None
         self._worker: ConvertWorker | None = None
+        self._dedup_worker = None
         self._results: list[ConvertResult] = []
         self._result_dst_by_src: dict[str, Path] = {}  # keyed by str(src_path)
         self._convert_start_time: float = 0.0
@@ -8843,7 +8844,7 @@ class MainWindow(QMainWindow):
         self._clear_line_error(self.src_edit)
         if (self._worker and self._worker.isRunning()) or (
             hasattr(self, "_scanner") and self._scanner.isRunning()
-        ):
+        ) or (self._dedup_worker and self._dedup_worker.isRunning()):
             return
         if self._scan_result is None:
             return
@@ -8954,16 +8955,81 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _check_duplicates(self):
-        if not self._scan_result or not self._scan_result.files:
+        if (
+            not self._scan_result
+            or not self._scan_result.files
+            or (self._worker and self._worker.isRunning())
+            or (hasattr(self, "_scanner") and self._scanner.isRunning())
+            or (self._dedup_worker and self._dedup_worker.isRunning())
+        ):
             return
         self._log("[dedup] Scanning for near-duplicate images...")
-        try:
-            dupes = _dedup_scan(self._scan_result.files)
-        except Exception as e:
-            self._log(f"[dedup] Error: {e}")
+        self._dedup_worker = _DedupWorker(list(self._scan_result.files))
+        self._dedup_worker.progress.connect(self._on_dedup_progress)
+        self._dedup_worker.finished_scan.connect(self._on_dedup_finished)
+        self._set_conversion_busy(True)
+        self.scan_btn.setEnabled(False)
+        self.convert_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.stop_btn.setToolTip(self.tr("Stop the similar-image scan"))
+        self.pause_btn.setEnabled(False)
+        self.run_controls_container.setVisible(True)
+        self.progress_bar.setMaximum(max(1, len(self._scan_result.files)))
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat(self.tr("Finding similar images..."))
+        self.progress_bar.setVisible(True)
+        self._set_workflow_state(
+            self.tr("Finding similar"),
+            self.tr("Comparing image fingerprints..."),
+            "active",
+        )
+        self._dedup_worker.start()
+
+    def _on_dedup_progress(self, current: int, total: int):
+        self.progress_bar.setMaximum(max(1, total))
+        self.progress_bar.setValue(min(current, total))
+        self.progress_label.setText(self.tr(f"Compared {current} of {total}"))
+        self.status_bar.showMessage(self.tr(f"Finding similar images... {current}/{total}"))
+
+    def _on_dedup_finished(self, dupes, error: str, cancelled: bool):
+        worker = self._dedup_worker
+        self._dedup_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setToolTip(self.tr("Available while a conversion is running"))
+        self.pause_btn.setEnabled(False)
+        self.run_controls_container.setVisible(False)
+        self._set_conversion_busy(False)
+        self.scan_btn.setEnabled(True)
+        has_scan = self._scan_result is not None and bool(self._scan_result.files)
+        self.convert_btn.setEnabled(has_scan)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+
+        if cancelled:
+            self._log("[dedup] Similar-image scan cancelled.")
+            self._set_workflow_state(
+                self.tr("Ready to convert"),
+                self.tr("Similar-image scan cancelled; the reviewed batch is unchanged."),
+            )
+            return
+        if error:
+            self._log(f"[dedup] Error: {error}")
+            self._set_workflow_state(
+                self.tr("Ready to convert"),
+                self.tr("Similar-image scan failed; the reviewed batch is unchanged."),
+                "warning",
+            )
             return
         if not dupes:
             self._log("[dedup] No near-duplicates found.")
+            self._set_workflow_state(
+                self.tr("Ready to convert"),
+                self.tr("No near-duplicates found in the reviewed batch."),
+            )
             return
         groups = _dedup_groups(dupes)
         self._log(f"[dedup] Found {len(dupes)} pair(s) in {len(groups)} group(s).")
@@ -8992,6 +9058,7 @@ class MainWindow(QMainWindow):
         return bool(
             (self._worker and self._worker.isRunning())
             or (hasattr(self, "_scanner") and self._scanner.isRunning())
+            or (self._dedup_worker and self._dedup_worker.isRunning())
         )
 
     def dragEnterEvent(self, event: QDragEnterEvent):
@@ -9470,6 +9537,8 @@ class MainWindow(QMainWindow):
             return
         if hasattr(self, "_scanner") and self._scanner.isRunning():
             return
+        if self._dedup_worker and self._dedup_worker.isRunning():
+            return
         src = self.src_edit.text().strip()
         if not src or not Path(src).is_dir():
             self._log("[ERROR] Please select a valid source directory.")
@@ -9629,6 +9698,8 @@ class MainWindow(QMainWindow):
     # ── Convert ──
     def _convert(self):
         if self._worker and self._worker.isRunning():
+            return
+        if self._dedup_worker and self._dedup_worker.isRunning():
             return
         if not self._scan_result or not self._scan_result.files:
             return
@@ -10009,6 +10080,15 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(500, QApplication.instance().quit)
 
     def _stop(self):
+        if self._dedup_worker and self._dedup_worker.isRunning():
+            self._dedup_worker.stop()
+            self.stop_btn.setEnabled(False)
+            self._set_workflow_state(
+                self.tr("Stopping"),
+                self.tr("Stopping the similar-image scan..."),
+                "warning",
+            )
+            return
         if self._worker:
             self._worker.stop()
             self.stop_btn.setEnabled(False)
@@ -10253,6 +10333,13 @@ class MainWindow(QMainWindow):
         if self._thumb_loader and self._thumb_loader.isRunning():
             self._thumb_loader.stop()
             self._thumb_loader.wait(1000)
+        if self._dedup_worker and self._dedup_worker.isRunning():
+            self.status_bar.showMessage(self.tr("Waiting for similar-image scan to stop..."))
+            self._dedup_worker.stop()
+            if not self._dedup_worker.wait(10000):
+                self.status_bar.showMessage(self.tr("Similar-image scan is still stopping; close again when it finishes."))
+                event.ignore()
+                return
         if hasattr(self, "_scanner") and self._scanner.isRunning():
             self.status_bar.showMessage(self.tr("Waiting for scan to stop..."))
             self._scanner.stop()
@@ -11425,7 +11512,12 @@ def _execute_when_done(action: str):
             subprocess.run(["systemctl", "poweroff"], capture_output=True)
 
 
-def _dedup_scan(files: list[Path], threshold: int = 8) -> list[tuple[Path, Path, int]]:
+def _dedup_scan(
+    files: list[Path],
+    threshold: int = 8,
+    cancel_check=None,
+    progress=None,
+) -> list[tuple[Path, Path, int]]:
     """Find near-duplicate image pairs using perceptual hashing.
 
     Returns list of (file_a, file_b, hamming_distance) for pairs below threshold.
@@ -11436,22 +11528,67 @@ def _dedup_scan(files: list[Path], threshold: int = 8) -> list[tuple[Path, Path,
     except ImportError:
         return []
 
+    total_work = max(1, len(files) + len(files) * max(0, len(files) - 1) // 2)
+    work_done = 0
+
+    def report(force: bool = False):
+        if progress is not None and (force or work_done == 1 or work_done % 16 == 0):
+            progress(work_done, total_work)
+
     hashes: list[tuple[Path, object]] = []
     for f in files:
+        if cancel_check is not None and cancel_check():
+            return []
         try:
             with Image.open(str(f)) as img:
                 h = imagehash.average_hash(img.convert("RGB"))
                 hashes.append((f, h))
         except Exception:
             continue
+        work_done += 1
+        report()
 
     dupes: list[tuple[Path, Path, int]] = []
     for i, (fa, ha) in enumerate(hashes):
         for fb, hb in hashes[i + 1:]:
+            if cancel_check is not None and cancel_check():
+                return []
             dist = ha - hb
             if dist <= threshold:
                 dupes.append((fa, fb, dist))
+            work_done += 1
+            report()
+    if progress is not None:
+        work_done = total_work
+        report(force=True)
     return dupes
+
+
+class _DedupWorker(QThread):
+    progress = pyqtSignal(int, int)
+    finished_scan = pyqtSignal(object, str, bool)  # pairs, error, cancelled
+
+    def __init__(self, files: list[Path], threshold: int = 8):
+        super().__init__()
+        self._files = list(files)
+        self._threshold = threshold
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+        self.requestInterruption()
+
+    def run(self):
+        try:
+            dupes = _dedup_scan(
+                self._files,
+                threshold=self._threshold,
+                cancel_check=self._stop_event.is_set,
+                progress=self.progress.emit,
+            )
+            self.finished_scan.emit(dupes, "", self._stop_event.is_set())
+        except Exception as exc:
+            self.finished_scan.emit([], str(exc), self._stop_event.is_set())
 
 
 def _dedup_groups(dupes: list[tuple[Path, Path, int]]) -> list[list[Path]]:

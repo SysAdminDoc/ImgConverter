@@ -20,6 +20,7 @@ from imgconverter import (
     _split_alpha,
     _strip_exif_fields,
     _ThumbnailLoader,
+    _dedup_scan,
     _has_edits,
     _build_convert_options,
     _parse_hex_rgb,
@@ -1988,6 +1989,32 @@ class TestThumbnailLoader:
         assert events[0][1].bytesPerLine() == 47 * 4
 
 
+class TestDedupScan:
+
+    def test_scan_honors_cancellation_and_reports_progress(self, tmp_workdir):
+        pytest.importorskip("imagehash")
+        files = []
+        for index in range(3):
+            path = tmp_workdir / f"image-{index}.png"
+            Image.new("RGB", (32, 24), (index * 20, 40, 60)).save(path, "PNG")
+            files.append(path)
+
+        progress = []
+        cancelled = False
+
+        def on_progress(current, total):
+            nonlocal cancelled
+            progress.append((current, total))
+            cancelled = True
+
+        assert _dedup_scan(
+            files,
+            cancel_check=lambda: cancelled,
+            progress=on_progress,
+        ) == []
+        assert progress
+
+
 # ── 18. Queue persistence ──────────────────────────────────────────────────
 
 
@@ -2249,6 +2276,35 @@ class TestQtAccessibility:
         assert not w.resize_combo.isEnabled()
         assert not w.resize_spin.isEnabled()
         assert not w.only_if_smaller_spin.isEnabled()
+
+    def test_find_similar_runs_off_gui_thread_and_can_cancel(self, tmp_workdir, monkeypatch, qtbot):
+        import imgconverter
+        import time
+
+        def slow_scan(files, **kwargs):
+            progress = kwargs["progress"]
+            cancel_check = kwargs["cancel_check"]
+            for current in range(1, 100):
+                time.sleep(0.005)
+                if cancel_check():
+                    return []
+                progress(current, 100)
+            return []
+
+        monkeypatch.setattr(imgconverter, "_dedup_scan", slow_scan)
+        w = self.window
+        w._scan_result = imgconverter.ScanResult(
+            files=[tmp_workdir / "one.jpg", tmp_workdir / "two.jpg"],
+        )
+
+        w._check_duplicates()
+
+        assert w._dedup_worker is not None
+        assert w._dedup_worker.isRunning()
+        assert not w.progress_bar.isHidden()
+        w._stop()
+        qtbot.waitUntil(lambda: w._dedup_worker is None, timeout=3000)
+        assert "cancelled" in w.log_view.toPlainText().lower()
 
     def test_drag_drop_is_ignored_while_worker_or_scan_is_running(self):
         w = self.window
