@@ -6366,7 +6366,9 @@ def _add_dialog_header(layout: QVBoxLayout, eyebrow: str, title: str, descriptio
 
     eyebrow_label = QLabel(eyebrow.upper())
     eyebrow_label.setObjectName("dialogEyebrow")
-    eyebrow_label.setAccessibleName(f"{title} category")
+    eyebrow_label.setAccessibleName(
+        QApplication.translate("ImgConverter", "{} category").format(title)
+    )
     title_label = QLabel(title)
     title_label.setObjectName("dialogTitle")
     description_label = QLabel(description)
@@ -6484,10 +6486,20 @@ class PluginTrustDialog(QDialog):
             text = self.tr("No plugins are currently available for review.")
             summary_tone = "ready"
         elif needs_review:
-            text = self.tr(f"{total} plugin entr{'y' if total == 1 else 'ies'} found; {needs_review} need review.")
+            template = self.tr(
+                "{} plugin entry found; {} need review."
+                if total == 1
+                else "{} plugin entries found; {} need review."
+            )
+            text = template.format(total, needs_review)
             summary_tone = "warning"
         else:
-            text = self.tr(f"{total} plugin entr{'y' if total == 1 else 'ies'} found; all trust decisions are current.")
+            template = self.tr(
+                "{} plugin entry found; all trust decisions are current."
+                if total == 1
+                else "{} plugin entries found; all trust decisions are current."
+            )
+            text = template.format(total)
             summary_tone = "success"
         _set_dialog_status(self.status_label, announcement or text, tone or summary_tone)
         self.empty_label.setVisible(total == 0)
@@ -6630,10 +6642,18 @@ class BatchHistoryDialog(QDialog):
             text = self.tr("No completed batches have been recorded on this device.")
             tone = "ready"
         elif failed:
-            text = self.tr(f"{total} completed batch{'es' if total != 1 else ''}; {failed} need review.")
+            text = self.tr(
+                "{} completed batch; {} need review."
+                if total == 1
+                else "{} completed batches; {} need review."
+            ).format(total, failed)
             tone = "warning"
         else:
-            text = self.tr(f"{total} completed batch{'es' if total != 1 else ''}; no failures recorded.")
+            text = self.tr(
+                "{} completed batch; no failures recorded."
+                if total == 1
+                else "{} completed batches; no failures recorded."
+            ).format(total)
             tone = "success"
         _set_dialog_status(self.status_label, text, tone)
         self.empty_label.setVisible(total == 0)
@@ -6646,12 +6666,12 @@ class BatchHistoryDialog(QDialog):
         artifacts = record.get("artifacts", {}) if isinstance(record.get("artifacts"), dict) else {}
         fmt = str(options.get("format", "auto")).upper()
         option_bits = [
-            self.tr(f"{fmt} output"),
-            self.tr(f"Quality {options.get('quality', '—')}"),
-            self.tr(f"{options.get('workers', '—')} workers"),
+            self.tr("{} output").format(fmt),
+            self.tr("Quality {}").format(options.get("quality", "—")),
+            self.tr("{} workers").format(options.get("workers", "—")),
         ]
         if options.get("resize"):
-            option_bits.append(self.tr(f"Resize {options.get('resize')}"))
+            option_bits.append(self.tr("Resize {}").format(options.get("resize")))
         if options.get("metadata_mode") and options.get("metadata_mode") != "preserve":
             option_bits.append(str(options.get("metadata_mode")).replace("_", " ").title())
         result = (
@@ -6853,9 +6873,10 @@ class WatchFolderDialog(QDialog):
             tone = "ready"
         else:
             text = self.tr(
-                f"{total} on-demand profile{'s' if total != 1 else ''}; "
-                "select one and click Run Now."
-            )
+                "{} on-demand profile; select one and click Run Now."
+                if total == 1
+                else "{} on-demand profiles; select one and click Run Now."
+            ).format(total)
             tone = "success"
         _set_dialog_status(self.status_label, text, tone)
         self.empty_label.setVisible(total == 0)
@@ -6910,7 +6931,7 @@ class WatchFolderDialog(QDialog):
             _save_watch_profiles(self._profiles)
             self._refresh()
             label = Path(source).name or source or "profile"
-            self.status_label.setText(self.tr(f"Removed watch profile: {label}."))
+            self.status_label.setText(self.tr("Removed watch profile: {}.").format(label))
             if self.table.rowCount():
                 self.table.selectRow(min(row, self.table.rowCount() - 1))
 
@@ -6922,14 +6943,14 @@ class WatchFolderDialog(QDialog):
         out = profile.get("output", "")
         preset_name = profile.get("preset", "Default")
         if not src or not Path(src).is_dir():
-            _set_dialog_status(self.status_label, self.tr(f"Source folder not found: {src}"), "danger")
+            _set_dialog_status(self.status_label, self.tr("Source folder not found: {}.").format(src), "danger")
             return
         self._run_active = True
         self._run_now_cancelled = False
         self._update_actions()
         _set_dialog_status(
             self.status_label,
-            self.tr(f"Scanning {Path(src).name} for files to convert..."),
+            self.tr("Scanning {} for files to convert...").format(Path(src).name),
             "active",
         )
         self.run_progress.setRange(0, 0)
@@ -6951,7 +6972,7 @@ class WatchFolderDialog(QDialog):
             self._update_actions()
             _set_dialog_status(
                 self.status_label,
-                self.tr(f"Could not create the output folder: {exc}"),
+                self.tr("Could not create the output folder: {}.").format(exc),
                 "danger",
             )
             return
@@ -6970,12 +6991,13 @@ class WatchFolderDialog(QDialog):
         self.run_progress.setRange(0, max(total, 1))
         self.run_progress.setValue(0)
         self.run_progress.setFormat(
-            self.tr(f"Converting %v of {total} files") if total else self.tr("No supported files found")
+            self.tr("Converting %v of {} files").format(total)
+            if total else self.tr("No supported files found")
         )
         if total:
             _set_dialog_status(
                 self.status_label,
-                self.tr(f"Found {total} files. Conversion is running in the background..."),
+                self.tr("Found {} files. Conversion is running in the background...").format(total),
                 "active",
             )
 
@@ -7002,7 +7024,7 @@ class WatchFolderDialog(QDialog):
         self.run_progress.setVisible(False)
         self._update_actions()
         if error:
-            _set_dialog_status(self.status_label, self.tr(f"Run failed: {error}"), "danger")
+            _set_dialog_status(self.status_label, self.tr("Run failed: {}.").format(error), "danger")
         elif getattr(self, "_run_now_total", 0) == 0:
             _set_dialog_status(
                 self.status_label,
@@ -7011,10 +7033,13 @@ class WatchFolderDialog(QDialog):
             )
         else:
             tone = "warning" if fail_count else "success"
-            _set_dialog_status(self.status_label, self.tr(
-                f"Run complete: {ok_count} converted, {fail_count} failed, "
-                f"{skipped} skipped."
-            ), tone)
+            _set_dialog_status(
+                self.status_label,
+                self.tr("Run complete: {} converted, {} failed, {} skipped.").format(
+                    ok_count, fail_count, skipped
+                ),
+                tone,
+            )
 
     def done(self, result):
         worker = self._run_now_worker
@@ -7083,8 +7108,11 @@ class DuplicateReviewDialog(QDialog):
         )
 
         total_files = sum(len(g) for g in groups)
-        hint = QLabel(self.tr(f"{len(groups)} near-duplicate group{'s' if len(groups) != 1 else ''} · "
-                      f"{total_files} files reviewed."))
+        hint = QLabel(self.tr(
+            "{} near-duplicate group · {} files reviewed."
+            if len(groups) == 1
+            else "{} near-duplicate groups · {} files reviewed."
+        ).format(len(groups), total_files))
         hint.setObjectName("dialogStatus")
         hint.setProperty("tone", "warning")
         hint.setWordWrap(True)
@@ -7168,8 +7196,10 @@ class DuplicateReviewDialog(QDialog):
     def _update_skip_label(self):
         count = len(self.skip_set)
         self.skip_label.setText(self.tr(
-            f"{count} file{'s' if count != 1 else ''} will be skipped; originals are unchanged."
-        ))
+            "{} file will be skipped; originals are unchanged."
+            if count == 1
+            else "{} files will be skipped; originals are unchanged."
+        ).format(count))
 
     def _keep_all(self):
         self._populating = True
@@ -7416,8 +7446,10 @@ class ShellIntegrationDialog(QDialog):
             if preset_name else ""
         )
         self.cmd_view.setPlainText(
-            f'Files:   "{exe}" "{script}"{preset_arg} --files "%1"\n'
-            f'Folders: "{exe}" "{script}"{preset_arg} --input "%1"'
+            self.tr(
+                'Files:   "{0}" "{1}"{2} --files "%1"\n'
+                'Folders: "{0}" "{1}"{2} --input "%1"'
+            ).format(exe, script, preset_arg)
         )
 
     def _detect_state(self):
@@ -7448,14 +7480,14 @@ class ShellIntegrationDialog(QDialog):
 
         if installed:
             _set_dialog_status(self.status_label, self.tr(
-                f"Shell integration is currently installed ({system}).\n"
+                "Shell integration is currently installed ({}).\n"
                 "Right-click images or folders in your file manager to convert them."
-            ), "success")
+            ).format(system), "success")
         else:
             _set_dialog_status(self.status_label, self.tr(
-                f"Shell integration is not installed ({system}).\n"
+                "Shell integration is not installed ({}).\n"
                 "Click Install to add context-menu entries for image conversion."
-            ), "ready")
+            ).format(system), "ready")
 
     def _install(self):
         error_detail = ""
@@ -7598,7 +7630,7 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(self.tr(f"ImgConverter v{APP_VERSION}"))
+        self.setWindowTitle(self.tr("ImgConverter v{}").format(APP_VERSION))
         self.setMinimumSize(760, 560)
         self.resize(1240, 820)
         self.setAcceptDrops(True)
@@ -7647,46 +7679,32 @@ class MainWindow(QMainWindow):
     def _open_command_palette(self):
         has_scan = self._scan_result is not None and bool(self._scan_result.files)
         is_converting = self._worker is not None and self._worker.isRunning()
+        def command(key: str, name: str, tooltip: str, status: str = ""):
+            return {
+                "key": key,
+                "name": self.tr(name),
+                "tooltip": self.tr(tooltip),
+                "status": self.tr(status) if status else "",
+            }
+
         commands = [
-            {"key": "scan", "name": "Scan Source",
-             "tooltip": "Scan the source folder for supported image files",
-             "status": "" if not is_converting else "Disabled (converting)"},
-            {"key": "convert", "name": "Convert Batch",
-             "tooltip": "Convert all scanned files",
-             "status": "" if has_scan and not is_converting else "Disabled (no scan)" if not has_scan else "Disabled (converting)"},
-            {"key": "open_output", "name": "Open Output Folder",
-             "tooltip": "Open the output folder in the file manager",
-             "status": "" if self._last_ok_dst else "Disabled (no output yet)"},
-            {"key": "paste", "name": "Paste Clipboard Image",
-             "tooltip": "Paste an image from the clipboard",
-             "status": ""},
-            {"key": "plugins", "name": "Manage Plugins",
-             "tooltip": "Review plugin trust status",
-             "status": ""},
-            {"key": "watch", "name": "Watch Folder Profiles",
-             "tooltip": "Manage hot-folder watch profiles",
-             "status": ""},
-            {"key": "history", "name": "Batch History",
-             "tooltip": "Review local batch history",
-             "status": ""},
-            {"key": "shell", "name": "Shell Integration",
-             "tooltip": "Manage context-menu integration",
-             "status": ""},
-            {"key": "duplicates", "name": "Check Duplicates",
-             "tooltip": "Find near-duplicate images",
-             "status": "" if has_scan else "Disabled (scan first)"},
-            {"key": "export_log", "name": "Export Log",
-             "tooltip": "Save the activity log to a file",
-             "status": ""},
-            {"key": "export_csv", "name": "Export CSV Report",
-             "tooltip": "Export conversion results as CSV",
-             "status": ""},
-            {"key": "support", "name": "Export Support Bundle",
-             "tooltip": "Save redacted diagnostics",
-             "status": ""},
-            {"key": "clear_log", "name": "Clear Log",
-             "tooltip": "Clear the activity log",
-             "status": ""},
+            command("scan", "Scan Source", "Scan the source folder for supported image files",
+                    "" if not is_converting else "Disabled (converting)"),
+            command("convert", "Convert Batch", "Convert all scanned files",
+                    "" if has_scan and not is_converting else "Disabled (no scan)" if not has_scan else "Disabled (converting)"),
+            command("open_output", "Open Output Folder", "Open the output folder in the file manager",
+                    "" if self._last_ok_dst else "Disabled (no output yet)"),
+            command("paste", "Paste Clipboard Image", "Paste an image from the clipboard"),
+            command("plugins", "Manage Plugins", "Review plugin trust status"),
+            command("watch", "Watch Folder Profiles", "Manage hot-folder watch profiles"),
+            command("history", "Batch History", "Review local batch history"),
+            command("shell", "Shell Integration", "Manage context-menu integration"),
+            command("duplicates", "Check Duplicates", "Find near-duplicate images",
+                    "" if has_scan else "Disabled (scan first)"),
+            command("export_log", "Export Log", "Save the activity log to a file"),
+            command("export_csv", "Export CSV Report", "Export conversion results as CSV"),
+            command("support", "Export Support Bundle", "Save redacted diagnostics"),
+            command("clear_log", "Clear Log", "Clear the activity log"),
         ]
         dialog = CommandPaletteDialog(commands, self)
         dialog.command_selected.connect(self._run_palette_command)
@@ -7726,10 +7744,12 @@ class MainWindow(QMainWindow):
             if w is None:
                 continue
             try:
-                w.setAccessibleName(name)
-                w.setAccessibleDescription(desc)
+                translated_name = self.tr(name)
+                translated_desc = self.tr(desc)
+                w.setAccessibleName(translated_name)
+                w.setAccessibleDescription(translated_desc)
                 if hasattr(w, "setStatusTip"):
-                    w.setStatusTip(desc)
+                    w.setStatusTip(translated_desc)
             except Exception:
                 pass
 
@@ -7799,20 +7819,23 @@ class MainWindow(QMainWindow):
 
     def _update_title(self, state: str = "base", **kwargs):
         """Update window title bar with contextual info."""
-        base = f"ImgConverter v{APP_VERSION}"
         if state == "scanned":
             count = kwargs.get("count", 0)
-            self.setWindowTitle(f"{base} -- {count} files")
+            self.setWindowTitle(self.tr("ImgConverter v{} -- {} files").format(APP_VERSION, count))
         elif state == "converting":
             current = kwargs.get("current", 0)
             total = kwargs.get("total", 0)
-            self.setWindowTitle(f"{base} -- Converting {current}/{total}")
+            self.setWindowTitle(self.tr("ImgConverter v{} -- Converting {}/{}").format(
+                APP_VERSION, current, total
+            ))
         elif state == "done":
             ok = kwargs.get("ok", 0)
             fail = kwargs.get("fail", 0)
-            self.setWindowTitle(f"{base} -- Done ({ok} converted, {fail} failed)")
+            self.setWindowTitle(self.tr(
+                "ImgConverter v{} -- Done ({} converted, {} failed)"
+            ).format(APP_VERSION, ok, fail))
         else:
-            self.setWindowTitle(base)
+            self.setWindowTitle(self.tr("ImgConverter v{}").format(APP_VERSION))
 
     def _apply_dark_titlebar(self):
         """Apply dark title bar on Windows 10 19041+ / Windows 11."""
@@ -7932,7 +7955,7 @@ class MainWindow(QMainWindow):
         title_row.setSpacing(8)
         title = QLabel(self.tr("ImgConverter"))
         title.setObjectName("appTitle")
-        ver = QLabel(f"v{APP_VERSION}")
+        ver = QLabel(self.tr("v{}").format(APP_VERSION))
         ver.setObjectName("appVersion")
         self.workflow_state = QLabel(self.tr("Ready to scan"))
         self.workflow_state.setObjectName("workflowState")
@@ -8066,12 +8089,12 @@ class MainWindow(QMainWindow):
         col = 0
         row = 0
         for name, (exts, available) in get_format_families().items():
-            chk = QCheckBox(name)
+            chk = QCheckBox(self.tr(name))
             chk.setProperty("decoderAvailable", available)
             chk.setChecked(available)
             chk.setEnabled(available)
             if not available:
-                chk.setToolTip(self.tr(f"{name} decoder not installed"))
+                chk.setToolTip(self.tr("{} decoder not installed").format(name))
                 chk.setStyleSheet(f"color: {CAT['overlay0']};")
             self._format_filters[name] = chk
             filter_layout.addWidget(chk, row, col)
@@ -8121,7 +8144,7 @@ class MainWindow(QMainWindow):
         ]
         for plugin_fmt in sorted(PLUGIN_ENCODERS):
             self._fmt_values.append(plugin_fmt)
-            fmt_labels.append(f"Plugin: {plugin_fmt}")
+            fmt_labels.append(self.tr("Plugin: {}").format(plugin_fmt))
         self.fmt_combo.addItems(fmt_labels)
         self.fmt_combo.setItemData(0, self.tr("JPEG for photos, PNG when transparency exists"), Qt.ItemDataRole.ToolTipRole)
         self.fmt_combo.setItemData(1, self.tr("Best for photographs, lossy compression"), Qt.ItemDataRole.ToolTipRole)
@@ -9069,7 +9092,7 @@ class MainWindow(QMainWindow):
         w = QFrame()
         w.setObjectName("statCard")
         w.setAccessibleName(label)
-        w.setAccessibleDescription(f"{label}: {value}")
+        w.setAccessibleDescription(self.tr("{}: {}").format(label, value))
         lay = QVBoxLayout(w)
         lay.setContentsMargins(6, 4, 6, 4)
         lay.setSpacing(1)
@@ -9091,7 +9114,7 @@ class MainWindow(QMainWindow):
     def _set_stat_value(self, card, value: str):
         card._val.setText(value)
         label = getattr(card, "_stat_label", card.accessibleName() or "Statistic")
-        card.setAccessibleDescription(f"{label}: {value}")
+        card.setAccessibleDescription(self.tr("{}: {}").format(label, value))
 
     def _toggle_advanced(self, checked: bool):
         self.adv_group.setVisible(checked)
@@ -9142,16 +9165,16 @@ class MainWindow(QMainWindow):
             except OSError:
                 size = 0
             if suffix in RAW_EXTS:
-                warnings.append("no EXIF passthrough (RAW)")
+                warnings.append(self.tr("No EXIF passthrough (RAW)"))
             if suffix in QOI_EXTS:
-                warnings.append("no metadata (QOI)")
+                warnings.append(self.tr("No metadata (QOI)"))
             if suffix in (".bmp",):
-                warnings.append("no EXIF/XMP")
+                warnings.append(self.tr("No EXIF/XMP"))
             if suffix in (".ico", ".cur"):
-                warnings.append("no EXIF/XMP")
+                warnings.append(self.tr("No EXIF/XMP"))
             if fmt == "auto" and suffix in JPEG_EXTS | PNG_EXTS | WEBP_EXTS:
                 if fmt == "auto" and suffix in JPEG_EXTS:
-                    warnings.append("same-format skip likely")
+                    warnings.append(self.tr("Same-format skip likely"))
 
             family = "?"
             for name, (exts, _avail) in FORMAT_FAMILIES.items():
@@ -9195,9 +9218,10 @@ class MainWindow(QMainWindow):
         self._thumb_loader.start()
         self._review_toggle.setVisible(True)
         self._review_toggle.setText(self.tr(
-            f"{'Hide' if self._review_toggle.isChecked() else 'Show'} scan review table "
-            f"({len(files)} files)"
-        ))
+            "Hide scan review table ({} files)"
+            if self._review_toggle.isChecked()
+            else "Show scan review table ({} files)"
+        ).format(len(files)))
 
     def _review_table_start_drag(self, supported_actions):
         from PyQt6.QtGui import QDrag
@@ -9365,7 +9389,7 @@ class MainWindow(QMainWindow):
                 self.log_view.appendPlainText(line)
                 count += 1
         if filt and count == 0:
-            self.log_view.setPlaceholderText(self.tr(f"No log lines match \"{text}\"."))
+            self.log_view.setPlaceholderText(self.tr('No log lines match "{}".').format(text))
         else:
             self.log_view.setPlaceholderText(self.tr("Scan a source folder to see matching files, warnings, and conversion results."))
 
@@ -9425,8 +9449,8 @@ class MainWindow(QMainWindow):
     def _on_dedup_progress(self, current: int, total: int):
         self.progress_bar.setMaximum(max(1, total))
         self.progress_bar.setValue(min(current, total))
-        self.progress_label.setText(self.tr(f"Compared {current} of {total}"))
-        self.status_bar.showMessage(self.tr(f"Finding similar images... {current}/{total}"))
+        self.progress_label.setText(self.tr("Compared {} of {}").format(current, total))
+        self.status_bar.showMessage(self.tr("Finding similar images... {}/{}").format(current, total))
 
     def _on_dedup_finished(self, dupes, error: str, cancelled: bool):
         worker = self._dedup_worker
@@ -9484,8 +9508,8 @@ class MainWindow(QMainWindow):
             self._set_stat_value(self.stat_size, _fmt_size(self._scan_result.total_size))
             remaining = len(self._scan_result.files)
             self.convert_btn.setText(self.tr(
-                f"Convert {remaining} image{'s' if remaining != 1 else ''}"
-            ))
+                "Convert {} image" if remaining == 1 else "Convert {} images"
+            ).format(remaining))
             self._populate_review_table(self._scan_result.files)
             self._log(f"[dedup] Skipped {removed} near-duplicate(s); "
                       f"{len(self._scan_result.files)} files remain.")
@@ -9568,12 +9592,17 @@ class MainWindow(QMainWindow):
             self._set_button_role(self.scan_btn, "secondaryBtn")
             self.convert_btn.setEnabled(True)
             self.convert_btn.setText(self.tr(
-                f"Convert {len(files)} image{'s' if len(files) != 1 else ''}"
-            ))
+                "Convert {} image" if len(files) == 1 else "Convert {} images"
+            ).format(len(files)))
             self._update_title("scanned", count=len(files))
-            self._set_workflow_state(self.tr("Ready to convert"), self.tr(
-                f"{len(files)} dropped image{'s are' if len(files) != 1 else ' is'} ready to convert."
-            ))
+            self._set_workflow_state(
+                self.tr("Ready to convert"),
+                self.tr(
+                    "{} dropped image is ready to convert."
+                    if len(files) == 1
+                    else "{} dropped images are ready to convert."
+                ).format(len(files)),
+            )
             self._populate_review_table(files)
             self.dedup_btn.setEnabled(True)
             self._dedup_action.setEnabled(True)
@@ -9604,7 +9633,7 @@ class MainWindow(QMainWindow):
                 tmp_path.unlink(missing_ok=True)
             except OSError:
                 pass
-            message = f"Could not save clipboard image: {save_error}"
+            message = self.tr("Could not save clipboard image: {}.").format(save_error)
             self._log(f"[PASTE] {message}")
             self._set_workflow_state(self.tr("Paste failed"), message, "warning")
             return
@@ -9678,7 +9707,7 @@ class MainWindow(QMainWindow):
             return
         _apply_preset_to_gui_controls(self, preset)
         self._current_preset_name = name
-        self._preset_btn.setText(self.tr(f"Preset: {name}"))
+        self._preset_btn.setText(self.tr("Preset: {}").format(name))
         self._log(f"Preset applied: {name}")
 
     # ── In-place toggle ──
@@ -10057,11 +10086,15 @@ class MainWindow(QMainWindow):
         self._set_stat_value(self.stat_files, str(count))
         self._set_stat_value(self.stat_size, _fmt_size(total_size))
         self.summary_detail.setText(self.tr(
-            f"{count} file{'s' if count != 1 else ''} found so far · {_fmt_size(total_size)}"
-        ))
-        self.progress_label.setText(self.tr(f"Scanning · {count} found"))
-        self._log(f"  {rel}/ — {dir_count} file{'s' if dir_count != 1 else ''}")
-        self.status_bar.showMessage(f"Scanning... {count} files found ({_fmt_size(total_size)})")
+            "{} file found so far · {}" if count == 1 else "{} files found so far · {}"
+        ).format(count, _fmt_size(total_size)))
+        self.progress_label.setText(self.tr("Scanning · {} found").format(count))
+        self._log(self.tr(
+            "  {}/ — {} file" if dir_count == 1 else "  {}/ — {} files"
+        ).format(rel, dir_count))
+        self.status_bar.showMessage(self.tr(
+            "Scanning... {} files found ({})"
+        ).format(count, _fmt_size(total_size)))
 
     def _on_scan_done(self, result: ScanResult):
         self._scan_result = result
@@ -10081,8 +10114,8 @@ class MainWindow(QMainWindow):
             self._set_button_role(self.scan_btn, "secondaryBtn")
             self.convert_btn.setEnabled(True)
             self.convert_btn.setText(self.tr(
-                f"Convert {len(result.files)} image{'s' if len(result.files) != 1 else ''}"
-            ))
+                "Convert {} image" if len(result.files) == 1 else "Convert {} images"
+            ).format(len(result.files)))
             self.convert_btn.setToolTip(self.tr("Start the reviewed batch with the current output recipe"))
             self._update_title("scanned", count=len(result.files))
             # Count by format family
@@ -10118,7 +10151,9 @@ class MainWindow(QMainWindow):
             self.progress_bar.setFormat(self.tr("Ready to convert"))
             self._set_workflow_state(
                 self.tr("Ready to convert"),
-                self.tr(f"Found {len(result.files)} files ({_fmt_size(result.total_size)}). Ready to convert.")
+                self.tr("Found {} files ({}). Ready to convert.").format(
+                    len(result.files), _fmt_size(result.total_size)
+                )
             )
             self._populate_review_table(result.files)
             self.dedup_btn.setEnabled(True)
@@ -10205,7 +10240,7 @@ class MainWindow(QMainWindow):
                 Path(dst).mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 self._log(f"[ERROR] Could not create output folder: {exc}")
-                self._set_line_error(self.dst_edit, self.tr(f"Could not create output folder: {exc}"))
+                self._set_line_error(self.dst_edit, self.tr("Could not create output folder: {}.").format(exc))
                 return
 
         # Source/output overlap guard
@@ -10356,7 +10391,7 @@ class MainWindow(QMainWindow):
 
     def _on_progress(self, current, total):
         self.progress_bar.setValue(current)
-        self.progress_label.setText(self.tr(f"{current} of {total} completed"))
+        self.progress_label.setText(self.tr("{} of {} completed").format(current, total))
         self._update_title("converting", current=current, total=total)
         self._set_taskbar_progress(current, total)
         elapsed = time.perf_counter() - self._convert_start_time - self._paused_total
@@ -10365,13 +10400,12 @@ class MainWindow(QMainWindow):
             rate = elapsed / current
             remaining = (total - current) * rate
             self.status_bar.showMessage(
-                f"Converting... {current}/{total} -- "
-                f"{speed:.1f} files/sec -- "
-                f"Elapsed: {_fmt_eta(elapsed)} -- "
-                f"ETA: {_fmt_eta(remaining)}"
+                self.tr("Converting... {}/{} -- {} files/sec -- Elapsed: {} -- ETA: {}").format(
+                    current, total, f"{speed:.1f}", _fmt_eta(elapsed), _fmt_eta(remaining)
+                )
             )
         else:
-            self.status_bar.showMessage(f"Converting... {current}/{total}")
+            self.status_bar.showMessage(self.tr("Converting... {}/{}").format(current, total))
 
     def _on_current_file(self, filename: str):
         display = filename if len(filename) <= 72 else f"{filename[:34]}...{filename[-34:]}"
@@ -10380,17 +10414,19 @@ class MainWindow(QMainWindow):
         self._file_timer.stop()
         self._file_timer.start()
         self.progress_bar.setTextVisible(True)
-        self.progress_label.setText(self.tr(f"Converting · {display}"))
+        self.progress_label.setText(self.tr("Converting · {}").format(display))
 
     def _update_file_elapsed(self):
         elapsed = time.monotonic() - self._file_start_time
         if elapsed >= 2.0:
-            self.progress_bar.setFormat(f"%p% - {self._file_display_name} — {elapsed:.1f}s")
+            self.progress_bar.setFormat(self.tr("%p% - {} — {:.1f}s").format(
+                self._file_display_name, elapsed
+            ))
 
     def _on_file_done(self, result: ConvertResult):
         self._file_timer.stop()
         display = result.src.name if len(result.src.name) <= 72 else f"{result.src.name[:34]}...{result.src.name[-34:]}"
-        self.progress_label.setText(self.tr(f"Completed · {display}"))
+        self.progress_label.setText(self.tr("Completed · {}").format(display))
         self._results.append(result)
         if result.success and result.dst:
             self._last_ok_dst = result.dst
@@ -10479,17 +10515,22 @@ class MainWindow(QMainWindow):
         wall_time = time.perf_counter() - self._convert_start_time - self._paused_total
         saved = sum(r.size_before - r.size_after for r in results if r.success)
 
-        parts = [f"{ok} converted"]
+        parts = [self.tr("{} converted").format(ok)]
         if skipped:
-            parts.append(f"{skipped} skipped")
+            parts.append(self.tr("{} skipped").format(skipped))
         if fail:
-            parts.append(f"{fail} failed")
+            parts.append(self.tr("{} failed").format(fail))
         if deleted:
-            parts.append(f"{deleted} sources deleted")
-        summary = (
-            f"{'Stopped' if cancelled else 'Done'}: {', '.join(parts)}. "
-            f"Space {'saved' if saved >= 0 else 'added'}: {_fmt_size(abs(saved))}. "
-            f"Wall time: {_fmt_eta(wall_time)} ({total_time:.1f}s processing)"
+            parts.append(self.tr("{} sources deleted").format(deleted))
+        summary = self.tr(
+            "{}: {}. Space {}: {}. Wall time: {} ({} processing)"
+        ).format(
+            self.tr("Stopped") if cancelled else self.tr("Done"),
+            ", ".join(parts),
+            self.tr("saved") if saved >= 0 else self.tr("added"),
+            _fmt_size(abs(saved)),
+            _fmt_eta(wall_time),
+            f"{total_time:.1f}s",
         )
         self._log(f"\n{'='*60}")
         self._log(summary)
@@ -10524,8 +10565,11 @@ class MainWindow(QMainWindow):
             tray_icon = QSystemTrayIcon.MessageIcon.Critical
             QMessageBox.warning(
                 self, self.tr("Conversion Failed"),
-                self.tr(f"All {fail} file(s) failed to convert.\n\n"
-                f"Check the log panel for error details."),
+                self.tr(
+                    "All {} file failed to convert.\n\nCheck the log panel for error details."
+                    if fail == 1
+                    else "All {} files failed to convert.\n\nCheck the log panel for error details."
+                ).format(fail),
             )
         else:
             tray_icon = QSystemTrayIcon.MessageIcon.Information
@@ -10533,9 +10577,12 @@ class MainWindow(QMainWindow):
         # System tray notification
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
+            tray_summary = self.tr("{} converted, {} failed").format(ok, fail)
+            if skipped:
+                tray_summary += self.tr(", {} skipped").format(skipped)
             self._tray.showMessage(
                 self.tr("ImgConverter — Conversion Complete"),
-                self.tr(f"{ok} converted, {fail} failed" + (f", {skipped} skipped" if skipped else "")),
+                tray_summary,
                 tray_icon,
                 5000,
             )
@@ -10552,13 +10599,13 @@ class MainWindow(QMainWindow):
         if when_done_idx > 0 and not cancelled and fail == 0:
             action = ["nothing", "close", "sleep", "shutdown"][when_done_idx]
             if action in ("sleep", "shutdown"):
+                action_label = self.tr(action.title())
                 countdown = QMessageBox(self)
                 countdown.setIcon(QMessageBox.Icon.Warning)
-                countdown.setWindowTitle(self.tr(f"ImgConverter — {action.title()} in 30 seconds"))
+                countdown.setWindowTitle(self.tr("ImgConverter — {} in 30 seconds").format(action_label))
                 countdown.setText(self.tr(
-                    f"System will {action} in 30 seconds.\n"
-                    f"Click Cancel to abort."
-                ))
+                    "System will {} in 30 seconds.\nClick Cancel to abort."
+                ).format(action_label))
                 countdown.setStandardButtons(QMessageBox.StandardButton.Cancel)
                 countdown.setDefaultButton(QMessageBox.StandardButton.Cancel)
                 _remaining = [30]
@@ -10570,9 +10617,8 @@ class MainWindow(QMainWindow):
                         countdown.accept()
                     else:
                         countdown.setText(self.tr(
-                            f"System will {action} in {_remaining[0]} seconds.\n"
-                            f"Click Cancel to abort."
-                        ))
+                            "System will {} in {} seconds.\nClick Cancel to abort."
+                        ).format(action_label, _remaining[0]))
                 def _on_cancel(btn):
                     _cancelled[0] = True
                     _timer.stop()

@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Wholesale broken i18n: `tr()` wrapped around f-strings; other strings not wrapped at all
-  Why: `self.tr(f"Found {n} files…")` submits interpolated text — can never match a catalog and can't be extracted. `_update_title` and status-bar strings aren't wrapped. As shipped, translation is impossible.
-  Where: representative `7110, 7582, 8600-8603, 8771, 8825-8827, 8893-8899, 8931, 8989, 9366-9368, 9389-9391, 9427, 9607, 9628, 9769, 9780, 9799-9817`; unwrapped `7310-7323, 9370, 9615-9622`. Fix: whole-file pass to `tr("…{}…").format(…)` placeholders (large, mechanical).
-
 - [ ] P3 — Recent-dirs list: case-sensitive dedup + unvalidated JSON shape
   Why: `C:\Photos` vs `c:\photos` occupy two of 10 slots on Windows; corrupt non-list JSON later raises AttributeError in a slot → abort.
   Where: `imgconverter.py:9035-9048`. Fix: `os.path.normcase` dedup; `isinstance(parsed, list)` guard.

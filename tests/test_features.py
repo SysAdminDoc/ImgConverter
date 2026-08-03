@@ -1,6 +1,7 @@
 """Tests for v3.0.0 features: CLI parsing, presets, watermark, canvas, tone
 mapping, quality targeting, only-if-smaller, DPI, ICC, recompress, BigTIFF,
 multi-frame, and scan exclude patterns."""
+import ast
 import json
 import inspect
 import re
@@ -632,6 +633,24 @@ class TestStylesheetAccessibility:
             window.close()
             window.deleteLater()
             app.processEvents()
+
+
+class TestI18nFormatting:
+    def test_qt_translation_calls_use_literal_source_text(self):
+        source = Path("imgconverter.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        violations = []
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "tr"
+                and node.args
+                and isinstance(node.args[0], ast.JoinedStr)
+            ):
+                violations.append(node.lineno)
+
+        assert violations == []
 
 
 class TestDependencyFloors:

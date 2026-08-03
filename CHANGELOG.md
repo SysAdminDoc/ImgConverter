@@ -49,6 +49,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Unified dialog geometry with the named application settings store and configured matching Qt app identity.
 - Shut down the opt-in update-check thread safely before the main window is destroyed.
 - Replaced unsafe conversion-thread termination on close with a hidden finishing state that closes after the executor exits.
+- Converted dynamic GUI copy to stable Qt translation templates with post-translation formatting, including progress, dialogs, titles, and command previews.
 
 ## [v3.6.0] — 2026-07-10
 
