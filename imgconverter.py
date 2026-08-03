@@ -12359,7 +12359,7 @@ def _run_cli(args):
     if args.in_place:
         output_dir = input_dir
     elif args.output:
-        output_dir = Path(args.output).resolve()
+        output_dir = Path(args.output).expanduser().resolve()
     else:
         output_dir = input_dir / "converted"
 
@@ -12893,6 +12893,7 @@ def _run_cli(args):
     # JSON report — structured per-file output for CI / Ansible / cron pipelines.
     report_path = None
     if getattr(args, "report", None):
+        report_target = Path(args.report).expanduser()
         report = {
             "summary": {
                 "version": APP_VERSION,
@@ -12927,9 +12928,9 @@ def _run_cli(args):
             ],
         }
         try:
-            _write_text_atomic(Path(args.report), json.dumps(report, indent=2, default=str) + "\n")
-            print(f"\n[report] wrote {args.report}")
-            report_path = Path(args.report)
+            _write_text_atomic(report_target, json.dumps(report, indent=2, default=str) + "\n")
+            print(f"\n[report] wrote {report_target}")
+            report_path = report_target
         except OSError as e:
             print(f"[report] failed to write {args.report}: {e}", file=sys.stderr)
 

@@ -39,6 +39,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Completed CLI progress events with `file_start` and animated-source `file_done` records.
 - Guarded CLI and GUI size summaries against files disappearing between scan and use.
 - Rejected CLI flag combinations that would otherwise be silently ignored by watch, in-place, or stdin modes.
+- Expanded `--output` and `--report` user-home paths consistently with CLI inputs.
 
 ## [v3.6.0] — 2026-07-10
 

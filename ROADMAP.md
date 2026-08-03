@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `--output` and `--report` skip `expanduser()` while inputs get it
-  Why: `-o ~/out` from cmd/PowerShell creates a literal `~` directory.
-  Where: `imgconverter.py:11360, 11873`. Fix: `.expanduser()` both.
-
 - [ ] P3 — Watch retry heuristic treats EVERY OSError as transient
   Why: `is_transient = r.error_code is not None` retries EACCES/ENOSPC/ENOENT 3× with backoff (noise, wasted work) while genuinely transient non-OS errors are never retried.
   Where: `imgconverter.py:10731`. Fix: whitelist transient errnos.

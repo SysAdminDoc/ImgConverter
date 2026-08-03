@@ -720,6 +720,27 @@ class TestSelectedFileCLI:
         assert (out / "first.png").exists()
         assert (out / "second.png").exists()
 
+    def test_output_and_report_expanduser(self, rgb_image, tmp_workdir, monkeypatch):
+        home = tmp_workdir / "fake-home"
+        home.mkdir()
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("HOME", str(home))
+        source = tmp_workdir / "photo.bmp"
+        rgb_image.save(source)
+
+        args = _build_parser().parse_args([
+            "--input", str(source),
+            "--output", "~\\converted",
+            "--report", "~\\batch.json",
+            "--format", "png",
+        ])
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        assert exc.value.code == EXIT_OK
+        assert (home / "converted" / "photo.png").exists()
+        assert (home / "batch.json").exists()
+
     def test_progress_events_cover_static_and_animated_inputs(self, tmp_workdir, capsys):
         import imgconverter
 
