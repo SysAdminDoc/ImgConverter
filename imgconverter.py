@@ -761,6 +761,19 @@ def _entrypoint_module_name(value: str) -> str:
 def _entrypoint_distribution_digest(ep) -> str:
     """Stable digest for the package files that can affect an entry-point plugin."""
     dist = getattr(ep, "dist", None)
+    if dist:
+        try:
+            direct_url = dist.read_text("direct_url.json")
+        except (AttributeError, OSError, TypeError):
+            direct_url = None
+        if direct_url:
+            try:
+                direct_info = json.loads(direct_url)
+            except (TypeError, json.JSONDecodeError):
+                direct_info = {}
+            if isinstance(direct_info, dict) and isinstance(direct_info.get("dir_info"), dict):
+                if direct_info["dir_info"].get("editable") is True:
+                    return ""
     files = list(getattr(dist, "files", None) or []) if dist else []
     module_name = _entrypoint_module_name(getattr(ep, "value", ""))
     if not dist or not files or not module_name:

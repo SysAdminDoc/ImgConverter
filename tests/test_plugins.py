@@ -1,5 +1,6 @@
 """Plugin trust-gate regression tests."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -181,6 +182,10 @@ def test_entrypoint_distribution_digest_tracks_module_changes(tmp_workdir):
         def locate_file(self, file_ref):
             return tmp_workdir / str(file_ref)
 
+        @staticmethod
+        def read_text(_name):
+            return None
+
     class FakeEntryPoint:
         name = "demo"
         value = "imgconverter_demo:register"
@@ -193,6 +198,24 @@ def test_entrypoint_distribution_digest_tracks_module_changes(tmp_workdir):
     assert len(first_digest) == 64
     assert len(second_digest) == 64
     assert first_digest != second_digest
+
+
+def test_editable_entrypoint_distribution_is_not_digest_trusted(tmp_workdir):
+    import imgconverter
+
+    class EditableDist:
+        files = []
+
+        @staticmethod
+        def read_text(name):
+            assert name == "direct_url.json"
+            return json.dumps({"url": "file:///src", "dir_info": {"editable": True}})
+
+    class FakeEntryPoint:
+        value = "imgconverter_demo:register"
+        dist = EditableDist()
+
+    assert imgconverter._entrypoint_distribution_digest(FakeEntryPoint()) == ""
 
 
 def test_entrypoint_same_version_digest_change_blocks_load(tmp_workdir, monkeypatch):

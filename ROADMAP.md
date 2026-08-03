@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Entry-point trust digest blind to editable installs
-  Why: PEP 660 editable installs produce a digest over metadata only; source edits keep "trusted" status, defeating v3.3.3 pinning for the dev-install case.
-  Where: `imgconverter.py:705-743`. Fix: detect `direct_url.json` `dir_info.editable` → return `""` so status becomes "changed".
-
 - [ ] P3 — `_verify_c2pa_sdk` leaks the native Reader on exception
   Why: `reader.close()` only on success path; `reader.json()`/`get_validation_state()` raise → handle leaked per C2PA-marked file.
   Where: `imgconverter.py:319-349`. Fix: try/finally or context manager.
