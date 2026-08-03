@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Missing `imagehash` reported as "No near-duplicates found."
-  Why: ImportError → `return []` → success-shaped message; factually wrong result every time for users without the optional dep.
-  Where: `imgconverter.py:11228-11231, 8807-8809`. Fix: distinguish unavailable from empty; log an install hint.
-
 - [ ] P3 — `os.path.commonpath` crash on multi-root file drops
   Why: Drops spanning drives (Everything search results, UNC + local) raise ValueError in the slot → abort.
   Where: `imgconverter.py:8883`. Fix: try/except → fall back to first file's parent.

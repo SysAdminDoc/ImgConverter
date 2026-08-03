@@ -12168,6 +12168,10 @@ def _execute_when_done(action: str):
             subprocess.run(["systemctl", "poweroff"], capture_output=True)
 
 
+class DedupUnavailableError(ImportError):
+    """Raised when the optional perceptual-hash dependency is unavailable."""
+
+
 def _dedup_scan(
     files: list[Path],
     threshold: int = 8,
@@ -12177,12 +12181,14 @@ def _dedup_scan(
     """Find near-duplicate image pairs using perceptual hashing.
 
     Returns list of (file_a, file_b, hamming_distance) for pairs below threshold.
-    Requires imagehash library; returns empty list if unavailable.
+    Requires the optional imagehash library; raises when it is unavailable.
     """
     try:
         import imagehash
-    except ImportError:
-        return []
+    except ImportError as exc:
+        raise DedupUnavailableError(
+            "imagehash is not installed; pip install imagehash to enable dedup"
+        ) from exc
 
     total_work = max(1, len(files) + len(files) * max(0, len(files) - 1) // 2)
     work_done = 0

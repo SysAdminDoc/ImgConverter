@@ -41,6 +41,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Rejected CLI flag combinations that would otherwise be silently ignored by watch, in-place, or stdin modes.
 - Expanded `--output` and `--report` user-home paths consistently with CLI inputs.
 - Limited watch-mode retries to transient filesystem error numbers instead of retrying permanent failures.
+- Reported missing `imagehash` as an unavailable deduplication dependency instead of an empty result.
 
 ## [v3.6.0] — 2026-07-10
 

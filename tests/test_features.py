@@ -2334,6 +2334,13 @@ class TestThumbnailLoader:
 
 class TestDedupScan:
 
+    def test_missing_imagehash_is_reported_as_unavailable(self, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setitem(sys.modules, "imagehash", None)
+        with pytest.raises(imgconverter.DedupUnavailableError, match="pip install imagehash"):
+            imgconverter._dedup_scan([])
+
     def test_scan_honors_cancellation_and_reports_progress(self, tmp_workdir):
         pytest.importorskip("imagehash")
         files = []
