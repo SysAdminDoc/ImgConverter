@@ -4739,6 +4739,7 @@ class ConvertWorker(QThread):
                     f"--frames={self.frames} active"
                 )
                 for f in animated_files:
+                    self.current_file.emit(f.name)
                     r = _convert_animated_or_sequence(
                         f, self.output_dir, self.opts.fmt,
                         extract_frames=(self.frames == "all"),
@@ -4751,7 +4752,6 @@ class ConvertWorker(QThread):
                     results.append(r)
                     done += 1
                     self.progress.emit(done, total)
-                    self.current_file.emit(r.src.name)
                     self.file_done.emit(r)
                     if r.success:
                         self.log.emit(f"[OK*] {f.name}: {r.warnings[-1] if r.warnings else 'ok'}")
@@ -4776,6 +4776,7 @@ class ConvertWorker(QThread):
                         seq_i, f = next(file_iter)
                     except StopIteration:
                         return
+                    self.current_file.emit(f.name)
                     fut = pool.submit(
                         convert_file, f, self.output_dir, seq=seq_i,
                         opts=self.opts,
@@ -4815,7 +4816,6 @@ class ConvertWorker(QThread):
                     results.append(result)
                     done += 1
                     self.progress.emit(done, total)
-                    self.current_file.emit(result.src.name)
                     self.file_done.emit(result)
 
                     if result.skipped:
@@ -8800,7 +8800,7 @@ class MainWindow(QMainWindow):
 
         # ── Progress ──
         self.progress_bar = QProgressBar()
-        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setTextVisible(True)
         self.progress_bar.setValue(0)
         self.progress_bar.setProperty("tone", "ready")
         self.progress_bar.setVisible(False)
@@ -10358,8 +10358,11 @@ class MainWindow(QMainWindow):
     def _on_current_file(self, filename: str):
         display = filename if len(filename) <= 72 else f"{filename[:34]}...{filename[-34:]}"
         self._file_display_name = display
+        self._file_start_time = time.monotonic()
         self._file_timer.stop()
-        self.progress_label.setText(self.tr(f"Completed · {display}"))
+        self._file_timer.start()
+        self.progress_bar.setTextVisible(True)
+        self.progress_label.setText(self.tr(f"Converting · {display}"))
 
     def _update_file_elapsed(self):
         elapsed = time.monotonic() - self._file_start_time
@@ -10368,6 +10371,8 @@ class MainWindow(QMainWindow):
 
     def _on_file_done(self, result: ConvertResult):
         self._file_timer.stop()
+        display = result.src.name if len(result.src.name) <= 72 else f"{result.src.name[:34]}...{result.src.name[-34:]}"
+        self.progress_label.setText(self.tr(f"Completed · {display}"))
         self._results.append(result)
         if result.success and result.dst:
             self._last_ok_dst = result.dst

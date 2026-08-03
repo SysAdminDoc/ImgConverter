@@ -2938,6 +2938,16 @@ class TestQtAccessibility:
         assert not w.resize_spin.isEnabled()
         assert not w.only_if_smaller_spin.isEnabled()
 
+    def test_file_progress_timer_starts_and_bar_text_is_visible(self):
+        w = self.window
+
+        assert w.progress_bar.isTextVisible()
+        w._on_current_file("large-file-name.png")
+
+        assert w._file_timer.isActive()
+        assert w._file_display_name == "large-file-name.png"
+        w._file_timer.stop()
+
     def test_clipboard_save_failure_is_reported(self, tmp_workdir, monkeypatch):
         import imgconverter
 

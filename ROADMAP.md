@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Dead per-file elapsed feature; ALL progress-bar text invisible
-  Why: `_file_timer` is created/connected but `start()` is never called — the slow-file indicator can never appear. Compounding: `setTextVisible(False)` (8223) is never re-enabled, so every `progress_bar.setFormat()` call ("Scanning...", "Ready to convert", "No files found", …) renders nothing. Several intended user-facing states silently dropped.
-  Where: `imgconverter.py:7133-7137, 9630-9633, 8223`, setFormat sites `8935, 9353, 9378, 9424, 9447, 9451, 9633, 9713`. Fix: start the timer in `_on_current_file` and re-enable text, or delete the apparatus.
-
 - [ ] P3 — Pause span leaks into wall time when batch stopped/closed while paused
   Why: `_paused_total` only accumulates on Resume; Pause → Cancel inflates "Wall time" in summary + history by the paused duration.
   Where: `imgconverter.py:9841-9854, 9721, 9748-9754`. Fix: fold the open pause span in `_on_convert_done`/`_stop`.
