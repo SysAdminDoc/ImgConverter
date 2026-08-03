@@ -9755,18 +9755,36 @@ class MainWindow(QMainWindow):
     # ── Recent directories ──
     def _add_recent_dir(self, path: str):
         """Add a directory to the recent list (max 10, deduplicated)."""
+        candidate = os.path.normpath(os.path.expanduser(str(path).strip()))
+        candidate_key = os.path.normcase(os.path.abspath(candidate))
         recent = self._get_recent_dirs()
-        if path in recent:
-            recent.remove(path)
-        recent.insert(0, path)
+        recent = [
+            existing for existing in recent
+            if os.path.normcase(os.path.abspath(os.path.normpath(existing))) != candidate_key
+        ]
+        recent.insert(0, candidate)
         self.settings.setValue("recent_dirs", json.dumps(recent[:10]))
 
     def _get_recent_dirs(self) -> list[str]:
         raw = self.settings.value("recent_dirs", "[]")
         try:
-            return json.loads(raw)
+            parsed = raw if isinstance(raw, list) else json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             return []
+        if not isinstance(parsed, list):
+            return []
+        recent = []
+        seen: set[str] = set()
+        for value in parsed:
+            if not isinstance(value, str) or not value.strip():
+                continue
+            path = os.path.normpath(os.path.expanduser(value.strip()))
+            key = os.path.normcase(os.path.abspath(path))
+            if key in seen:
+                continue
+            seen.add(key)
+            recent.append(path)
+        return recent[:10]
 
     def _populate_recent_menu(self):
         self._recent_menu.clear()

@@ -4,6 +4,7 @@ multi-frame, and scan exclude patterns."""
 import ast
 import json
 import inspect
+import os
 import re
 import sys
 import tomllib
@@ -3076,6 +3077,24 @@ class TestQtAccessibility:
 
         assert calls
         assert calls[0] == ("ImgConverter", "ImgConverter")
+
+    def test_recent_dirs_normalize_case_and_reject_invalid_shapes(self):
+        import imgconverter
+
+        self.window.settings.setValue(
+            "recent_dirs",
+            json.dumps(["C:\\Photos", "c:\\photos", 42, None, ""]),
+        )
+        assert self.window._get_recent_dirs() == [os.path.normpath("C:\\Photos")]
+
+        self.window.settings.setValue("recent_dirs", json.dumps({"path": "C:\\Photos"}))
+        assert self.window._get_recent_dirs() == []
+
+        self.window._add_recent_dir("C:\\Photos")
+        self.window._add_recent_dir("c:\\photos")
+        saved = json.loads(self.window.settings.value("recent_dirs"))
+        assert len(saved) == 1
+        assert os.path.normcase(saved[0]) == os.path.normcase(os.path.normpath("c:\\photos"))
 
     def test_clipboard_save_failure_is_reported(self, tmp_workdir, monkeypatch):
         import imgconverter

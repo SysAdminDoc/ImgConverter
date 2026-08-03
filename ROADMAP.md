@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Recent-dirs list: case-sensitive dedup + unvalidated JSON shape
-  Why: `C:\Photos` vs `c:\photos` occupy two of 10 slots on Windows; corrupt non-list JSON later raises AttributeError in a slot → abort.
-  Where: `imgconverter.py:9035-9048`. Fix: `os.path.normcase` dedup; `isinstance(parsed, list)` guard.
-
 - [ ] P3 — `_scan` validation-error paths leave the summary panel half-mutated
   Why: Panel visibility mutations run before the empty-format-filter and max-file-size checks; on those error returns the panel is stuck pseudo-scanning (progress bar visible at stale value, empty-state hidden).
   Where: `imgconverter.py:9313-9333`. Fix: validate before mutating, or restore visibility on error paths.
