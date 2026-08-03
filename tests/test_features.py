@@ -1638,6 +1638,22 @@ class TestInPlace:
         assert result.dst == src
         assert src.exists()
 
+    def test_in_place_same_ext_save_failure_preserves_source(self, rgb_image, tmp_workdir, monkeypatch):
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=90)
+
+        def fail_save(*_args, **_kwargs):
+            raise OSError("simulated disk-full failure")
+
+        monkeypatch.setattr(Image.Image, "save", fail_save)
+        result = convert_file(
+            src, tmp_workdir, fmt="jpeg", in_place=True,
+            preserve_metadata=False,
+        )
+
+        assert not result.success
+        assert src.exists()
+
 
 # ── 14b. Error code propagation ─────────────────────────────────────────────
 
@@ -1701,6 +1717,24 @@ class TestSkipGuard:
             strip_fields=frozenset({"gps"}),
             convert_to_srgb=True,
         )
+        assert not result.skipped
+
+    def test_same_format_with_edit_not_skipped(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.jpg"
+        rgb_image.save(src, "JPEG", quality=90)
+        result = convert_file(
+            src, tmp_workdir / "out", fmt="jpeg", brightness=20,
+        )
+        assert result.success
+        assert not result.skipped
+
+    def test_same_format_with_png_lossy_not_skipped(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "photo.png"
+        rgb_image.save(src, "PNG")
+        result = convert_file(
+            src, tmp_workdir / "out", fmt="png", png_lossy=True,
+        )
+        assert result.success
         assert not result.skipped
 
     def test_same_format_no_processing_is_skipped(self, rgb_image, tmp_workdir):

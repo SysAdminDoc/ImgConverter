@@ -16,21 +16,7 @@ reachable against the current source before being listed (high-false-positive
 areas were re-checked; rejected suspicions are not listed). Line numbers refer
 to `imgconverter.py` at commit `53fb9a3`.
 
-### P0 — Data loss
-
-- [ ] P0 — In-place failure cleanup deletes the user's ORIGINAL file
-  Why: With `--in-place` + same-format output (e.g. `--in-place -f jpeg --resize 50%` on a .jpg), `out_path` resolves to the source itself. If conversion fails after `out_path` is set (disk full, OOM, output-validation raise at ~4232), the except-block cleanup `if out_path and out_path.exists() and not result.success: out_path.unlink()` (~4348) has no `_same_resolved_path(out_path, src)` guard — it unlinks the untouched source. The guard exists at the two sibling deletion sites (~4286, ~4332), confirming oversight. Conversion fails AND source is destroyed.
-  Where: `imgconverter.py:4347-4352`. Fix: add `and not _same_resolved_path(out_path, src)` to the cleanup condition. Add regression test.
-
 ### P1 — Broken flagship behavior / security
-
-- [ ] P1 — v3.6.0 editing layer silently no-ops on same-format sources
-  Why: The `no_processing` guard (~3936-3949) enumerates resize/srgb/watermark/canvas/tone_map/dpi/icc/template/strip/only-if-smaller/quality_mode but NOT `_has_edits(opts)`. A JPEG input with `fmt=auto` + only edit flags (`--adjust-preset bw`, `--brightness 20`) hits the same-format skip at ~3950 and converts zero files. The flagship v3.6.0 feature is dead for every same-format pair.
-  Where: `imgconverter.py:3936-3954`. Fix: add `and not _has_edits(opts)` to `no_processing`.
-
-- [ ] P1 — `--png-lossy` no-ops on PNG→PNG (same guard gap)
-  Why: `png_lossy` also missing from `no_processing`; `-f png --png-lossy` on PNG sources (the flag's primary use case) skips and pngquant never runs.
-  Where: `imgconverter.py:3936-3950, 4198`. Fix: add `and not (png_lossy and out_fmt == "PNG")`.
 
 - [ ] P1 — ExifTool tag-copy restores Orientation after exif_transpose → double rotation
   Why: Pixels are always orientation-baked and the tag stripped (~3766-3772), but with defaults (preserve_metadata + ExifTool installed) `_run_exiftool_copy` copies `-all:all` from source — restoring `Orientation=6/8` onto already-rotated pixels. Every phone photo with non-1 orientation renders double-rotated in EXIF-aware viewers.

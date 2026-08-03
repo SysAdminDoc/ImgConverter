@@ -3946,6 +3946,8 @@ def convert_file(
             and not strip_fields
             and only_if_smaller_pct is None
             and quality_mode is None
+            and not _has_edits(opts)
+            and not (png_lossy and out_fmt == "PNG")
         )
         if same_fmt and no_processing and not recompress_lossless:
             result.skipped = True
@@ -4345,7 +4347,8 @@ def convert_file(
             except OSError:
                 pass
         # Clean up partial output on failure
-        if out_path and out_path.exists() and not result.success:
+        if (out_path and out_path.exists() and not result.success
+                and not _same_resolved_path(out_path, src)):
             try:
                 out_path.unlink()
             except OSError:
