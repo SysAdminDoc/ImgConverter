@@ -10431,6 +10431,7 @@ class MainWindow(QMainWindow):
 
     def _on_convert_done(self, results):
         self._file_timer.stop()
+        self._fold_open_pause_span()
         _restore_process_priority()
         cancelled = bool(self._worker and self._worker._stop_event.is_set())
         has_scan = self._scan_result is not None and bool(self._scan_result.files)
@@ -10580,6 +10581,7 @@ class MainWindow(QMainWindow):
             )
             return
         if self._worker:
+            self._fold_open_pause_span()
             self._worker.stop()
             self.stop_btn.setEnabled(False)
             self.pause_btn.setEnabled(False)
@@ -10591,7 +10593,7 @@ class MainWindow(QMainWindow):
             return
         if self._worker.is_paused:
             self._worker.resume()
-            self._paused_total += time.perf_counter() - self._pause_start
+            self._fold_open_pause_span()
             self.pause_btn.setText(self.tr("Pause"))
             self._set_workflow_state(self.tr("Converting"), self.tr("Resumed batch conversion..."))
         else:
@@ -10600,6 +10602,12 @@ class MainWindow(QMainWindow):
             self._file_timer.stop()
             self.pause_btn.setText(self.tr("Resume"))
             self._set_workflow_state(self.tr("Paused"), self.tr("Conversion paused. Click Resume to continue."))
+
+    def _fold_open_pause_span(self):
+        """Account for a pause that is still open when a batch stops or finishes."""
+        if self._pause_start:
+            self._paused_total += max(0.0, time.perf_counter() - self._pause_start)
+            self._pause_start = 0.0
 
     def _open_output(self):
         if self.inplace_chk.isChecked():

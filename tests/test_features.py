@@ -2948,6 +2948,21 @@ class TestQtAccessibility:
         assert w._file_display_name == "large-file-name.png"
         w._file_timer.stop()
 
+    def test_open_pause_span_is_folded_once(self, monkeypatch):
+        import imgconverter
+
+        w = self.window
+        monkeypatch.setattr(imgconverter.time, "perf_counter", lambda: 20.0)
+        w._paused_total = 1.5
+        w._pause_start = 12.0
+
+        w._fold_open_pause_span()
+        assert w._paused_total == 9.5
+        assert w._pause_start == 0.0
+
+        w._fold_open_pause_span()
+        assert w._paused_total == 9.5
+
     def test_clipboard_save_failure_is_reported(self, tmp_workdir, monkeypatch):
         import imgconverter
 

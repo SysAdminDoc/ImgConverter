@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Pause span leaks into wall time when batch stopped/closed while paused
-  Why: `_paused_total` only accumulates on Resume; Pause → Cancel inflates "Wall time" in summary + history by the paused duration.
-  Where: `imgconverter.py:9841-9854, 9721, 9748-9754`. Fix: fold the open pause span in `_on_convert_done`/`_stop`.
-
 - [ ] P3 — `_restore_dialog_geometry` writes to a different QSettings store than the app
   Why: Bare `QSettings()` without org/app names set on the QApplication → dialog geometry persists under a default key path, fragmenting persisted state.
   Where: `imgconverter.py:5916-5927` vs `7118`. Fix: `app.setOrganizationName/ApplicationName` in `main()`.
