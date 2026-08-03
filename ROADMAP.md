@@ -22,14 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Animated save uses the LAST frame's duration for all frames
-  Why: `img.info.get("duration")` is read after the iterator has seeked to the final frame; variable-delay GIFs re-encode with wrong constant timing.
-  Where: `imgconverter.py:3319-3337`. Fix: collect per-frame durations during iteration, pass the list.
-
-- [ ] P3 — Per-frame duplicate "edit: applied image adjustments" warnings
-  Why: `_apply_edits` appends the warning once per frame; a 500-frame GIF → 500 identical entries each echoed as `[WARN]` log lines.
-  Where: `imgconverter.py:2628-2629` via `3092-3093`, echo `4608-4609`. Fix: append once per file.
-
 - [ ] P3 — Watermark text measurement allocates a full image-size RGBA layer
   Why: `Image.new("RGBA", (iw, ih))` exists only for `textbbox`; ~400 MB transient per 100 MP file. A 1×1 probe measures identically.
   Where: `imgconverter.py:2397-2398`.

@@ -2560,6 +2560,42 @@ class TestMultiFrameExport:
         with Image.open(stripped.dst) as stripped_img:
             assert stripped_img.getexif().get(0x010F) is None
 
+    def test_animated_save_preserves_frame_durations_and_edit_warning_once(self, tmp_workdir, monkeypatch):
+        src = tmp_workdir / "timed.gif"
+        frames = [
+            Image.new("RGB", (8, 8), (255, 0, 0)),
+            Image.new("RGB", (8, 8), (0, 0, 255)),
+        ]
+        frames[0].save(
+            src,
+            "GIF",
+            save_all=True,
+            append_images=[frames[1]],
+            duration=[40, 280],
+            loop=0,
+        )
+
+        captured_durations = []
+        original_save = Image.Image.save
+
+        def capture_save(image, fp, *args, **kwargs):
+            if str(fp).endswith(".webp"):
+                captured_durations.append(kwargs.get("duration"))
+            return original_save(image, fp, *args, **kwargs)
+
+        monkeypatch.setattr(Image.Image, "save", capture_save)
+        result = _convert_animated_or_sequence(
+            src,
+            tmp_workdir / "out",
+            "webp",
+            extract_frames=False,
+            opts=ConvertOptions(fmt="webp", brightness=10),
+        )
+
+        assert result.success
+        assert result.warnings.count("edit: applied image adjustments") == 1
+        assert captured_durations == [[40, 280]]
+
 
 # ── 20. Qt event-loop accessibility and keyboard tests ─────────────────────
 

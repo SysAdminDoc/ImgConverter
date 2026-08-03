@@ -23,6 +23,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Made Run Now cancellation explicit, recorded cancelled profile runs, and removed the close-time GUI wait while retaining safe worker ownership until completion.
 - Added the full 16-flag editing layer to the GUI Advanced options, including stacked look presets, social canvases, persistent controls, and updated CLI/GUI parity coverage.
 - Corrected hue rotation to use all 256 Pillow HSV hue slots.
+- Preserved variable animation frame durations and reduced multi-frame edit warnings to one per source file.
 
 ## [v3.6.0] — 2026-07-10
 

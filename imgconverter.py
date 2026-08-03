@@ -3207,7 +3207,7 @@ def _apply_multiframe_transforms(
         )
 
     if _has_edits(opts):
-        frame = _apply_edits(frame, opts, result)
+        frame = _apply_edits(frame, opts, None)
 
     if opts.canvas:
         bg_spec = opts.canvas_bg or "transparent"
@@ -3412,6 +3412,8 @@ def _convert_animated_or_sequence(
                 "dropped": [],
                 "preserve_requested": bool(opts.preserve_metadata),
             }
+            if _has_edits(opts):
+                result.warnings.append("edit: applied image adjustments")
 
             n = getattr(img, "n_frames", 1)
             if extract_frames or fmt_pil not in ("WEBP", "GIF", "PNG"):
@@ -3440,10 +3442,20 @@ def _convert_animated_or_sequence(
                     f"multi-frame: exported {len(written)} frames as {pad_width}-digit sequence"
                 )
             else:
-                frames = [
-                    _apply_multiframe_transforms(f, dict(meta), opts, result)
-                    for f in ImageSequence.Iterator(img)
-                ]
+                frames = []
+                durations = []
+                default_duration = img.info.get("duration", 100)
+                for source_frame in ImageSequence.Iterator(img):
+                    frame_info = getattr(source_frame, "info", {}) or {}
+                    raw_duration = frame_info.get("duration", default_duration)
+                    try:
+                        duration = max(0, int(raw_duration or 0))
+                    except (TypeError, ValueError, OverflowError):
+                        duration = 100
+                    durations.append(duration)
+                    frames.append(
+                        _apply_multiframe_transforms(source_frame, dict(meta), opts, result)
+                    )
                 dst = dest_dir / f"{src.stem}{ext}"
                 if opts.name_template:
                     dst = _multiframe_output_path(src, dest_dir, ext, opts, 1, frames[0].size)
@@ -3457,7 +3469,7 @@ def _convert_animated_or_sequence(
                     return result
                 save_kwargs = {"save_all": True,
                                 "append_images": frames[1:] if len(frames) > 1 else [],
-                                "duration": img.info.get("duration", 100),
+                                "duration": durations or [100],
                                 "loop": img.info.get("loop", 0)}
                 save_kwargs.update(_multiframe_save_kwargs(
                     frames[0], fmt_pil, meta, opts, result, src,
