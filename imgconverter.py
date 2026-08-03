@@ -2255,6 +2255,7 @@ def scan_directory(
     exclude_patterns: list[str] | None = None,
     max_file_size: int | None = None,
     exclude_roots: list[Path] | None = None,
+    cancel_check=None,
 ) -> ScanResult:
     """Find all supported image files in directory.
 
@@ -2272,6 +2273,8 @@ def scan_directory(
     excluded_roots = [Path(p) for p in (exclude_roots or [])]
 
     def _walk(d: Path):
+        if cancel_check and cancel_check():
+            return
         if any(_path_is_within(d, excluded) for excluded in excluded_roots):
             return
         # Resolve to catch loops via symlink-to-ancestor; skip on permission errors.
@@ -2287,6 +2290,8 @@ def scan_directory(
         except (PermissionError, OSError):
             return
         for p in entries:
+            if cancel_check and cancel_check():
+                return
             try:
                 if p.is_dir():
                     try:
@@ -4687,7 +4692,7 @@ class ConvertWorker(QThread):
 
 
 class ScanWorker(QThread):
-    finished = pyqtSignal(object)  # ScanResult
+    scan_done = pyqtSignal(object)  # ScanResult
     log = pyqtSignal(str)
     scan_progress = pyqtSignal(int, int, str, int)  # total_count, total_bytes, dir_path, dir_file_count
 
@@ -4699,20 +4704,30 @@ class ScanWorker(QThread):
         self.extensions = extensions
         self.exclude_patterns = exclude_patterns or []
         self.max_file_size = max_file_size
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+        self.requestInterruption()
 
     def run(self):
+        if self._stop_event.is_set():
+            return
         self.log.emit(f"Scanning {'recursively' if self.recursive else ''}: {self.directory}")
         result = scan_directory(
             self.directory, self.recursive, self.extensions,
             exclude_patterns=self.exclude_patterns,
             max_file_size=self.max_file_size,
+            cancel_check=self._stop_event.is_set,
             on_progress=lambda count, size, d, dc: self.scan_progress.emit(count, size, d, dc),
         )
+        if self._stop_event.is_set():
+            return
         self.log.emit(
             f"Found {len(result.files)} supported files "
             f"({_fmt_size(result.total_size)}) in {result.elapsed:.2f}s"
         )
-        self.finished.emit(result)
+        self.scan_done.emit(result)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -6988,7 +7003,7 @@ class ShellIntegrationDialog(QDialog):
         exe = sys.executable
         script = str(Path(__file__).resolve())
         self.cmd_view.setPlainText(
-            f'Files:   "{exe}" "{script}" --files %*\n'
+            f'Files:   "{exe}" "{script}" --files "%1"\n'
             f'Folders: "{exe}" "{script}" --input "%1"'
         )
         layout.addWidget(self.cmd_view)
@@ -9421,7 +9436,7 @@ class MainWindow(QMainWindow):
         )
         self._scanner.log.connect(self._log)
         self._scanner.scan_progress.connect(self._on_scan_progress)
-        self._scanner.finished.connect(self._on_scan_done)
+        self._scanner.scan_done.connect(self._on_scan_done)
         self.progress_bar.setMaximum(0)
         self.progress_bar.setFormat(self.tr("Scanning..."))
         self._scanner.start()
@@ -9543,7 +9558,12 @@ class MainWindow(QMainWindow):
                 src = self.src_edit.text().strip()
                 dst = str(Path(src) / "converted")
                 self.dst_edit.setText(dst)
-            Path(dst).mkdir(parents=True, exist_ok=True)
+            try:
+                Path(dst).mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                self._log(f"[ERROR] Could not create output folder: {exc}")
+                self._set_line_error(self.dst_edit, self.tr(f"Could not create output folder: {exc}"))
+                return
 
         # Source/output overlap guard
         src_resolved = Path(self.src_edit.text().strip()).resolve()
@@ -10148,6 +10168,13 @@ class MainWindow(QMainWindow):
         if self._thumb_loader and self._thumb_loader.isRunning():
             self._thumb_loader.stop()
             self._thumb_loader.wait(1000)
+        if hasattr(self, "_scanner") and self._scanner.isRunning():
+            self.status_bar.showMessage(self.tr("Waiting for scan to stop..."))
+            self._scanner.stop()
+            if not self._scanner.wait(10000):
+                self.status_bar.showMessage(self.tr("Scan is still stopping; close again when it finishes."))
+                event.ignore()
+                return
         if self._worker and self._worker.isRunning():
             self.status_bar.showMessage(self.tr("Waiting for conversion to finish..."))
             self._worker.stop()
@@ -10861,7 +10888,7 @@ def _install_shell_integration(uninstall: bool = False) -> int:
     system = platform.system()
     exe = sys.executable
     script = str(Path(__file__).resolve())
-    file_cmd_args = f'"{exe}" "{script}" --files %*'
+    file_cmd_args = f'"{exe}" "{script}" --files "%1"'
     dir_cmd_args = f'"{exe}" "{script}" --input "%1"'
 
     if system == "Windows":

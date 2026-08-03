@@ -878,9 +878,23 @@ class TestShellIntegration:
         monkeypatch.setitem(sys.modules, "winreg", FakeWinreg)
 
         assert _install_shell_integration(False) == EXIT_OK
-        assert "--files %*" in values[(r"Software\Classes\*\shell\ImgConverter\command", "")]
+        assert '--files "%1"' in values[(r"Software\Classes\*\shell\ImgConverter\command", "")]
         assert values[(r"Software\Classes\*\shell\ImgConverter", "MultiSelectModel")] == "Player"
         assert '--input "%1"' in values[(r"Software\Classes\Directory\shell\ImgConverter\command", "")]
+
+    def test_shell_file_command_quotes_single_path_in_preview(self, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(imgconverter.sys, "executable", r"C:\Python Folder\python.exe")
+        monkeypatch.setattr(imgconverter, "__file__", r"C:\App Folder\imgconverter.py")
+        dialog = imgconverter.ShellIntegrationDialog()
+        try:
+            assert '--files "%1"' in dialog.cmd_view.toPlainText()
+            assert "--files %*" not in dialog.cmd_view.toPlainText()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
 
 
 # ── 2. Preset loading ────────────────────────────────────────────────────────
@@ -1604,6 +1618,19 @@ class TestScanExclude:
 
         assert result.files == [scan_root / "photo.jpg"]
 
+    def test_scan_directory_honors_cancellation(self, tmp_workdir):
+        import imgconverter
+
+        scan_root = tmp_workdir / "photos"
+        scan_root.mkdir()
+        (scan_root / "photo.jpg").write_bytes(b"source")
+        result = scan_directory(scan_root, cancel_check=lambda: True)
+
+        assert result.files == []
+        worker = imgconverter.ScanWorker(scan_root, True)
+        worker.stop()
+        assert worker._stop_event.is_set()
+
     def test_max_file_size_skips_large_inputs(self, tmp_workdir):
         scan_root = tmp_workdir / "photos"
         scan_root.mkdir()
@@ -2127,6 +2154,27 @@ class TestQtAccessibility:
         w.max_file_size_edit.setText("600MB")
 
         assert w.max_file_size_edit.property("validationState") == ""
+
+    def test_convert_reports_output_mkdir_failure(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        w = self.window
+        src = tmp_workdir / "source"
+        dst = tmp_workdir / "output"
+        w.src_edit.setText(str(src))
+        w.dst_edit.setText(str(dst))
+        w._scan_result = imgconverter.ScanResult(files=[tmp_workdir / "photo.bmp"])
+        original_mkdir = Path.mkdir
+
+        def fail_output_mkdir(path, *args, **kwargs):
+            if path == dst:
+                raise PermissionError("simulated permission failure")
+            return original_mkdir(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "mkdir", fail_output_mkdir)
+        w._convert()
+
+        assert w.dst_edit.property("validationState") == "error"
 
     def test_export_log_reports_write_failure(self, tmp_workdir, monkeypatch):
         import imgconverter

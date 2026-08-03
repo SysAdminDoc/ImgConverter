@@ -18,18 +18,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P1 — Broken flagship behavior / security
 
-- [ ] P1 — Windows shell integration "Files" verb command broken for paths with spaces
-  Why: `f'"{exe}" "{script}" --files %*'` — `%*` is unquoted and there is no `"%1"`. Any path containing a space splits into argv fragments → CLI input errors. The folder verb correctly quotes `"%1"`. Also `MultiSelectModel=Player` doesn't batch CommandLine verbs (N selected files = N processes).
-  Where: `imgconverter.py:10780, 10807-10812`, preview `6918`. Fix: use quoted `"%1"` for the file verb; update the preview to match.
-
-- [ ] P1 — ScanWorker never stopped/waited on close — abort on exit mid-scan; scans uncancellable
-  Why: `closeEvent` (~10073-10085) stops `_thumb_loader` and `_worker` but never `_scanner`; ScanWorker has no stop flag and `scan_directory` no cancellation hook. Close mid-scan on a big tree → "QThread: Destroyed while thread is still running" abort. No UI way to cancel a scan at all. Note: no `sys.excepthook` is installed anywhere, so ANY unhandled slot exception is a hard qFatal abort — amplifies every unguarded-slot item below (consider installing an excepthook as part of this fix batch).
-  Where: `imgconverter.py:4616-4642, 2192-2271, 9342-9354, 10073-10085`. Fix: stop flag threaded into `scan_directory`, mirror worker handling in `closeEvent`.
-
-- [ ] P1 — Unguarded `mkdir` on user-typed output path in `_convert` — one bad path aborts the app
-  Why: `Path(dst).mkdir(parents=True, exist_ok=True)` at ~9473 has no try/except (the neighboring `disk_usage` block is guarded). Nonexistent drive (`X:\out`), illegal name (`C:\con\x`), or permission-denied → OSError in a clicked slot → qFatal abort, settings unsaved.
-  Where: `imgconverter.py:9473`. Fix: try/except OSError → `_set_line_error(self.dst_edit, …)` + return.
-
 ### P2 — Correctness / reliability
 
 - [ ] P2 — `_strip_exif_fields` fails open and caller falsely reports strip succeeded
@@ -221,10 +209,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 - [ ] P3 — `_restore_dialog_geometry` writes to a different QSettings store than the app
   Why: Bare `QSettings()` without org/app names set on the QApplication → dialog geometry persists under a default key path, fragmenting persisted state.
   Where: `imgconverter.py:5916-5927` vs `7118`. Fix: `app.setOrganizationName/ApplicationName` in `main()`.
-
-- [ ] P3 — `ScanWorker.finished` shadows built-in `QThread.finished`
-  Why: Classic footgun — future `finished.connect(deleteLater)`-style code gets payload semantics. ConvertWorker already avoids this with `finished_all`.
-  Where: `imgconverter.py:4617, 4642, 9351`. Fix: rename to `scan_done`.
 
 - [ ] P3 — Update-check QThread not shut down on close
   Why: Closing while a check is in flight destroys a running QThread with the window (same class as the ScanWorker item; low reach — opt-in + 24h throttle).
