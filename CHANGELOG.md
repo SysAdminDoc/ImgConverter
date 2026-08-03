@@ -14,6 +14,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Fixed thumbnail scanline strides, moved QPixmap creation to the GUI thread, and keyed thumbnail results by source path so stale loader signals cannot corrupt a refreshed review table.
 - Ignored drag-and-drop events while scans or conversions are active so live batch state cannot be overwritten mid-run.
 - Moved Find similar perceptual-hash work off the GUI thread with progress, cancellation, and close-time cleanup.
+- Made CLI Ctrl-C return the documented cancellation code while preserving queue/report/history/progress state, made redirected output UTF-8 safe, validated proof counts, and required matching resume recipes.
 
 ## [v3.6.0] — 2026-07-10
 

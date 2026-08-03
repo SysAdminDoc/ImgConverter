@@ -1146,10 +1146,10 @@ def _strip_exif_fields(exif_bytes: bytes, groups: frozenset[str]) -> bytes | Non
         exif.load(exif_bytes)
 
         if "gps" in groups:
-            gps_ifd = exif.get_ifd(0x8825)
-            if gps_ifd:
-                for tag in list(gps_ifd):
-                    del gps_ifd[tag]
+            # Deleting the GPS pointer directly is important: Pillow caches
+            # a decoded nested IFD, and mutating that cached mapping followed
+            # by deleting the pointer can make Pillow serialize the original
+            # GPS block again on older releases.
             if 0x8825 in exif:
                 del exif[0x8825]
 
@@ -10898,6 +10898,7 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
     in_place = bool(getattr(args, "in_place", False))
     output_root = Path(output_dir).resolve(strict=False)
     output_is_inside_input = _path_is_within(output_root, input_dir)
+    watch_cancelled = False
 
     def _is_output_path(path: Path) -> bool:
         return not in_place and output_is_inside_input and _path_is_within(path, output_root)
@@ -11033,12 +11034,13 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
 
             time.sleep(interval)
     except KeyboardInterrupt:
+        watch_cancelled = True
         print(f"\n[watch] stopped. Total processed: {len(converted)}")
     finally:
         if observer is not None:
             observer.stop()
             observer.join(timeout=2)
-    return EXIT_OK
+    return EXIT_CANCELLED if watch_cancelled else EXIT_OK
 
 
 def _desktop_exec_arg(value: str) -> str:
@@ -11268,6 +11270,8 @@ def _validate_cli_args(args) -> list[str]:
     errors: list[str] = []
     if getattr(args, "workers", 1) < 1 or getattr(args, "workers", 1) > 32:
         errors.append("--workers must be between 1 and 32")
+    if getattr(args, "proof", None) is not None and args.proof < 1:
+        errors.append("--proof must be at least 1")
     if getattr(args, "use_processes", False) and (PLUGIN_DECODERS or PLUGIN_ENCODERS or PLUGIN_STORAGE):
         errors.append("--use-processes is incompatible with loaded plugins; use thread workers")
     if getattr(args, "quality", 92) < 50 or getattr(args, "quality", 92) > 100:
@@ -11672,9 +11676,22 @@ def _emit_progress(event: str, data: dict | None = None, *, enabled: bool = Fals
     print(json.dumps(payload, default=str), file=sys.stderr, flush=True)
 
 
+def _configure_cli_streams() -> None:
+    """Use UTF-8 with replacement for redirected CLI output on Windows."""
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def _run_cli(args):
     """Run headless CLI conversion."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    _configure_cli_streams()
     _diag_log(f"CLI invocation: format={args.format} input={args.input}")
 
     # Apply preset overlay (called before other arg-driven branches).
@@ -11809,7 +11826,19 @@ def _run_cli(args):
     # --resume: drop files that the previous run already converted.
     if getattr(args, "resume", False):
         state = _load_queue_state()
-        if state and state.get("input") == str(input_dir):
+        if state and state.get("version") not in (None, APP_VERSION):
+            print(
+                f"[resume] WARNING: queue was written by ImgConverter v{state.get('version')}; "
+                f"current version is v{APP_VERSION}"
+            )
+        resume_matches = bool(
+            state
+            and state.get("input") == str(input_dir)
+            and state.get("output") == str(output_dir)
+            and state.get("format") == args.format
+            and state.get("quality") == args.quality
+        )
+        if resume_matches:
             done_set = set(state.get("done", []))
             pre = len(scan.files)
             scan.files = [f for f in scan.files if str(f) not in done_set]
@@ -11817,7 +11846,10 @@ def _run_cli(args):
             print(f"[resume] {pre - len(scan.files)} files already done in previous run; "
                   f"continuing with {len(scan.files)}")
         else:
-            print("[resume] no previous queue found (or different input dir); ignoring --resume")
+            print(
+                "[resume] no compatible previous queue found (input, output, format, "
+                "or quality differs); ignoring --resume"
+            )
 
     if not scan.files:
         print("No supported files found.")
@@ -12011,8 +12043,10 @@ def _run_cli(args):
     max_inflight = args.workers * 2
     file_iter = iter(enumerate(scan.files, start=1))
 
-    with Executor(max_workers=args.workers) as pool:
-        futures: dict = {}
+    pool = Executor(max_workers=args.workers)
+    futures: dict = {}
+    interrupted = False
+    try:
 
         def _cli_submit_batch():
             while len(futures) < max_inflight:
@@ -12153,23 +12187,44 @@ def _run_cli(args):
 
             _cli_submit_batch()
 
+        pool.shutdown(wait=True)
+    except KeyboardInterrupt:
+        interrupted = True
+        for future in futures:
+            future.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+
     if cache_conn:
         try:
             cache_conn.close()
         except Exception:
             pass
     # Successful end-of-batch -> drop queue state so future --resume is a no-op.
-    if fail_count == 0:
+    # Preserve every unfinished input when Ctrl-C interrupted the executor.
+    if fail_count == 0 and not interrupted:
         _clear_queue_state()
     else:
-        _save_queue_state(input_dir, output_dir, args, pending=[],
-                           done=done_paths, failed=failed_paths)
+        _save_queue_state(
+            input_dir,
+            output_dir,
+            args,
+            pending=(
+                [fp for fp in scan.files
+                 if str(fp) not in done_paths and str(fp) not in failed_paths]
+                if interrupted else []
+            ),
+            done=done_paths,
+            failed=failed_paths,
+        )
 
     wall_time = time.perf_counter() - t0
     speed = ok_count / wall_time if wall_time > 0 else 0
-    print(f"\nDone: {ok_count} converted, {fail_count} failed, {skip_count} skipped in {wall_time:.0f}s ({speed:.1f} files/sec)")
+    summary_label = "Cancelled" if interrupted else "Done"
+    print(f"\n{summary_label}: {ok_count} converted, {fail_count} failed, "
+          f"{skip_count} skipped in {wall_time:.0f}s ({speed:.1f} files/sec)")
     _emit_progress("batch_done", {
         "ok": ok_count, "failed": fail_count, "skipped": skip_count,
+        "cancelled": interrupted,
         "wall_seconds": round(wall_time, 2), "files_per_sec": round(speed, 1),
     }, enabled=_progress_on)
 
@@ -12188,6 +12243,7 @@ def _run_cli(args):
                 "ok": ok_count,
                 "skipped": skip_count,
                 "failed": fail_count,
+                "cancelled": interrupted,
                 "elapsed_seconds": wall_time,
                 "files_per_second": speed,
             },
@@ -12229,7 +12285,9 @@ def _run_cli(args):
     else:
         print(f"[history] failed to record batch: {history_error}", file=sys.stderr)
 
-    if fail_count == total and total > 0:
+    if interrupted:
+        exit_code = EXIT_CANCELLED
+    elif fail_count == total and total > 0:
         exit_code = EXIT_TOTAL_FAILURE
     elif fail_count > 0:
         exit_code = EXIT_PARTIAL_FAILURE

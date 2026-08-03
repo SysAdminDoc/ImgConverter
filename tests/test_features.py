@@ -52,6 +52,7 @@ from imgconverter import (
     ConvertResult,
     EXIT_OK,
     EXIT_PARTIAL_FAILURE,
+    EXIT_CANCELLED,
     PRESETS,
     QUEUE_STATE_PATH,
     HAS_JPEG_RECOMPRESS,
@@ -150,6 +151,8 @@ class TestCLIValidation:
             (["--input", "photos", "--max-file-size", "huge"], "--max-file-size"),
             (["--input", "photos", "--max-file-size", "0"], "--max-file-size"),
             (["--input", "photos", "--max-file-size", "-1"], "--max-file-size"),
+            (["--input", "photos", "--proof", "0"], "--proof"),
+            (["--input", "photos", "--proof", "-2"], "--proof"),
         ],
     )
     def test_invalid_numeric_cli_values_report_errors(self, argv, message):
@@ -193,6 +196,26 @@ class TestCLIValidation:
         args = _build_parser().parse_args(["--input", "photos", "--use-processes"])
 
         assert any("--use-processes" in error for error in _validate_cli_args(args))
+
+    def test_cli_streams_reconfigure_to_utf8_with_replacement(self, monkeypatch):
+        import imgconverter
+
+        class FakeStream:
+            def __init__(self):
+                self.calls = []
+
+            def reconfigure(self, **kwargs):
+                self.calls.append(kwargs)
+
+        stdout = FakeStream()
+        stderr = FakeStream()
+        monkeypatch.setattr(imgconverter.sys, "stdout", stdout)
+        monkeypatch.setattr(imgconverter.sys, "stderr", stderr)
+
+        imgconverter._configure_cli_streams()
+
+        assert stdout.calls == [{"encoding": "utf-8", "errors": "replace"}]
+        assert stderr.calls == [{"encoding": "utf-8", "errors": "replace"}]
 
 
 class TestSupportBundle:
@@ -2120,6 +2143,127 @@ class TestQueuePersistence:
         assert str(good) in state["done"]
         assert str(bad) in state["failed"]
         assert str(good) not in state["pending"]
+
+    def test_resume_requires_matching_recipe(self, rgb_image, tmp_workdir, monkeypatch, capsys):
+        import imgconverter
+
+        src = tmp_workdir / "src"
+        src.mkdir()
+        first = src / "first.bmp"
+        second = src / "second.bmp"
+        rgb_image.save(first)
+        rgb_image.save(second)
+        output = tmp_workdir / "out"
+        queue_path = tmp_workdir / "queue.json"
+        monkeypatch.setattr(imgconverter, "QUEUE_STATE_PATH", queue_path)
+        queue_path.write_text(json.dumps({
+            "version": imgconverter.APP_VERSION,
+            "input": str(src.resolve()),
+            "output": str(output.resolve()),
+            "format": "jpeg",
+            "quality": 92,
+            "pending": [str(second)],
+            "done": [str(first)],
+            "failed": [],
+        }), encoding="utf-8")
+
+        args = _build_parser().parse_args([
+            "--input", str(src), "--output", str(output),
+            "--format", "png", "--resume", "--no-recursive",
+        ])
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        assert exc.value.code == EXIT_OK
+        assert (output / "first.png").exists()
+        assert (output / "second.png").exists()
+        assert "no compatible previous queue" in capsys.readouterr().out
+
+    def test_keyboard_interrupt_saves_queue_and_returns_cancelled(
+        self, rgb_image, tmp_workdir, monkeypatch
+    ):
+        import concurrent.futures
+        import imgconverter
+
+        src = tmp_workdir / "src"
+        src.mkdir()
+        image = src / "image.bmp"
+        rgb_image.save(image)
+        output = tmp_workdir / "out"
+        saved = {}
+
+        class InterruptingExecutor:
+            shutdown_calls = []
+
+            def __init__(self, max_workers):
+                self.max_workers = max_workers
+
+            def submit(self, *args, **kwargs):
+                raise KeyboardInterrupt
+
+            def shutdown(self, **kwargs):
+                self.shutdown_calls.append(kwargs)
+
+        executor = InterruptingExecutor
+        monkeypatch.setattr(concurrent.futures, "ThreadPoolExecutor", executor)
+        monkeypatch.setattr(
+            imgconverter,
+            "_save_queue_state",
+            lambda input_dir, output_dir, args, pending, done, failed: saved.update({
+                "input": input_dir,
+                "output": output_dir,
+                "pending": pending,
+                "done": done,
+                "failed": failed,
+            }),
+        )
+        monkeypatch.setattr(imgconverter, "_append_batch_history", lambda record: (True, ""))
+
+        args = _build_parser().parse_args([
+            "--input", str(src), "--output", str(output),
+            "--format", "png", "--no-recursive",
+        ])
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        assert exc.value.code == EXIT_CANCELLED
+        assert saved["pending"] == [image]
+        assert executor.shutdown_calls == [{"wait": False, "cancel_futures": True}]
+
+    def test_watch_keyboard_interrupt_returns_cancelled(self, tmp_workdir, monkeypatch):
+        import builtins
+        import imgconverter
+        import time as real_time
+
+        source = tmp_workdir / "watch"
+        source.mkdir()
+        output = tmp_workdir / "out"
+        args = _build_parser().parse_args([
+            "--input", str(source), "--output", str(output),
+            "--format", "png", "--watch", "--watch-interval", "1",
+        ])
+
+        def interrupt_sleep(_seconds):
+            raise KeyboardInterrupt
+
+        class ClockProxy:
+            def __getattr__(self, name):
+                return getattr(real_time, name)
+
+            sleep = staticmethod(interrupt_sleep)
+
+        monkeypatch.setattr(imgconverter, "time", ClockProxy())
+
+        real_import = builtins.__import__
+
+        def without_watchdog(name, *args, **kwargs):
+            if name.startswith("watchdog"):
+                raise ImportError("watchdog disabled for polling-path test")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", without_watchdog)
+
+        assert imgconverter._watch_directory(args, source, output) == EXIT_CANCELLED
 
 
 # ── 19. Multi-frame export ─────────────────────────────────────────────────

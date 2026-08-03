@@ -20,22 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — No KeyboardInterrupt handling in `_run_cli`; documented `EXIT_CANCELLED` (5) is dead
-  Why: Ctrl-C propagates; executor `__exit__` does `shutdown(wait=True)` without cancel_futures so in-flight conversions keep running (appears hung), then traceback + wrong exit code; queue-state save, `--report`, history, and `batch_done` event all skipped. `EXIT_CANCELLED` defined at line 43 and referenced nowhere.
-  Where: `imgconverter.py:11675-11815, 43`. Fix: try/except KeyboardInterrupt → `pool.shutdown(wait=False, cancel_futures=True)`, save queue state, exit 5; `_watch_directory` Ctrl-C returns 5 too (currently EXIT_OK at 10752).
-
-- [ ] P2 — Windows piped/redirected stdout crashes on non-ANSI filenames
-  Why: No `sys.stdout.reconfigure`; with output redirected, stdout encoding is the ANSI code page (cp1252) and per-file prints of `result.src.name` raise UnicodeEncodeError for e.g. CJK names, killing the batch mid-run.
-  Where: `imgconverter.py:11711, 11718, 11725, 10723` (prints). Fix: at CLI entry, `s.reconfigure(encoding="utf-8", errors="replace")` for stdout/stderr (guard with hasattr).
-
-- [ ] P2 — `--resume` only matches on input dir; ignores stored format/quality/output (version recorded, never checked)
-  Why: Resume after changing `--format`/`--output` silently skips files "done" under old settings — outputs for the new format never produced.
-  Where: `imgconverter.py:10567-10577, 11467-11477`. Fix: extend the guard to compare format/quality/output; warn on version mismatch.
-
-- [ ] P2 — `--proof 0` (or negative) silently runs the FULL batch
-  Why: `if proof_n is not None and proof_n > 0:` falls through to real conversion — the opposite of "sample only". No validation in `_validate_cli_args`.
-  Where: `imgconverter.py:11519-11520, 10983-11092`. Fix: reject `--proof < 1` in validation.
-
 - [ ] P2 — Watchdog `_WatchHandler` has no `on_moved` — atomic-rename drops invisible
   Why: `.tmp`/`.part` → final rename (browsers, rsync, camera importers) emits FileMovedEvent only; watchdog mode has no rescan, so these files are never converted. (Imported FileCreatedEvent/FileModifiedEvent at 10629 are unused.)
   Where: `imgconverter.py:10631-10644`. Fix: add `on_moved` enqueuing `Path(event.dest_path)` when suffix is supported.
