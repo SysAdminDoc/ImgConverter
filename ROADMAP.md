@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `--untrust-plugin` cannot remove entry-point records with dotless versions
-  Why: `ep:pkg==2:plug` has no `Path.suffix` → `.py` appended → key mismatch → "no trusted entry". Dotted versions survive only by accident.
-  Where: `imgconverter.py:807-814, 673-677`. Fix: bypass the `.py` mangling for `ep:`-prefixed refs.
-
 - [ ] P3 — `_CLI_ONLY` detection misses `--input=PATH` form and GUI-free admin flags; dead PyQt6 stub block
   Why: `--input=x` (equals form), `--trust-plugin`, `--untrust-plugin`, `--watch` don't trigger CLI mode detection. The ~25-line Qt stub-class block (1139-1188) is reachable only for partially-broken PyQt6 installs while its own message advertises headless use that `_check_required_deps_or_exit` (hard exit 3) makes impossible.
   Where: `imgconverter.py:106-123, 1139-1188`. Fix: extend `_CLI_ONLY` detection; either make CLI genuinely PyQt6-optional or delete the stub and fix the message.

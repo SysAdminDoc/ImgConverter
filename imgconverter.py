@@ -726,6 +726,8 @@ def _resolve_plugin_ref(ref: str | Path) -> Path:
 
 
 def _plugin_name_from_ref(ref: str | Path) -> str:
+    if str(ref).startswith("ep:"):
+        return str(ref)
     name = Path(ref).name
     if Path(name).suffix == "":
         name += ".py"

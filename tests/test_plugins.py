@@ -162,6 +162,29 @@ def test_entrypoint_plugin_rows_can_be_trusted_by_trust_ref(tmp_workdir, monkeyp
     assert rows[0]["hash_prefix"] == "a" * 12
 
 
+def test_untrust_entrypoint_ref_keeps_manifest_key_verbatim(tmp_workdir, monkeypatch):
+    import imgconverter
+
+    plugin_dir = tmp_workdir / "plugins"
+    plugin_dir.mkdir()
+    ep_info = {
+        "name": "demo",
+        "package": "imgconverter-demo",
+        "version": "2",
+        "module": "imgconverter_demo:register",
+        "trust_key": "ep:imgconverter-demo==2:demo",
+        "sha256": "b" * 64,
+    }
+    monkeypatch.setattr(imgconverter, "_plugin_dir", lambda: plugin_dir)
+    monkeypatch.setattr(imgconverter, "_discover_entrypoint_plugins", lambda: [ep_info])
+
+    ok, msg = imgconverter._trust_plugin(ep_info["trust_key"])
+    assert ok, msg
+    ok, msg = imgconverter._untrust_plugin(ep_info["trust_key"])
+    assert ok, msg
+    assert ep_info["trust_key"] not in imgconverter._load_plugin_trust()
+
+
 def test_entrypoint_distribution_digest_tracks_module_changes(tmp_workdir):
     import imgconverter
 

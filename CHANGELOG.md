@@ -28,6 +28,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Made trusted local plugin execution compile the exact bytes used for the trust hash, closing the reload window.
 - Marked PEP 660 editable entry-point installs as requiring re-audit instead of granting metadata-only trust.
 - Guaranteed C2PA SDK reader cleanup when manifest parsing or validation fails.
+- Fixed `--untrust-plugin` for entry-point package refs with dotless versions.
 
 ## [v3.6.0] — 2026-07-10
 
