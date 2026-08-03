@@ -3027,6 +3027,43 @@ class TestQtAccessibility:
         assert not w.resize_spin.isEnabled()
         assert not w.only_if_smaller_spin.isEnabled()
 
+    def test_scan_validation_keeps_summary_surface_unchanged(self, tmp_workdir):
+        w = self.window
+        w.src_edit.setText(str(tmp_workdir))
+        original_filters = {
+            name: checkbox.isChecked()
+            for name, checkbox in w._format_filters.items()
+        }
+        original_max_size = w.max_file_size_edit.text()
+        try:
+            w.summary_empty.setVisible(False)
+            w.stats_frame.setVisible(True)
+            w.progress_bar.setVisible(True)
+            w.progress_bar.setValue(42)
+            for checkbox in w._format_filters.values():
+                checkbox.setChecked(False)
+
+            w._scan()
+
+            assert w.summary_empty.isHidden()
+            assert not w.stats_frame.isHidden()
+            assert not w.progress_bar.isHidden()
+            assert w.progress_bar.value() == 42
+
+            for name, checked in original_filters.items():
+                w._format_filters[name].setChecked(checked)
+            w.max_file_size_edit.setText("not-a-size")
+            w._scan()
+
+            assert w.summary_empty.isHidden()
+            assert not w.stats_frame.isHidden()
+            assert not w.progress_bar.isHidden()
+            assert w.progress_bar.value() == 42
+        finally:
+            for name, checked in original_filters.items():
+                w._format_filters[name].setChecked(checked)
+            w.max_file_size_edit.setText(original_max_size)
+
     def test_file_progress_timer_starts_and_bar_text_is_visible(self):
         w = self.window
 

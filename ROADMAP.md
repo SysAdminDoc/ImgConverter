@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `_scan` validation-error paths leave the summary panel half-mutated
-  Why: Panel visibility mutations run before the empty-format-filter and max-file-size checks; on those error returns the panel is stuck pseudo-scanning (progress bar visible at stale value, empty-state hidden).
-  Where: `imgconverter.py:9313-9333`. Fix: validate before mutating, or restore visibility on error paths.
-
 - [ ] P3 — Review-table same-format warning: dead nested condition drops PNG/WebP cases
   Why: Outer condition tests JPEG|PNG|WEBP suffixes but inner body only warns for JPEG; PNG→auto commonly no-ops with no warning.
   Where: `imgconverter.py:8555-8557`. Fix: warn for all three or simplify.

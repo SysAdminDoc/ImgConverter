@@ -51,6 +51,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Replaced unsafe conversion-thread termination on close with a hidden finishing state that closes after the executor exits.
 - Converted dynamic GUI copy to stable Qt translation templates with post-translation formatting, including progress, dialogs, titles, and command previews.
 - Normalized recent source-directory keys for case-insensitive deduplication and ignored malformed recent-directory settings.
+- Validated scan filters and maximum file size before mutating the summary and progress panels.
 
 ## [v3.6.0] — 2026-07-10
 

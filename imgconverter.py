@@ -10044,6 +10044,20 @@ class MainWindow(QMainWindow):
             self._set_line_error(self.src_edit, self.tr("Select a valid source folder before scanning."))
             return
 
+        enabled_exts = self._get_enabled_extensions()
+        if not enabled_exts:
+            self._log("[ERROR] No input formats selected in the filter panel.")
+            self._set_workflow_state(self.tr("Needs input"), self.tr("Select at least one available input format."))
+            return
+
+        exclude_patterns = _split_patterns(self.exclude_edit.text())
+        max_file_size_text = self.max_file_size_edit.text().strip()
+        max_file_size = _parse_size_spec(max_file_size_text)
+        if max_file_size_text and max_file_size is None:
+            self._log(f"[ERROR] Invalid max file size: {max_file_size_text}")
+            self._set_line_error(self.max_file_size_edit, self.tr("Use a size like 500MB, 2GB, or leave it blank."))
+            return
+
         self._update_title()
         self.scan_btn.setEnabled(False)
         self.convert_btn.setEnabled(False)
@@ -10057,21 +10071,6 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(True)
         self._log(f"[SCAN] {src}")
 
-        enabled_exts = self._get_enabled_extensions()
-        if not enabled_exts:
-            self._log("[ERROR] No input formats selected in the filter panel.")
-            self.scan_btn.setEnabled(True)
-            self._set_workflow_state(self.tr("Needs input"), self.tr("Select at least one available input format."))
-            return
-
-        exclude_patterns = _split_patterns(self.exclude_edit.text())
-        max_file_size_text = self.max_file_size_edit.text().strip()
-        max_file_size = _parse_size_spec(max_file_size_text)
-        if max_file_size_text and max_file_size is None:
-            self.scan_btn.setEnabled(True)
-            self._log(f"[ERROR] Invalid max file size: {max_file_size_text}")
-            self._set_line_error(self.max_file_size_edit, self.tr("Use a size like 500MB, 2GB, or leave it blank."))
-            return
         if exclude_patterns:
             self._log(f"[FILTER] Excluding: {', '.join(exclude_patterns)}")
         if max_file_size is not None:
