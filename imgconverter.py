@@ -4888,6 +4888,14 @@ def _fmt_size(b: int) -> str:
     return f"{b:.1f} TB"
 
 
+def _size_or_zero(path: Path) -> int:
+    """Return a file size without failing if a scanned path vanishes."""
+    try:
+        return int(Path(path).stat().st_size)
+    except (OSError, ValueError):
+        return 0
+
+
 def _safe_history_int(value, default: int = 0) -> int:
     """Coerce a history number without letting foreign JSON break the UI."""
     try:
@@ -7078,17 +7086,14 @@ class DuplicateReviewDialog(QDialog):
         self._populating = True
         row_idx = 0
         for gi, group in enumerate(groups, start=1):
-            sorted_group = sorted(group, key=lambda p: p.stat().st_size if p.exists() else 0, reverse=True)
+            sorted_group = sorted(group, key=_size_or_zero, reverse=True)
             for fi, f in enumerate(sorted_group):
                 self.table.insertRow(row_idx)
                 self.table.setItem(row_idx, 0, QTableWidgetItem(f"#{gi}"))
                 name_item = QTableWidgetItem(f.name)
                 name_item.setToolTip(str(f))
                 self.table.setItem(row_idx, 1, name_item)
-                try:
-                    size = f.stat().st_size
-                except OSError:
-                    size = 0
+                size = _size_or_zero(f)
                 self.table.setItem(row_idx, 2, QTableWidgetItem(_fmt_size(size)))
                 action_item = QTableWidgetItem(self.tr("Keep") if fi == 0 else self.tr("Skip smaller file"))
                 action_item.setData(Qt.ItemDataRole.UserRole, str(f))
@@ -9455,7 +9460,7 @@ class MainWindow(QMainWindow):
             ]
             removed = pre - len(self._scan_result.files)
             self._scan_result.total_size = sum(
-                f.stat().st_size for f in self._scan_result.files
+                _size_or_zero(f) for f in self._scan_result.files
             )
             self._set_stat_value(self.stat_files, str(len(self._scan_result.files)))
             self._set_stat_value(self.stat_size, _fmt_size(self._scan_result.total_size))
@@ -9532,7 +9537,7 @@ class MainWindow(QMainWindow):
 
         if files:
             files.sort()
-            total_size = sum(f.stat().st_size for f in files if f.exists())
+            total_size = sum(_size_or_zero(f) for f in files)
             self._scan_result = ScanResult(files=files, total_size=total_size, elapsed=0)
             common_parent = str(Path(os.path.commonpath([str(f.parent) for f in files])))
             self.src_edit.setText(common_parent)
@@ -12456,7 +12461,7 @@ def _run_cli(args):
             done_set = set(state.get("done", []))
             pre = len(scan.files)
             scan.files = [f for f in scan.files if str(f) not in done_set]
-            scan.total_size = sum(f.stat().st_size for f in scan.files)
+            scan.total_size = sum(_size_or_zero(f) for f in scan.files)
             print(f"[resume] {pre - len(scan.files)} files already done in previous run; "
                   f"continuing with {len(scan.files)}")
         else:
@@ -12484,11 +12489,11 @@ def _run_cli(args):
                     groups = _dedup_groups(dupes)
                     skip_set: set[Path] = set()
                     for group in groups:
-                        largest = max(group, key=lambda p: p.stat().st_size)
+                        largest = max(group, key=_size_or_zero)
                         skip_set |= set(group) - {largest}
                     pre = len(scan.files)
                     scan.files = [f for f in scan.files if f not in skip_set]
-                    scan.total_size = sum(f.stat().st_size for f in scan.files)
+                    scan.total_size = sum(_size_or_zero(f) for f in scan.files)
                     print(f"[dedup] skipped {pre - len(scan.files)} near-duplicates, "
                           f"converting {len(scan.files)} unique files")
             else:

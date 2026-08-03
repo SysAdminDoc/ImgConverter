@@ -37,6 +37,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Cached source C2PA marker detection in the opened-image metadata path to avoid duplicate scans.
 - Clarified that `--max-memory` reports a warning threshold and does not throttle worker submissions.
 - Completed CLI progress events with `file_start` and animated-source `file_done` records.
+- Guarded CLI and GUI size summaries against files disappearing between scan and use.
 
 ## [v3.6.0] — 2026-07-10
 

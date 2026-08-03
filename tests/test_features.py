@@ -25,6 +25,7 @@ from imgconverter import (
     _build_convert_options,
     _parse_hex_rgb,
     _prune_watch_state,
+    _size_or_zero,
     ADJUST_PRESETS,
     SOCIAL_PRESETS,
     _build_parser,
@@ -1904,6 +1905,9 @@ class TestScanExclude:
         )
 
         assert result.files == [scan_root / "photo.jpg"]
+
+    def test_size_or_zero_handles_vanished_scan_paths(self, tmp_workdir):
+        assert _size_or_zero(tmp_workdir / "vanished.jpg") == 0
 
     def test_stdin_files_preserves_utf8_and_filename_whitespace(self, tmp_workdir, monkeypatch):
         import io

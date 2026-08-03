@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Unhandled OSError from `stat()` on files that vanish between scan and use (CLI + GUI)
-  Why: `--resume` total-size recompute (11473), dedup max-size pick (11498, 11502), GUI post-dedup sum (8819-8821), DuplicateReviewDialog sort key TOCTOU (6661 — `exists()` then `stat()`) all raise on vanished files → traceback/abort.
-  Where: as listed. Fix: `_size_or_zero(p)` helper returning 0 on OSError, use everywhere.
-
 - [ ] P3 — Conflicting/ignored CLI flag combinations accepted silently
   Why: `--watch --dry-run` watches for real (watch short-circuits before dry-run); `--watch` silently ignores `--report/--progress/--use-cache/--resume/--dedup-*/--when-done` and never writes history; `--in-place --output` ignores output without a word; `--stdin-null` without `--stdin-files` is a no-op.
   Where: `imgconverter.py:11442-11446, 11512, 11357-11360, 11107`. Fix: reject or warn in `_validate_cli_args`.
