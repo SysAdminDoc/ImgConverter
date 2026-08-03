@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `os.path.commonpath` crash on multi-root file drops
-  Why: Drops spanning drives (Everything search results, UNC + local) raise ValueError in the slot → abort.
-  Where: `imgconverter.py:8883`. Fix: try/except → fall back to first file's parent.
-
 - [ ] P3 — `_paste_clipboard` ignores `QImage.save()` failure
   Why: save returns False (disk full, unwritable cache) → `tmp_path.stat()` FileNotFoundError in slot → abort.
   Where: `imgconverter.py:8918-8920`. Fix: check the return, surface via `_set_workflow_state`.

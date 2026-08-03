@@ -32,6 +32,7 @@ from imgconverter import (
     _build_parser,
     _is_cli_only_argv,
     _build_quality_mode,
+    _common_parent_for_paths,
     _convert_animated_or_sequence,
     _estimate_output_size,
     import_preset_bundle,
@@ -1955,6 +1956,19 @@ class TestScanExclude:
 
     def test_size_or_zero_handles_vanished_scan_paths(self, tmp_workdir):
         assert _size_or_zero(tmp_workdir / "vanished.jpg") == 0
+
+    def test_common_parent_falls_back_for_multi_root_selection(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        first = tmp_workdir / "first" / "one.jpg"
+        second = tmp_workdir / "second" / "two.jpg"
+        monkeypatch.setattr(
+            imgconverter.os.path,
+            "commonpath",
+            lambda _paths: (_ for _ in ()).throw(ValueError("different roots")),
+        )
+
+        assert _common_parent_for_paths([first.parent, second.parent]) == first.parent.resolve()
 
     def test_stdin_files_preserves_utf8_and_filename_whitespace(self, tmp_workdir, monkeypatch):
         import io

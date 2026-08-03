@@ -42,6 +42,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Expanded `--output` and `--report` user-home paths consistently with CLI inputs.
 - Limited watch-mode retries to transient filesystem error numbers instead of retrying permanent failures.
 - Reported missing `imagehash` as an unavailable deduplication dependency instead of an empty result.
+- Made multi-root file selections fall back to the first selected parent instead of crashing on `commonpath`.
 
 ## [v3.6.0] — 2026-07-10
 

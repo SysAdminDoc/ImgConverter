@@ -9540,7 +9540,7 @@ class MainWindow(QMainWindow):
             files.sort()
             total_size = sum(_size_or_zero(f) for f in files)
             self._scan_result = ScanResult(files=files, total_size=total_size, elapsed=0)
-            common_parent = str(Path(os.path.commonpath([str(f.parent) for f in files])))
+            common_parent = str(_common_parent_for_paths([f.parent for f in files]))
             self.src_edit.setText(common_parent)
             if not self.dst_edit.text() and not self.inplace_chk.isChecked():
                 self.dst_edit.setText(str(Path(common_parent) / "converted"))
@@ -12024,6 +12024,19 @@ def _validate_cli_args(args) -> list[str]:
     return errors
 
 
+def _common_parent_for_paths(paths: list[Path]) -> Path:
+    """Find a shared parent, falling back safely for multi-root selections."""
+    if not paths:
+        return Path.cwd().resolve()
+    try:
+        return Path(os.path.commonpath([str(path) for path in paths])).resolve()
+    except (ValueError, OSError):
+        try:
+            return paths[0].resolve()
+        except OSError:
+            return paths[0]
+
+
 def _collect_cli_input_refs(args) -> tuple[Path, list[Path], list[Path]]:
     """Resolve CLI file/directory selections into a common base, dirs, and files."""
     refs: list[Path] = []
@@ -12069,10 +12082,7 @@ def _collect_cli_input_refs(args) -> tuple[Path, list[Path], list[Path]]:
         sys.exit(EXIT_INPUT_ERROR)
 
     common_inputs = dirs + [f.parent for f in files]
-    try:
-        base_dir = Path(os.path.commonpath([str(p) for p in common_inputs])).resolve()
-    except (ValueError, OSError):
-        base_dir = Path.cwd().resolve()
+    base_dir = _common_parent_for_paths(common_inputs)
     return base_dir, dirs, files
 
 
