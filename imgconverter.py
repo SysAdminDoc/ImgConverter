@@ -727,7 +727,12 @@ def _plugin_name_from_ref(ref: str | Path) -> str:
     return name
 
 
-def _plugin_trust_status(py: Path, records: dict[str, dict]) -> tuple[str, str]:
+def _plugin_trust_status(
+    py: Path,
+    records: dict[str, dict],
+    *,
+    digest: str | None = None,
+) -> tuple[str, str]:
     if py.name.startswith("_"):
         return "skipped", "helper module"
     if py.suffix.lower() != ".py":
@@ -736,10 +741,11 @@ def _plugin_trust_status(py: Path, records: dict[str, dict]) -> tuple[str, str]:
         return "blocked", "symlinked plugin files are not loaded"
     if not py.is_file():
         return "blocked", "not a regular file"
-    try:
-        digest = _file_sha256(py)
-    except OSError as e:
-        return "blocked", str(e)
+    if digest is None:
+        try:
+            digest = _file_sha256(py)
+        except OSError as e:
+            return "blocked", str(e)
     record = records.get(py.name)
     if not record:
         return "untrusted", f"run --trust-plugin {py.name} after auditing it"
@@ -994,7 +1000,16 @@ def _load_plugins() -> list[str]:
     plugin_dir = _plugin_dir()
     if plugin_dir.is_dir():
         for py in sorted(plugin_dir.glob("*.py")):
-            status, detail = _plugin_trust_status(py, trust_records)
+            try:
+                source_bytes = py.read_bytes()
+            except OSError as exc:
+                print(f"[plugins] skipped {py.name}: {exc}", file=sys.stderr)
+                continue
+            import hashlib
+            source_digest = hashlib.sha256(source_bytes).hexdigest()
+            status, detail = _plugin_trust_status(
+                py, trust_records, digest=source_digest,
+            )
             if status != "trusted":
                 print(f"[plugins] skipped {py.name}: {detail}", file=sys.stderr)
                 continue
@@ -1003,7 +1018,8 @@ def _load_plugins() -> list[str]:
                 spec = importlib.util.spec_from_file_location(mod_name, py)
                 if spec and spec.loader:
                     mod = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(mod)
+                    code = compile(source_bytes, str(py), "exec")
+                    exec(code, mod.__dict__)
                     if hasattr(mod, "register"):
                         capabilities = mod.register({"app_version": APP_VERSION})
                         registered = _register_plugin_capabilities(py.stem, capabilities)

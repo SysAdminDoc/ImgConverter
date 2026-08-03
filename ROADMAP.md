@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Plugin trust: TOCTOU between hash check and module execution
-  Why: Executed bytes are re-read from disk after the trust hash was computed; concurrent write in the window loads unaudited code. (Same-user boundary — hardening, not a privilege escalation.)
-  Where: `imgconverter.py:690 vs 953-956`. Fix: read bytes once, hash those bytes, `exec(compile(...))`.
-
 - [ ] P3 — Entry-point trust digest blind to editable installs
   Why: PEP 660 editable installs produce a digest over metadata only; source edits keep "trusted" status, defeating v3.3.3 pinning for the dev-install case.
   Where: `imgconverter.py:705-743`. Fix: detect `direct_url.json` `dir_info.editable` → return `""` so status becomes "changed".

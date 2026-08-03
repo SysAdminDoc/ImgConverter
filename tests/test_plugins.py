@@ -54,6 +54,33 @@ def test_trusted_plugin_loads_then_hash_change_blocks_it(tmp_workdir, monkeypatc
     assert not marker.exists()
 
 
+def test_trusted_plugin_executes_bytes_that_were_hashed(tmp_workdir, monkeypatch):
+    import imgconverter
+
+    plugin_dir = tmp_workdir / "plugins"
+    plugin_dir.mkdir()
+    marker = tmp_workdir / "loaded.txt"
+    plugin = plugin_dir / "01-atomic.py"
+    original = _plugin_source(marker, "original")
+    plugin.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(imgconverter, "_plugin_dir", lambda: plugin_dir)
+
+    ok, msg = imgconverter._trust_plugin(plugin)
+    assert ok, msg
+
+    original_read_bytes = Path.read_bytes
+
+    def mutate_after_read(path):
+        data = original_read_bytes(path)
+        if path == plugin:
+            path.write_text(_plugin_source(marker, "mutated"), encoding="utf-8")
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", mutate_after_read)
+    assert imgconverter._load_plugins() == ["01-atomic"]
+    assert marker.read_text(encoding="utf-8") == "original"
+
+
 def test_untrust_plugin_removes_manifest_entry(tmp_workdir, monkeypatch):
     import imgconverter
 
