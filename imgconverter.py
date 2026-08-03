@@ -6324,8 +6324,12 @@ def _configure_inventory_table(table: QTableWidget):
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
 
+def _app_settings():
+    return QSettings("ImgConverter", "ImgConverter")
+
+
 def _restore_dialog_geometry(dialog: QDialog, default_w: int, default_h: int):
-    settings = QSettings()
+    settings = _app_settings()
     key = f"dialog_geometry/{dialog.__class__.__name__}"
     geom = settings.value(key)
     if geom:
@@ -6333,7 +6337,7 @@ def _restore_dialog_geometry(dialog: QDialog, default_w: int, default_h: int):
     else:
         dialog.resize(default_w, default_h)
     def _on_close():
-        s = QSettings()
+        s = _app_settings()
         s.setValue(f"dialog_geometry/{dialog.__class__.__name__}", dialog.saveGeometry())
     dialog.finished.connect(_on_close)
 
@@ -7589,7 +7593,7 @@ class MainWindow(QMainWindow):
         self._icon = _create_app_icon()
         self.setWindowIcon(self._icon)
 
-        self.settings = QSettings("ImgConverter", "ImgConverter")
+        self.settings = _app_settings()
         self._scan_result: ScanResult | None = None
         self._worker: ConvertWorker | None = None
         self._dedup_worker = None
@@ -13127,6 +13131,8 @@ def main():
         sys.exit(EXIT_DEP_MISSING)
 
     app = QApplication(sys.argv)
+    app.setOrganizationName("ImgConverter")
+    app.setApplicationName("ImgConverter")
 
     branding_icon = _create_app_icon()
 

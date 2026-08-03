@@ -2963,6 +2963,32 @@ class TestQtAccessibility:
         w._fold_open_pause_span()
         assert w._paused_total == 9.5
 
+    def test_dialog_geometry_uses_named_settings_store(self, monkeypatch):
+        import imgconverter
+        from PyQt6.QtWidgets import QDialog
+
+        calls = []
+
+        class FakeSettings:
+            def __init__(self, *args):
+                calls.append(args)
+
+            def value(self, _key):
+                return None
+
+            def setValue(self, _key, _value):
+                return None
+
+        monkeypatch.setattr(imgconverter, "QSettings", FakeSettings)
+        dialog = QDialog()
+        try:
+            imgconverter._restore_dialog_geometry(dialog, 320, 240)
+        finally:
+            dialog.close()
+
+        assert calls
+        assert calls[0] == ("ImgConverter", "ImgConverter")
+
     def test_clipboard_save_failure_is_reported(self, tmp_workdir, monkeypatch):
         import imgconverter
 

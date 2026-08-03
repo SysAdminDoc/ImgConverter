@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `_restore_dialog_geometry` writes to a different QSettings store than the app
-  Why: Bare `QSettings()` without org/app names set on the QApplication → dialog geometry persists under a default key path, fragmenting persisted state.
-  Where: `imgconverter.py:5916-5927` vs `7118`. Fix: `app.setOrganizationName/ApplicationName` in `main()`.
-
 - [ ] P3 — Update-check QThread not shut down on close
   Why: Closing while a check is in flight destroys a running QThread with the window (same class as the ScanWorker item; low reach — opt-in + 24h throttle).
   Where: `imgconverter.py:7258-7267, 10073-10085`. Fix: wait in closeEvent or use daemon thread + signal bridge.
