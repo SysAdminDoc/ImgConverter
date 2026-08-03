@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Watermark text measurement allocates a full image-size RGBA layer
-  Why: `Image.new("RGBA", (iw, ih))` exists only for `textbbox`; ~400 MB transient per 100 MP file. A 1×1 probe measures identically.
-  Where: `imgconverter.py:2397-2398`.
-
 - [ ] P3 — Plugin trust: TOCTOU between hash check and module execution
   Why: Executed bytes are re-read from disk after the trust hash was computed; concurrent write in the window loads unaudited code. (Same-user boundary — hardening, not a privilege escalation.)
   Where: `imgconverter.py:690 vs 953-956`. Fix: read bytes once, hash those bytes, `exec(compile(...))`.

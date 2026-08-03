@@ -1255,6 +1255,23 @@ class TestWatermark:
         assert result.success
         assert any("watermark" in w for w in result.warnings)
 
+    def test_watermark_text_measurement_uses_tiny_probe(self, monkeypatch):
+        import imgconverter
+
+        calls = []
+        real_image_module = imgconverter._Image_module_alias()
+
+        class ImageProxy:
+            @staticmethod
+            def new(*args, **kwargs):
+                calls.append(args[1])
+                return real_image_module.new(*args, **kwargs)
+
+        monkeypatch.setattr(imgconverter, "_Image_module_alias", lambda: ImageProxy)
+        imgconverter._apply_watermark(Image.new("RGB", (1200, 800)), "Sample text|center|0.5")
+
+        assert calls[0] == (1, 1)
+
 
 # ── 4. Canvas resize ─────────────────────────────────────────────────────────
 

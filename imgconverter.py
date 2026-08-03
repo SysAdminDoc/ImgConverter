@@ -2486,7 +2486,7 @@ def _apply_watermark(img: "Image.Image", spec: str) -> "Image.Image":
         except OSError:
             font = ImageFont.load_default()
         # Measure text once on a throwaway draw.
-        probe_layer = _Image_module_alias().new("RGBA", (iw, ih), (0, 0, 0, 0))
+        probe_layer = _Image_module_alias().new("RGBA", (1, 1), (0, 0, 0, 0))
         d = ImageDraw.Draw(probe_layer)
         try:
             bbox = d.textbbox((0, 0), payload, font=font)

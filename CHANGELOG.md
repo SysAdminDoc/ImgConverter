@@ -24,6 +24,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Added the full 16-flag editing layer to the GUI Advanced options, including stacked look presets, social canvases, persistent controls, and updated CLI/GUI parity coverage.
 - Corrected hue rotation to use all 256 Pillow HSV hue slots.
 - Preserved variable animation frame durations and reduced multi-frame edit warnings to one per source file.
+- Reduced watermark text measurement memory from the full image size to a 1×1 probe.
 
 ## [v3.6.0] — 2026-07-10
 
