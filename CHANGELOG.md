@@ -7,6 +7,7 @@ All notable changes to ImgConverter will be documented in this file.
 ### Fixed
 
 - Prevented failed same-format in-place conversions from deleting the original source, and ensured editing and lossy-PNG requests bypass the same-format no-op guard.
+- Normalized ExifTool orientation after EXIF-transposed pixels, enforced metadata stripping in the libvips path, rejected invalid c2patool validation reports, and repaired ffmpeg-quality-metrics verification.
 
 ## [v3.6.0] — 2026-07-10
 

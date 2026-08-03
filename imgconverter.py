@@ -264,6 +264,10 @@ def _vips_convert(src: Path, dst: Path, fmt: str, quality: int) -> tuple[bool, s
             save_args["compression"] = 6
         elif fmt == "tiff":
             save_args["compression"] = "none"
+        # The vips backend is only available through the CLI's explicit
+        # strip-metadata acknowledgment. Keep that privacy contract true at
+        # the encoder boundary instead of relying on caller-side validation.
+        save_args["strip"] = True
         image.write_to_file(str(dst), **save_args)
         return True, "vips"
     except Exception as e:
@@ -359,6 +363,30 @@ def _verify_c2pa_tool(path: Path) -> dict[str, object] | None:
         if proc.returncode == 0:
             try:
                 manifest = json.loads(proc.stdout)
+                if isinstance(manifest, dict):
+                    validation_state = str(manifest.get("validation_state", "")).strip().lower()
+                    if validation_state and validation_state not in {"valid", "verified", "passed", "success", "ok"}:
+                        return {
+                            "status": "invalid",
+                            "error": _redact_text(validation_state[:200]),
+                        }
+                    validation_status = manifest.get("validation_status", [])
+                    if isinstance(validation_status, dict):
+                        validation_status = [validation_status]
+                    if isinstance(validation_status, list):
+                        failed_statuses = []
+                        for entry in validation_status:
+                            value = entry.get("status") if isinstance(entry, dict) else entry
+                            if value is None and isinstance(entry, dict):
+                                value = entry.get("state")
+                            normalized = str(value or "").strip().lower()
+                            if normalized and normalized not in {"valid", "verified", "passed", "success", "ok"}:
+                                failed_statuses.append(normalized)
+                        if failed_statuses:
+                            return {
+                                "status": "invalid",
+                                "error": _redact_text(", ".join(failed_statuses)[:200]),
+                            }
                 claim_gen = None
                 if isinstance(manifest, dict):
                     active = manifest.get("active_manifest")
@@ -371,7 +399,7 @@ def _verify_c2pa_tool(path: Path) -> dict[str, object] | None:
                     "manifest_count": len(manifest.get("manifests", {})) if isinstance(manifest, dict) else 0,
                 }
             except (json.JSONDecodeError, KeyError):
-                return {"status": "verified", "claim_generator": None, "manifest_count": 0}
+                return {"status": "not-verified", "error": "c2patool returned invalid JSON"}
         elif "no claim found" in (proc.stderr or proc.stdout or "").lower():
             return {"status": "no-manifest"}
         else:
@@ -385,6 +413,25 @@ def _verify_c2pa_tool(path: Path) -> dict[str, object] | None:
         return {"status": "not-verified", "error": _redact_text(str(e)[:200])}
 
 
+_QUALITY_WARNING_EMITTED = False
+
+
+def _quality_warning(message: str) -> None:
+    global _QUALITY_WARNING_EMITTED
+    if not _QUALITY_WARNING_EMITTED:
+        print(f"[WARN] quality verification unavailable: {message}", file=sys.stderr)
+        _QUALITY_WARNING_EMITTED = True
+
+
+def _metric_average(value) -> float | None:
+    if isinstance(value, dict):
+        value = value.get("average")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _verify_quality(src: Path, dst: Path) -> str | None:
     """Return a one-line quality summary string, or None if no tool is available."""
     if BUTTERAUGLI_PATH:
@@ -395,23 +442,26 @@ def _verify_quality(src: Path, dst: Path) -> str | None:
             )
             if pr.returncode == 0:
                 return f"butteraugli: {pr.stdout.strip().splitlines()[-1]}"
-        except Exception:
-            pass
+        except Exception as e:
+            _quality_warning(f"butteraugli failed: {e}")
     if HAS_FQM:
         try:
             pr = subprocess.run(
-                ["ffmpeg-quality-metrics", str(src), str(dst), "-m", "psnr,ssim"],
+                ["ffmpeg-quality-metrics", str(dst), str(src), "-m", "psnr", "ssim"],
                 capture_output=True, text=True, timeout=60,
             )
             if pr.returncode == 0:
                 # ffmpeg-quality-metrics outputs JSON
                 data = json.loads(pr.stdout)
-                psnr = data.get("global", {}).get("psnr", {}).get("psnr_avg")
-                ssim = data.get("global", {}).get("ssim", {}).get("ssim_avg")
+                psnr = _metric_average(data.get("global", {}).get("psnr", {}).get("psnr_avg"))
+                ssim = _metric_average(data.get("global", {}).get("ssim", {}).get("ssim_avg"))
                 if psnr is not None and ssim is not None:
                     return f"ffmpeg-quality-metrics: PSNR={psnr:.2f}dB SSIM={ssim:.4f}"
-        except Exception:
-            pass
+                _quality_warning("ffmpeg-quality-metrics returned incomplete metrics")
+            else:
+                _quality_warning((pr.stderr or pr.stdout or "ffmpeg-quality-metrics failed").strip()[:200])
+        except Exception as e:
+            _quality_warning(f"ffmpeg-quality-metrics failed: {e}")
     return None
 
 
@@ -1104,7 +1154,7 @@ def _run_exiftool_copy(src: Path, dst: Path,
         if "all" in groups:
             return False, "strip-all: skipping exiftool copy"
 
-        cmd.extend(["-all:all", "-unsafe", "-icc_profile"])
+        cmd.extend(["-all:all", "-unsafe", "-icc_profile", "-IFD0:Orientation=1"])
 
         if "gps" in groups:
             cmd.append("-gps:all=")

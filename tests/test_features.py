@@ -2271,6 +2271,29 @@ class TestVipsBackend:
         assert not result.success or any("metadata" in w.lower() for w in result.warnings), \
             "vips backend should warn about metadata loss or reject preserve_metadata=True"
 
+    def test_vips_encoder_always_requests_metadata_strip(self, monkeypatch):
+        import imgconverter
+
+        captured = {}
+
+        class FakeImage:
+            @staticmethod
+            def new_from_file(_path, **_kwargs):
+                return FakeImage()
+
+            def write_to_file(self, _path, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr(imgconverter, "HAS_VIPS", True)
+        monkeypatch.setattr(imgconverter, "pyvips", types.SimpleNamespace(Image=FakeImage))
+
+        ok, message = imgconverter._vips_convert(
+            Path("source.jpg"), Path("output.jpg"), "jpeg", 85,
+        )
+
+        assert ok, message
+        assert captured["strip"] is True
+
 
 # ── Preset Import ────────────────────────────────────────────────────────────
 

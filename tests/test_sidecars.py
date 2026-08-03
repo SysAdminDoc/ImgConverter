@@ -1,5 +1,6 @@
 """Tests for sidecar companion outputs (Live Photo, depth map, HDR gain map)."""
 import json
+import types
 
 import pytest
 
@@ -136,6 +137,68 @@ def test_c2pa_tool_fallback_still_verifies_without_sdk(tmp_workdir, monkeypatch)
         "status": "invalid",
         "error": "test",
     }
+
+
+def test_c2pa_tool_rejects_invalid_validation_state(tmp_workdir, monkeypatch):
+    src = tmp_workdir / "tampered.jpg"
+    src.write_bytes(b"fake-image-with-c2pa-marker")
+    monkeypatch.setattr(imgconverter, "C2PATOOL_PATH", "c2patool")
+    monkeypatch.setattr(imgconverter.subprocess, "run", lambda *_args, **_kwargs: types.SimpleNamespace(
+        returncode=0,
+        stdout=json.dumps({"validation_state": "Invalid", "manifests": {}}),
+        stderr="",
+    ))
+
+    result = imgconverter._verify_c2pa_tool(src)
+
+    assert result == {"status": "invalid", "error": "invalid"}
+
+
+def test_exiftool_copy_resets_orientation_after_pixel_transpose(tmp_workdir, monkeypatch):
+    src = tmp_workdir / "source.jpg"
+    dst = tmp_workdir / "output.jpg"
+    calls = []
+    monkeypatch.setattr(imgconverter, "HAS_EXIFTOOL", True)
+    monkeypatch.setattr(imgconverter, "EXIFTOOL_PATH", "exiftool")
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(imgconverter.subprocess, "run", fake_run)
+    ok, _message = imgconverter._run_exiftool_copy(src, dst)
+
+    assert ok
+    assert "-IFD0:Orientation=1" in calls[0]
+
+
+def test_verify_quality_uses_distorted_then_reference_and_nested_metrics(tmp_workdir, monkeypatch):
+    src = tmp_workdir / "source.jpg"
+    dst = tmp_workdir / "output.jpg"
+    calls = []
+    monkeypatch.setattr(imgconverter, "BUTTERAUGLI_PATH", None)
+    monkeypatch.setattr(imgconverter, "HAS_FQM", True)
+    monkeypatch.setattr(imgconverter, "_QUALITY_WARNING_EMITTED", False)
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({
+                "global": {
+                    "psnr": {"psnr_avg": {"average": 42.5}},
+                    "ssim": {"ssim_avg": {"average": 0.9876}},
+                },
+            }),
+            stderr="",
+        )
+
+    monkeypatch.setattr(imgconverter.subprocess, "run", fake_run)
+    line = imgconverter._verify_quality(src, dst)
+
+    assert line == "ffmpeg-quality-metrics: PSNR=42.50dB SSIM=0.9876"
+    assert calls[0][1:3] == [str(dst), str(src)]
+    assert calls[0][-3:] == ["-m", "psnr", "ssim"]
 
 
 def test_c2pa_verification_skips_when_no_verifier(tmp_workdir, monkeypatch):

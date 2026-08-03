@@ -18,22 +18,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P1 — Broken flagship behavior / security
 
-- [ ] P1 — ExifTool tag-copy restores Orientation after exif_transpose → double rotation
-  Why: Pixels are always orientation-baked and the tag stripped (~3766-3772), but with defaults (preserve_metadata + ExifTool installed) `_run_exiftool_copy` copies `-all:all` from source — restoring `Orientation=6/8` onto already-rotated pixels. Every phone photo with non-1 orientation renders double-rotated in EXIF-aware viewers.
-  Where: `imgconverter.py:4262-4271`, helper `1094-1136`. Fix: append `-IFD0:Orientation=1` (or `-Orientation=`) to the exiftool command.
-
-- [ ] P1 — vips backend ships full EXIF/GPS/XMP despite mandatory `--strip-metadata` acknowledgment
-  Why: `_vips_convert` never passes `strip=True`/`keep`; libvips preserves metadata by default. The CLI *forces* `--strip-metadata` to use `--backend vips` (~11053-11055), then the output retains everything including GPS, with warning text at ~3653 reinforcing the false belief it was dropped. Privacy feature does the opposite of what it reports.
-  Where: `imgconverter.py:249-267`, gate `11053-11055`, call `3620`. Fix: `save_args["strip"] = True` (or `keep=pyvips.enums.ForeignKeep.NONE` on libvips ≥8.15).
-
-- [ ] P1 — c2patool fallback reports tampered manifests as "verified"
-  Why: `_verify_c2pa_tool` returns `{"status": "verified"}` on `returncode == 0` without inspecting `validation_state`/`validation_status` in the JSON. c2patool stores signature/hash validation failures in the report and exits 0 — a tampered image is labeled "verified".
-  Where: `imgconverter.py:352-381`. Fix: parse stdout JSON, return "invalid" when `validation_state` is Invalid or any validation_status entry is non-passed.
-
-- [ ] P1 — `--verify-quality` ffmpeg-quality-metrics path is dead code, broken three ways
-  Why: (a) `-m psnr,ssim` comma form fails FQM's nargs="+" argparse → exit 2 → silent None on every run; (b) positional order is `<dist> <ref>` but code passes `(src, dst)` swapped — matters after `--resize` since FQM scales dist to ref; (c) schema read should be `data["global"]["psnr"]["psnr_avg"]["average"]` — code treats `psnr_avg` as scalar → TypeError swallowed by bare except. With only FQM installed, `--verify-quality` silently does nothing.
-  Where: `imgconverter.py:400-414`, call `11744-11748`. Fix all three; replace bare `except: pass` (399, 413-414) with a one-time stderr warning.
-
 - [ ] P1 — Watchdog-mode watch permanently drops files whose write completes between polls
   Why: The event drain does `candidates = list(pending_files); pending_files.clear()`. A file failing the size-stability check (including first sighting) is recorded in `seen_sizes` but NOT re-queued; it only converts if a NEW filesystem event arrives later. A small file fully copied between polls is never converted. Polling mode is immune (rescans each loop). Watch loop has zero test coverage.
   Where: `imgconverter.py:10683-10705`. Fix: re-add unstable candidates to `pending_files` (under `pending_lock`) so they re-evaluate next cycle. Supersedes the earlier "stability check requires only one identical reading" item — the two-sample check exists (10702-10705); the re-queue gap is the real defect.
