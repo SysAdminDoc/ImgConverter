@@ -24,6 +24,7 @@ from imgconverter import (
     _has_edits,
     _build_convert_options,
     _parse_hex_rgb,
+    _prune_watch_state,
     ADJUST_PRESETS,
     SOCIAL_PRESETS,
     _build_parser,
@@ -3127,6 +3128,22 @@ class TestWatchModeIntegration:
             seen_sizes[src] = size2
 
         assert current == [src], "Second poll with same size should proceed"
+
+    def test_watch_state_prunes_removed_paths(self, tmp_workdir):
+        stale = tmp_workdir / "removed.bmp"
+        live = tmp_workdir / "still-there.bmp"
+        live.write_bytes(b"image")
+        converted = {stale, live}
+        seen_sizes = {stale: 10, live: 5}
+        retry_queue = {stale: (1, 1.0), live: (1, 1.0)}
+
+        assert _prune_watch_state(converted, seen_sizes, retry_queue) == 1
+        assert stale not in converted
+        assert stale not in seen_sizes
+        assert stale not in retry_queue
+        assert live in converted
+        assert live in seen_sizes
+        assert live in retry_queue
 
     def test_convert_options_quality_forwarded(self, rgb_image, tmp_workdir):
         """ConvertOptions quality setting is respected in the conversion output."""

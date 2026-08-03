@@ -31,6 +31,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Fixed `--untrust-plugin` for entry-point package refs with dotless versions.
 - Expanded early headless-mode detection to equals-form inputs, watch/admin commands, and stdin flows, allowing CLI use without PyQt6.
 - Report entry-point discovery failures to the diagnostics log instead of silently hiding plugin metadata errors.
+- Pruned removed source paths from watch-mode state so re-dropped files with the same name can be processed again.
 
 ## [v3.6.0] — 2026-07-10
 

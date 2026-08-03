@@ -11324,6 +11324,28 @@ def _clear_queue_state():
         pass
 
 
+def _prune_watch_state(
+    converted: set[Path],
+    seen_sizes: dict[Path, int],
+    retry_queue: dict[Path, tuple[int, float]],
+) -> int:
+    """Forget source paths removed from a watched tree so they can be re-dropped."""
+    known = set(converted) | set(seen_sizes) | set(retry_queue)
+    removed = 0
+    for path in known:
+        try:
+            exists = path.exists()
+        except OSError:
+            continue
+        if exists:
+            continue
+        converted.discard(path)
+        seen_sizes.pop(path, None)
+        retry_queue.pop(path, None)
+        removed += 1
+    return removed
+
+
 def _watch_directory(args, input_dir: Path, output_dir: Path,
                      resize_mode: str = "none", resize_value: int = 1920) -> int:
     """Watch mode with optional watchdog filesystem events and polling fallback.
@@ -11418,6 +11440,7 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                 pending_files.update(_safe_walk(input_dir, set()))
 
         while True:
+            _prune_watch_state(converted, seen_sizes, retry_queue)
             current = []
 
             if observer is not None:

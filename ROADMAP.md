@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Watch mode `converted`/`seen_sizes` grow unbounded; stale entries suppress re-dropped same-name files forever
-  Why: Sets only grow; in hot-folder workflows a re-dropped same-name file is skipped permanently via `if p in converted`.
-  Where: `imgconverter.py:10619-10620, 10696, 10724-10747`. Fix: periodic existence sweep dropping entries whose paths no longer exist.
-
 - [ ] P3 — `_append_batch_history` read-modify-write with no lock; corrupt history silently replaced
   Why: Concurrent GUI/CLI sessions interleave load/write and lose records; `JSONDecodeError` → `[]` → corrupt file overwritten with single-record history, no user-visible signal.
   Where: `imgconverter.py:5170-5178, 5132-5146`. Fix: exclusive lock (msvcrt/fcntl) around load+write; rename corrupt file to `.corrupt-<ts>` before rewriting.
