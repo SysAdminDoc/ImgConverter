@@ -20,10 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — Watch-profile "Enabled/Paused" toggle has no effect — nothing watches the folders
-  Why: The `enabled` flag is written by the dialog and read back only for display; no QFileSystemWatcher/timer/startup hook runs enabled profiles, and CLI `--watch` never reads `watch-profiles.json`. Accessible description says "monitored for automatic conversion" — automation that doesn't exist. Only Run Now executes (and ignores `enabled`).
-  Where: `imgconverter.py:6356, 6377, 6490-6495, 6346, 6422, 8786`. Fix: wire enabled profiles to a real watcher in MainWindow, or drop the toggle and reword copy to "on-demand profiles".
-
 - [ ] P2 — BatchHistoryDialog aborts on corrupt/foreign history records
   Why: `_load_batch_history` validates only that records are dicts; nested `counts`/`bytes` values untrusted. `"counts": "3"` or `"bytes": {"before": "n/a"}` → AttributeError/ValueError in `_refresh` inside the constructor slot → abort.
   Where: `imgconverter.py:6195, 6229-6232` (contrast guarded `_row_values` 6210-6213). Fix: apply the same isinstance/coercion guards + try/except around int conversions.

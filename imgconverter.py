@@ -6432,7 +6432,12 @@ def _save_watch_profiles(profiles: list[dict]):
 
 
 def _loadable_watch_profiles(profiles: list[dict]) -> list[dict]:
-    """Return only watch-profile fields understood by the GUI watcher."""
+    """Return sanitized on-demand profile records.
+
+    Keep the legacy ``enabled`` field when reading and writing so older config
+    files remain loadable, but the GUI intentionally does not present it as a
+    live watcher switch.
+    """
     cleaned = []
     for raw in profiles:
         if not isinstance(raw, dict):
@@ -6495,13 +6500,13 @@ class WatchFolderDialog(QDialog):
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels([
-            self.tr("Source Folder"), self.tr("Output Folder"), self.tr("Preset"), self.tr("Enabled"),
+            self.tr("Source Folder"), self.tr("Output Folder"), self.tr("Preset"), self.tr("Mode"),
             self.tr("Last Run"), self.tr("Converted"), self.tr("Status"),
         ])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAccessibleName(self.tr("Watch folder profiles"))
-        self.table.setAccessibleDescription(self.tr("Local folders monitored for automatic conversion"))
+        self.table.setAccessibleDescription(self.tr("Saved local folders available for on-demand conversion"))
         _configure_inventory_table(self.table)
         self.table.itemSelectionChanged.connect(self._update_actions)
         layout.addWidget(self.table)
@@ -6511,7 +6516,6 @@ class WatchFolderDialog(QDialog):
         buttons.setSpacing(8)
         self.add_btn = QPushButton(self.tr("Add Profile"))
         self.remove_btn = QPushButton(self.tr("Remove"))
-        self.toggle_btn = QPushButton(self.tr("Enable"))
         self.run_now_btn = QPushButton(self.tr("Run Now"))
         self.close_btn = QPushButton(self.tr("Close"))
         self.add_btn.setObjectName("primaryBtn")
@@ -6520,25 +6524,21 @@ class WatchFolderDialog(QDialog):
         self.close_btn.setObjectName("secondaryBtn")
         self.add_btn.setIcon(_create_line_icon("add-folder"))
         self.remove_btn.setIcon(_create_line_icon("trash", CAT["red"]))
-        self.toggle_btn.setIcon(_create_line_icon("check"))
         self.run_now_btn.setIcon(_create_line_icon("play", CAT["crust"]))
         buttons.addWidget(self.add_btn)
         buttons.addWidget(self.run_now_btn)
         buttons.addStretch()
-        buttons.addWidget(self.toggle_btn)
         buttons.addWidget(self.remove_btn)
         buttons.addWidget(self.close_btn)
         layout.addLayout(buttons)
 
         self.add_btn.clicked.connect(self._add_profile)
         self.remove_btn.clicked.connect(self._remove_selected)
-        self.toggle_btn.clicked.connect(self._toggle_selected)
         self.run_now_btn.clicked.connect(self._run_now)
         self.close_btn.clicked.connect(self.accept)
         for button, name, desc in (
             (self.add_btn, self.tr("Add watch profile"), self.tr("Create a local folder watch profile")),
             (self.remove_btn, self.tr("Remove watch profile"), self.tr("Remove the selected watch profile")),
-            (self.toggle_btn, self.tr("Toggle watch profile"), self.tr("Enable or disable the selected watch profile")),
             (self.run_now_btn, self.tr("Run now"), self.tr("Run a one-shot conversion for the selected profile")),
             (self.close_btn, self.tr("Close watch profiles"), self.tr("Close the watch folder profiles dialog")),
         ):
@@ -6555,7 +6555,7 @@ class WatchFolderDialog(QDialog):
                 p.get("source", ""),
                 p.get("output", ""),
                 p.get("preset", "Default"),
-                self.tr("Enabled") if p.get("enabled") else self.tr("Paused"),
+                self.tr("On demand"),
                 p.get("last_run") or self.tr("Never"),
                 str(p.get("last_count", 0)),
             )
@@ -6571,14 +6571,16 @@ class WatchFolderDialog(QDialog):
                 item.setForeground(QColor(CAT["red"]))
             self.table.setItem(i, 6, item)
         self.table.resizeColumnsToContents()
-        enabled = sum(1 for p in self._profiles if p.get("enabled"))
         total = len(self._profiles)
         if total == 0:
             text = self.tr("No watch profiles have been configured.")
             tone = "ready"
         else:
-            text = self.tr(f"{total} watch profile{'s' if total != 1 else ''}; {enabled} enabled.")
-            tone = "success" if enabled else "warning"
+            text = self.tr(
+                f"{total} on-demand profile{'s' if total != 1 else ''}; "
+                "select one and click Run Now."
+            )
+            tone = "success"
         _set_dialog_status(self.status_label, text, tone)
         self.empty_label.setVisible(total == 0)
         self.table.setVisible(total > 0)
@@ -6595,16 +6597,7 @@ class WatchFolderDialog(QDialog):
         has_selection = profile is not None and not self._run_active
         self.add_btn.setEnabled(not self._run_active)
         self.remove_btn.setEnabled(has_selection)
-        self.toggle_btn.setEnabled(has_selection)
         self.run_now_btn.setEnabled(has_selection)
-        if profile is None:
-            self.toggle_btn.setText(self.tr("Enable"))
-            self.toggle_btn.setIcon(_create_line_icon("check"))
-        else:
-            enabled = profile.get("enabled")
-            self.toggle_btn.setText(self.tr("Pause") if enabled else self.tr("Enable"))
-            icon = QStyle.StandardPixmap.SP_MediaPause if enabled else QStyle.StandardPixmap.SP_DialogApplyButton
-            self.toggle_btn.setIcon(self.style().standardIcon(icon))
 
     def _add_profile(self):
         src = QFileDialog.getExistingDirectory(self, self.tr("Select Watch Folder"))
@@ -6644,13 +6637,6 @@ class WatchFolderDialog(QDialog):
             self.status_label.setText(self.tr(f"Removed watch profile: {label}."))
             if self.table.rowCount():
                 self.table.selectRow(min(row, self.table.rowCount() - 1))
-
-    def _toggle_selected(self):
-        row, _profile = self._selected_profile()
-        if row is not None:
-            self._profiles[row]["enabled"] = not self._profiles[row].get("enabled", True)
-            _save_watch_profiles(self._profiles)
-            self._refresh()
 
     def _run_now(self):
         row, profile = self._selected_profile()
@@ -8973,8 +8959,7 @@ class MainWindow(QMainWindow):
         dialog = WatchFolderDialog(self)
         dialog.exec()
         profiles = _load_watch_profiles()
-        enabled = sum(1 for p in profiles if p.get("enabled"))
-        self._log(f"Watch folder profiles: {len(profiles)} total, {enabled} enabled")
+        self._log(f"Watch folder profiles: {len(profiles)} on-demand profile(s)")
 
     def _open_batch_history(self):
         dialog = BatchHistoryDialog(self)

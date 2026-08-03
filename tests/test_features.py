@@ -2195,6 +2195,28 @@ class TestWatchProfilePersistence:
         assert saved[0]["enabled"] is True
         assert sorted(saved[0]) == ["enabled", "last_error", "last_run", "output", "preset", "source"]
 
+    def test_watch_folder_dialog_is_explicitly_on_demand(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        path = tmp_workdir / "watch-profiles.json"
+        path.write_text(json.dumps([{
+            "source": str(tmp_workdir / "src"),
+            "output": str(tmp_workdir / "dst"),
+            "preset": "Archive Quality",
+            "enabled": False,
+        }]), encoding="utf-8")
+        monkeypatch.setattr("imgconverter.WATCH_PROFILES_FILE", path)
+
+        dialog = imgconverter.WatchFolderDialog()
+        try:
+            assert not hasattr(dialog, "toggle_btn")
+            assert dialog.table.horizontalHeaderItem(3).text() == "Mode"
+            assert dialog.table.item(0, 3).text() == "On demand"
+            assert "on-demand" in dialog.table.accessibleDescription()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
 
 class TestQueuePersistence:
 

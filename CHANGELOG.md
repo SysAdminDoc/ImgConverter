@@ -18,6 +18,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Made watchdog mode process pre-existing files consistently with polling and handle atomic-renamed files through their destination path.
 - Hardened shell integration permission and filesystem failures so CLI operations return input errors and the Qt dialog keeps actionable error details inline.
 - Connected the shell integration preset selector to command previews and installed context-menu commands with validated, platform-safe preset arguments.
+- Reworded watch-folder profiles as explicit on-demand workflows and removed the inert Enable/Pause control while preserving legacy profile files.
 
 ## [v3.6.0] — 2026-07-10
 
