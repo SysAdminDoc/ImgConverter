@@ -18,22 +18,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P1 — Broken flagship behavior / security
 
-- [ ] P1 — Watchdog-mode watch permanently drops files whose write completes between polls
-  Why: The event drain does `candidates = list(pending_files); pending_files.clear()`. A file failing the size-stability check (including first sighting) is recorded in `seen_sizes` but NOT re-queued; it only converts if a NEW filesystem event arrives later. A small file fully copied between polls is never converted. Polling mode is immune (rescans each loop). Watch loop has zero test coverage.
-  Where: `imgconverter.py:10683-10705`. Fix: re-add unstable candidates to `pending_files` (under `pending_lock`) so they re-evaluate next cycle. Supersedes the earlier "stability check requires only one identical reading" item — the two-sample check exists (10702-10705); the re-queue gap is the real defect.
-
-- [ ] P1 — Watch mode converts its own outputs — unbounded `converted/converted/…` nesting
-  Why: Default `output_dir = input_dir/"converted"` is inside the watched tree; neither `_safe_walk` nor `_WatchHandler` excludes it, and structure mirroring writes gen-2 outputs to `converted/converted/…` — a new path each cycle, so the `converted` set never terminates it. Infinite re-conversion + disk fill. A plain non-watch re-run of the same command likewise double-converts prior outputs one level deeper.
-  Where: `imgconverter.py:10631-10678, 11362, 11446`, `_structured_output_dir` `2145-2147`. Fix: skip any candidate under `output_dir.resolve()` in `_watch_directory` AND `_scan_cli_inputs` (unless `in_place`).
-
-- [ ] P1 — Watch-profile "Run Now" re-converts its own output (GUI twin of the above)
-  Why: `_RunNowWorker.run` scans `source` recursively with no exclude; default profile output is `source/converted`. Every Run Now after the first re-encodes previous outputs into deeper nesting with quality degradation.
-  Where: `imgconverter.py:4419, 6285, 6457, 6497-6543`. Fix: exclude the resolved output dir during the scan.
-
-- [ ] P1 — `--use-cache` preset hash omits options that change output — including privacy strips
-  Why: `cache_preset_key` hashes format/quality/resize/etc. but NOT `strip_metadata`, `strip_gps`, `strip_device`, `tone_map`, `frames`, `avif_speed`, `avif_codec`, `png_lossy`, `only_if_smaller`, `no_exiftool`, or any v3.6.0 edit flag. Re-run with `--use-cache --strip-gps` → every file cache-skipped, GPS still present, user believes it was stripped.
-  Where: `imgconverter.py:11631-11641`. Fix: hash all output-affecting options (simplest: the full options dict + edit fields).
-
 - [ ] P1 — Windows shell integration "Files" verb command broken for paths with spaces
   Why: `f'"{exe}" "{script}" --files %*'` — `%*` is unquoted and there is no `"%1"`. Any path containing a space splits into argv fragments → CLI input errors. The folder verb correctly quotes `"%1"`. Also `MultiSelectModel=Player` doesn't batch CommandLine verbs (N selected files = N processes).
   Where: `imgconverter.py:10780, 10807-10812`, preview `6918`. Fix: use quoted `"%1"` for the file verb; update the preview to match.

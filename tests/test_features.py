@@ -1574,6 +1574,36 @@ class TestScanExclude:
         assert "photo.jpg" in names
         assert "thumb.jpg" not in names
 
+    def test_exclude_output_root_from_recursive_scan(self, tmp_workdir):
+        scan_root = tmp_workdir / "photos"
+        output_root = scan_root / "converted"
+        output_root.mkdir(parents=True)
+        (scan_root / "photo.jpg").write_bytes(b"source")
+        (output_root / "prior.jpg").write_bytes(b"output")
+
+        result = scan_directory(scan_root, recursive=True, exclude_roots=[output_root])
+
+        assert result.files == [scan_root / "photo.jpg"]
+
+    def test_cli_scan_excludes_output_root_from_inputs(self, tmp_workdir):
+        import imgconverter
+
+        scan_root = tmp_workdir / "photos"
+        output_root = scan_root / "converted"
+        output_root.mkdir(parents=True)
+        (scan_root / "photo.jpg").write_bytes(b"source")
+        (output_root / "prior.jpg").write_bytes(b"output")
+        args = _build_parser().parse_args([
+            "--input", str(scan_root), "--output", str(output_root),
+        ])
+        base_dir, input_dirs, input_files = imgconverter._collect_cli_input_refs(args)
+
+        result = imgconverter._scan_cli_inputs(
+            args, base_dir, input_dirs, input_files, None, output_root,
+        )
+
+        assert result.files == [scan_root / "photo.jpg"]
+
     def test_max_file_size_skips_large_inputs(self, tmp_workdir):
         scan_root = tmp_workdir / "photos"
         scan_root.mkdir()
@@ -2197,6 +2227,26 @@ class TestWatchModeIntegration:
         result = convert_file(img_path, out, opts=opts)
         assert result.success
         assert result.dst.suffix == ".png"
+
+    def test_run_now_scan_excludes_profile_output(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        source = tmp_workdir / "watch_in"
+        output = source / "converted"
+        source.mkdir()
+        captured = {}
+
+        def fake_scan(*_args, **kwargs):
+            captured.update(kwargs)
+            return imgconverter.ScanResult()
+
+        monkeypatch.setattr(imgconverter, "scan_directory", fake_scan)
+        worker = imgconverter._RunNowWorker(
+            source, output, ConvertOptions(fmt="png"),
+        )
+        worker.run()
+
+        assert captured["exclude_roots"] == [output]
 
     def test_debounce_size_stability(self, tmp_workdir):
         """Debounce logic: file must have stable size across two polls."""

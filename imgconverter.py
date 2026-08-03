@@ -2186,6 +2186,14 @@ def _same_resolved_path(left: Path, right: Path) -> bool:
         return left.absolute() == right.absolute()
 
 
+def _path_is_within(path: Path, root: Path) -> bool:
+    """Return whether path is root or a descendant, tolerating missing paths."""
+    try:
+        return Path(path).resolve(strict=False).is_relative_to(Path(root).resolve(strict=False))
+    except OSError:
+        return False
+
+
 def _structured_output_dir(
     src: Path,
     output_dir: Path,
@@ -2246,6 +2254,7 @@ def scan_directory(
     on_progress=None,
     exclude_patterns: list[str] | None = None,
     max_file_size: int | None = None,
+    exclude_roots: list[Path] | None = None,
 ) -> ScanResult:
     """Find all supported image files in directory.
 
@@ -2260,8 +2269,11 @@ def scan_directory(
     dir_count = 0
     visited_dirs: set[str] = set()
     exclude_patterns = exclude_patterns or []
+    excluded_roots = [Path(p) for p in (exclude_roots or [])]
 
     def _walk(d: Path):
+        if any(_path_is_within(d, excluded) for excluded in excluded_roots):
+            return
         # Resolve to catch loops via symlink-to-ancestor; skip on permission errors.
         try:
             real = str(d.resolve(strict=False))
@@ -4469,7 +4481,15 @@ class _RunNowWorker(QThread):
     def run(self):
         ok = fail = skipped = 0
         try:
-            scan = scan_directory(self._source_dir, recursive=True)
+            scan = scan_directory(
+                self._source_dir,
+                recursive=True,
+                exclude_roots=(
+                    [self._output_dir]
+                    if _path_is_within(self._output_dir, self._source_dir)
+                    else []
+                ),
+            )
         except Exception as exc:
             self.finished_run.emit(0, 0, 0, str(exc))
             return
@@ -10605,7 +10625,7 @@ def _file_sha256(path: Path) -> str:
 def _preset_hash(*parts) -> str:
     """Stable hash of the conversion preset (format, quality, resize, etc.)."""
     import hashlib
-    payload = json.dumps([str(p) for p in parts], sort_keys=True)
+    payload = json.dumps(parts, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -10676,6 +10696,12 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
     pending_lock = threading.Lock()
     retry_queue: dict[Path, tuple[int, float]] = {}
     MAX_RETRIES = 3
+    in_place = bool(getattr(args, "in_place", False))
+    output_root = Path(output_dir).resolve(strict=False)
+    output_is_inside_input = _path_is_within(output_root, input_dir)
+
+    def _is_output_path(path: Path) -> bool:
+        return not in_place and output_is_inside_input and _path_is_within(path, output_root)
 
     try:
         from watchdog.observers import Observer
@@ -10685,14 +10711,14 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
             def on_created(self, event):
                 if not event.is_directory:
                     p = Path(event.src_path)
-                    if p.suffix.lower() in supported:
+                    if p.suffix.lower() in supported and not _is_output_path(p):
                         with pending_lock:
                             pending_files.add(p)
 
             def on_modified(self, event):
                 if not event.is_directory:
                     p = Path(event.src_path)
-                    if p.suffix.lower() in supported:
+                    if p.suffix.lower() in supported and not _is_output_path(p):
                         with pending_lock:
                             pending_files.add(p)
 
@@ -10722,10 +10748,12 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
             for p in entries:
                 try:
                     if p.is_dir():
+                        if _is_output_path(p):
+                            continue
                         if args.recursive:
                             yield from _safe_walk(p, visited)
                         continue
-                    if p.is_file() and p.suffix.lower() in supported:
+                    if p.is_file() and p.suffix.lower() in supported and not _is_output_path(p):
                         yield p
                 except OSError:
                     continue
@@ -10746,7 +10774,7 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                     pass
 
             for p in candidates:
-                if p in converted:
+                if p in converted or _is_output_path(p):
                     continue
                 try:
                     size = p.stat().st_size
@@ -10756,6 +10784,9 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                     current.append(p)
                 else:
                     seen_sizes[p] = size
+                    if observer is not None:
+                        with pending_lock:
+                            pending_files.add(p)
 
             retry_now = [p for p, (count, due) in retry_queue.items()
                          if time.time() >= due and p not in converted]
@@ -11196,6 +11227,7 @@ def _scan_cli_inputs(
     input_dirs: list[Path],
     input_files: list[Path],
     max_bytes: int | None,
+    output_dir: Path | None = None,
 ) -> ScanResult:
     """Scan selected CLI directories and files into a single ScanResult."""
     t0 = time.perf_counter()
@@ -11203,9 +11235,17 @@ def _scan_cli_inputs(
     scan = ScanResult()
     seen: set[str] = set()
     exclude_patterns = getattr(args, "exclude", None) or []
+    output_root = Path(output_dir).resolve(strict=False) if output_dir else None
+    excluded_output = (
+        output_root
+        if output_root and any(_path_is_within(output_root, directory) for directory in input_dirs)
+        else None
+    )
 
     def _add_file(path: Path):
         if path.suffix.lower() not in supported:
+            return
+        if excluded_output and _path_is_within(path, excluded_output):
             return
         try:
             rel = path.relative_to(base_dir)
@@ -11235,6 +11275,7 @@ def _scan_cli_inputs(
             recursive=args.recursive,
             exclude_patterns=exclude_patterns,
             max_file_size=max_bytes,
+            exclude_roots=[excluded_output] if excluded_output else None,
         )
         for path in sub.files:
             _add_file(path)
@@ -11511,7 +11552,7 @@ def _run_cli(args):
     max_bytes = _parse_size_spec(getattr(args, "max_file_size", None) or "")
     if max_bytes:
         print(f"[filter] skipping files larger than {_fmt_size(max_bytes)}")
-    scan = _scan_cli_inputs(args, input_dir, input_dirs, input_files, max_bytes)
+    scan = _scan_cli_inputs(args, input_dir, input_dirs, input_files, max_bytes, output_dir)
     print(f"Found {len(scan.files)} files ({_fmt_size(scan.total_size)}) in {scan.elapsed:.2f}s")
     _emit_progress("scan_done", {"count": len(scan.files), "total_bytes": scan.total_size,
                                   "elapsed": round(scan.elapsed, 3)}, enabled=_progress_on)
@@ -11681,17 +11722,13 @@ def _run_cli(args):
         print(f"[pool] free-threaded interpreter detected; thread-pool will scale linearly")
 
     cache_conn = _open_hash_cache() if getattr(args, "use_cache", False) else None
-    cache_preset_key = _preset_hash(
-        args.format, args.quality, args.in_place, args.no_structure,
-        getattr(args, "template", None), resize_mode, resize_value,
-        args.prefix, args.suffix, args.lossless, args.progressive,
-        args.chroma_420, args.srgb, args.tiff_compression, args.png_level,
-        getattr(args, "icc", None), getattr(args, "watermark", None),
-        getattr(args, "canvas", None), getattr(args, "canvas_bg", "transparent"),
-        getattr(args, "dpi", None), getattr(args, "recompress", False),
-        getattr(args, "target_kb", None), getattr(args, "target_psnr", None),
-        getattr(args, "target_ssimulacra2", None),
-    ) if cache_conn else None
+    cache_options = dict(vars(args))
+    cache_options.update({
+        "resolved_output": str(output_dir),
+        "resize_mode": resize_mode,
+        "resize_value": resize_value,
+    })
+    cache_preset_key = _preset_hash(cache_options) if cache_conn else None
     cache_skipped: list[Path] = []
     if cache_conn:
         pruned = []
