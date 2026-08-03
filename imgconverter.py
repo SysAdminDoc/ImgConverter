@@ -9575,9 +9575,24 @@ class MainWindow(QMainWindow):
         tmp_dir.mkdir(parents=True, exist_ok=True)
         ts = int(time.time() * 1000)
         tmp_path = tmp_dir / f"clipboard_{ts}.png"
-        img.save(str(tmp_path), "PNG")
+        try:
+            saved = bool(img.save(str(tmp_path), "PNG"))
+        except Exception as exc:
+            saved = False
+            save_error = str(exc)
+        else:
+            save_error = "QImage.save returned false" if not saved else "saved file was not created"
+        if not saved or _size_or_zero(tmp_path) <= 0:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            message = f"Could not save clipboard image: {save_error}"
+            self._log(f"[PASTE] {message}")
+            self._set_workflow_state(self.tr("Paste failed"), message, "warning")
+            return
         files = [tmp_path]
-        total_size = tmp_path.stat().st_size
+        total_size = _size_or_zero(tmp_path)
         self._scan_result = ScanResult(files=files, total_size=total_size, elapsed=0)
         self.src_edit.setText(str(tmp_dir))
         if not self.dst_edit.text() and not self.inplace_chk.isChecked():

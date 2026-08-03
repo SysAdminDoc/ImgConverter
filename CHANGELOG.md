@@ -43,6 +43,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Limited watch-mode retries to transient filesystem error numbers instead of retrying permanent failures.
 - Reported missing `imagehash` as an unavailable deduplication dependency instead of an empty result.
 - Made multi-root file selections fall back to the first selected parent instead of crashing on `commonpath`.
+- Reported clipboard image-save failures in the GUI instead of attempting to stat a missing temp file.
 
 ## [v3.6.0] — 2026-07-10
 

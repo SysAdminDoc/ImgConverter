@@ -2938,6 +2938,35 @@ class TestQtAccessibility:
         assert not w.resize_spin.isEnabled()
         assert not w.only_if_smaller_spin.isEnabled()
 
+    def test_clipboard_save_failure_is_reported(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        class FakeImage:
+            def isNull(self):
+                return False
+
+            def save(self, *_args):
+                return False
+
+        class FakeClipboard:
+            def image(self):
+                return FakeImage()
+
+        monkeypatch.setattr(imgconverter, "USER_CACHE_DIR", tmp_workdir / "cache")
+        monkeypatch.setattr(imgconverter.QApplication, "clipboard", lambda: FakeClipboard())
+        states = []
+        monkeypatch.setattr(
+            self.window,
+            "_set_workflow_state",
+            lambda state, message=None, tone=None: states.append((state, message, tone)),
+        )
+
+        self.window._paste_clipboard()
+
+        assert states[-1][0] == "Paste failed"
+        assert states[-1][2] == "warning"
+        assert self.window._scan_result is None
+
     def test_find_similar_runs_off_gui_thread_and_can_cancel(self, tmp_workdir, monkeypatch, qtbot):
         import imgconverter
         import time
