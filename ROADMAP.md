@@ -20,10 +20,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P2 — Correctness / reliability
 
-- [ ] P2 — Drag & drop not gated by the busy lock — drops mid-conversion clobber live batch state
-  Why: While converting, drops still rewrite `src_edit`, replace `self._scan_result`, restart the thumbnail loader, ENABLE the Convert button mid-run, and overwrite stats/title. Same clobber during scans.
-  Where: `imgconverter.py:8833-8904`. Fix: `event.ignore()` in dragEnter/drop when worker or scanner is running.
-
 - [ ] P2 — "Find similar" runs the full perceptual-hash scan synchronously on the GUI thread
   Why: `_dedup_scan` decodes every scanned image + O(n²) hamming compare in the clicked slot; thousands of photos = minutes of "Not Responding" with no progress/cancel. The one hard UI freeze left (everything else is threaded).
   Where: `imgconverter.py:8803, 11222-11248`. Fix: move to a QThread with progress/cancel like ScanWorker.

@@ -8988,7 +8988,16 @@ class MainWindow(QMainWindow):
                       f"{len(self._scan_result.files)} files remain.")
 
     # ── Drag & Drop ──
+    def _drag_drop_is_busy(self) -> bool:
+        return bool(
+            (self._worker and self._worker.isRunning())
+            or (hasattr(self, "_scanner") and self._scanner.isRunning())
+        )
+
     def dragEnterEvent(self, event: QDragEnterEvent):
+        if self._drag_drop_is_busy():
+            event.ignore()
+            return
         if event.mimeData().hasUrls():
             supported = get_supported_extensions()
             for url in event.mimeData().urls():
@@ -9001,6 +9010,9 @@ class MainWindow(QMainWindow):
                         return
 
     def dragMoveEvent(self, event):
+        if self._drag_drop_is_busy():
+            event.ignore()
+            return
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
 
@@ -9009,6 +9021,9 @@ class MainWindow(QMainWindow):
         _refresh_widget_style(self.drop_zone)
 
     def dropEvent(self, event: QDropEvent):
+        if self._drag_drop_is_busy():
+            event.ignore()
+            return
         self.drop_zone.setProperty("dragActive", False)
         _refresh_widget_style(self.drop_zone)
         urls = event.mimeData().urls()

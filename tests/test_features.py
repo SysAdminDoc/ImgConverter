@@ -2250,6 +2250,42 @@ class TestQtAccessibility:
         assert not w.resize_spin.isEnabled()
         assert not w.only_if_smaller_spin.isEnabled()
 
+    def test_drag_drop_is_ignored_while_worker_or_scan_is_running(self):
+        w = self.window
+        old_worker = w._worker
+        old_scanner = getattr(w, "_scanner", None)
+
+        class BusyEvent:
+            def __init__(self):
+                self.ignored = False
+
+            def ignore(self):
+                self.ignored = True
+
+            def mimeData(self):
+                raise AssertionError("busy drag/drop must not inspect or mutate payload")
+
+        try:
+            for attr in ("_worker", "_scanner"):
+                w._worker = None
+                if attr == "_worker":
+                    w._worker = types.SimpleNamespace(isRunning=lambda: True)
+                else:
+                    w._scanner = types.SimpleNamespace(isRunning=lambda: True)
+                for handler in (w.dragEnterEvent, w.dragMoveEvent, w.dropEvent):
+                    event = BusyEvent()
+                    handler(event)
+                    assert event.ignored
+                if attr == "_scanner":
+                    delattr(w, "_scanner")
+        finally:
+            w._worker = old_worker
+            if old_scanner is None:
+                if hasattr(w, "_scanner"):
+                    delattr(w, "_scanner")
+            else:
+                w._scanner = old_scanner
+
     def test_summary_mirrors_semantic_workflow_state(self):
         w = self.window
         w._set_workflow_state("Partial failure", "12 converted; 2 need review.")
