@@ -35,6 +35,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Serialized batch-history updates with a cross-platform lock and quarantined corrupt history before recovery.
 - Preserved UTF-8 and significant whitespace in `--stdin-files` and `--stdin-null` path streams.
 - Cached source C2PA marker detection in the opened-image metadata path to avoid duplicate scans.
+- Clarified that `--max-memory` reports a warning threshold and does not throttle worker submissions.
 
 ## [v3.6.0] — 2026-07-10
 

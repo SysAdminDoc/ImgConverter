@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `--max-memory` only warns; "throttle" strings are false
-  Why: Startup message (11452) and parity matrix (11433) say "throttle threshold"; implementation prints `[WARN]` and does nothing (argparse help honestly says "Warn").
-  Where: `imgconverter.py:11737-11740`. Fix: pause new submissions until free memory recovers, or change the two "throttle" strings to "warn".
-
 - [ ] P3 — `--progress` help promises `file_start` that is never emitted; animated files emit no `file_done`
   Why: `file_start` appears only in help text; the `--frames all/animate` pre-pass appends results without emitting `file_done`, so machine consumers see fewer events than `scan_done.count`.
   Where: `imgconverter.py:10321-10323, 11594-11618, 11678-11688`. Fix: emit `file_start` before each submit and `file_done` in the animated loop (or fix the help).

@@ -11220,7 +11220,7 @@ CLI_FLAG_PARITY = {
     "--verify-quality": {"surface": "cli-only", "gui": (), "readme": True, "note": "External quality metric checks"},
     "--progress": {"surface": "cli-only", "gui": (), "readme": True, "note": "JSON Lines machine-readable progress events"},
     "--when-done": {"surface": "gui", "gui": ("when_done_combo",), "readme": True, "note": "Post-batch action"},
-    "--max-memory": {"surface": "cli-only", "gui": (), "readme": True, "note": "RAM pressure worker throttle threshold"},
+    "--max-memory": {"surface": "cli-only", "gui": (), "readme": True, "note": "RAM pressure warning threshold"},
     "--dedup-warn": {"surface": "cli-only", "gui": (), "readme": True, "note": "Perceptual hash duplicate detection (warn)"},
     "--dedup-skip": {"surface": "cli-only", "gui": (), "readme": True, "note": "Perceptual hash duplicate detection (skip)"},
     "--help": {"surface": "cli-only", "gui": (), "readme": False, "note": "argparse built-in help"},
@@ -12423,7 +12423,7 @@ def _run_cli(args):
     _mem_threshold = getattr(args, "max_memory", None)
     if _mem_threshold is not None:
         _mem_threshold = max(1, min(99, int(_mem_threshold)))
-        print(f"[memory] throttle threshold: {_mem_threshold}% free")
+        print(f"[memory] warning threshold: {_mem_threshold}% free")
 
     # Scan
     _progress_on = getattr(args, "progress", False)
