@@ -2265,6 +2265,88 @@ class TestQueuePersistence:
 
         assert imgconverter._watch_directory(args, source, output) == EXIT_CANCELLED
 
+    @pytest.mark.parametrize("trigger_move", [False, True])
+    def test_watchdog_processes_existing_and_atomic_move_files(
+        self, tmp_workdir, monkeypatch, trigger_move
+    ):
+        import sys as runtime_sys
+        import time as real_time
+        import types
+        import imgconverter
+
+        source = tmp_workdir / "watch"
+        source.mkdir()
+        image = source / "photo.jpg"
+        image.write_bytes(b"image")
+        output = tmp_workdir / "out"
+        args = _build_parser().parse_args([
+            "--input", str(source), "--output", str(output),
+            "--format", "png", "--watch", "--watch-interval", "1",
+        ])
+
+        class FakeHandler:
+            pass
+
+        class FakeObserver:
+            def schedule(self, handler, path, recursive):
+                self.handler = handler
+
+            def start(self):
+                if trigger_move:
+                    self.handler.on_moved(types.SimpleNamespace(
+                        is_directory=False,
+                        src_path=str(source / "photo.part"),
+                        dest_path=str(image),
+                    ))
+
+            def stop(self):
+                pass
+
+            def join(self, timeout=None):
+                pass
+
+        watchdog_package = types.ModuleType("watchdog")
+        watchdog_package.__path__ = []
+        watchdog_observers = types.ModuleType("watchdog.observers")
+        watchdog_observers.Observer = FakeObserver
+        watchdog_events = types.ModuleType("watchdog.events")
+        watchdog_events.FileSystemEventHandler = FakeHandler
+        monkeypatch.setitem(runtime_sys.modules, "watchdog", watchdog_package)
+        monkeypatch.setitem(runtime_sys.modules, "watchdog.observers", watchdog_observers)
+        monkeypatch.setitem(runtime_sys.modules, "watchdog.events", watchdog_events)
+
+        converted = []
+
+        def fake_convert(path, output_dir, seq=1, opts=None):
+            converted.append(path)
+            return imgconverter.ConvertResult(
+                src=path,
+                dst=output_dir / "photo.png",
+                success=True,
+                size_before=path.stat().st_size,
+                size_after=1,
+            )
+
+        monkeypatch.setattr(imgconverter, "convert_file", fake_convert)
+        sleeps = 0
+
+        def sleep_until_processed(_seconds):
+            nonlocal sleeps
+            sleeps += 1
+            if sleeps >= 2:
+                raise KeyboardInterrupt
+
+        class ClockProxy:
+            def __getattr__(self, name):
+                return getattr(real_time, name)
+
+            sleep = staticmethod(sleep_until_processed)
+
+        monkeypatch.setattr(imgconverter, "time", ClockProxy())
+
+        assert imgconverter._watch_directory(args, source, output) == EXIT_CANCELLED
+        assert converted == [image]
+
 
 # ── 19. Multi-frame export ─────────────────────────────────────────────────
 

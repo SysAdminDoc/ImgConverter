@@ -10557,7 +10557,7 @@ def _build_parser() -> argparse.ArgumentParser:
                         "'animate' (preserve as animated WebP/PNG/GIF; falls back to 'all' if "
                         "target format can't carry animation)")
     p.add_argument("--watch", action="store_true",
-                   help="Watch --input directory and convert new files as they arrive. "
+                   help="Watch --input directory and convert existing and new files as they arrive. "
                         "Polling-based; --watch-interval controls cadence. Ctrl-C to stop.")
     p.add_argument("--watch-interval", type=float, default=2.0, metavar="SEC",
                    help="Watch-mode poll interval in seconds (default 2.0)")
@@ -10905,22 +10905,25 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
 
     try:
         from watchdog.observers import Observer
-        from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileModifiedEvent
+        from watchdog.events import FileSystemEventHandler
 
         class _WatchHandler(FileSystemEventHandler):
+            def _enqueue(self, path: Path):
+                if path.suffix.lower() in supported and not _is_output_path(path):
+                    with pending_lock:
+                        pending_files.add(path)
+
             def on_created(self, event):
                 if not event.is_directory:
-                    p = Path(event.src_path)
-                    if p.suffix.lower() in supported and not _is_output_path(p):
-                        with pending_lock:
-                            pending_files.add(p)
+                    self._enqueue(Path(event.src_path))
 
             def on_modified(self, event):
                 if not event.is_directory:
-                    p = Path(event.src_path)
-                    if p.suffix.lower() in supported and not _is_output_path(p):
-                        with pending_lock:
-                            pending_files.add(p)
+                    self._enqueue(Path(event.src_path))
+
+            def on_moved(self, event):
+                if not event.is_directory:
+                    self._enqueue(Path(event.dest_path))
 
         observer = Observer()
         observer.schedule(_WatchHandler(), str(input_dir), recursive=args.recursive)
@@ -10930,7 +10933,10 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
         observer = None
         _watch_backend = "polling"
 
-    print(f"[watch] watching {input_dir} ({_watch_backend}) every {interval:.1f}s — Ctrl-C to stop")
+    print(
+        f"[watch] watching {input_dir} ({_watch_backend}) every {interval:.1f}s — "
+        "existing and new files; Ctrl-C to stop"
+    )
 
     try:
         def _safe_walk(d: Path, visited: set[str]):
@@ -10957,6 +10963,10 @@ def _watch_directory(args, input_dir: Path, output_dir: Path,
                         yield p
                 except OSError:
                     continue
+
+        if observer is not None:
+            with pending_lock:
+                pending_files.update(_safe_walk(input_dir, set()))
 
         while True:
             current = []
