@@ -792,6 +792,9 @@ class TestBatchHistory:
         assert ok is True
         assert error is None
         assert len(imgconverter._load_batch_history()) == 1
+        backups = list(history_path.parent.glob(history_path.name + ".corrupt-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == "{not json"
 
         updated = imgconverter._update_batch_history_artifact(
             record["id"],

@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `_append_batch_history` read-modify-write with no lock; corrupt history silently replaced
-  Why: Concurrent GUI/CLI sessions interleave load/write and lose records; `JSONDecodeError` → `[]` → corrupt file overwritten with single-record history, no user-visible signal.
-  Where: `imgconverter.py:5170-5178, 5132-5146`. Fix: exclusive lock (msvcrt/fcntl) around load+write; rename corrupt file to `.corrupt-<ts>` before rewriting.
-
 - [ ] P3 — `--stdin-files` reads text-mode stdin; `.strip()` mangles legal filenames
   Why: Windows pipe decodes with locale code page → UnicodeDecodeError on UTF-8 bytes aborts before any work; `line.strip()` strips whitespace that is legal in filenames.
   Where: `imgconverter.py:11107-11112`. Fix: `sys.stdin.buffer.read().decode("utf-8", errors="surrogateescape")`; split on `"\0"` in NUL mode without strip (at most `\r\n` in newline mode).

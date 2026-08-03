@@ -12,6 +12,7 @@ import multiprocessing
 multiprocessing.freeze_support()
 
 import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil, tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -5426,21 +5427,61 @@ def _redact_history_path(value: str | Path | None) -> str | None:
         return _redact_text(str(value))
 
 
-def _load_batch_history() -> list[dict]:
+@contextmanager
+def _batch_history_lock():
+    """Serialize batch-history read-modify-write operations across processes."""
+    lock_path = BATCH_HISTORY_PATH.with_name(BATCH_HISTORY_PATH.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        lock_file.seek(0)
+        lock_file.write(b"\0")
+        lock_file.flush()
+        lock_file.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _read_batch_history_unlocked() -> tuple[list[dict], bool]:
+    """Read history and report whether the on-disk document should be quarantined."""
     try:
         if not BATCH_HISTORY_PATH.is_file():
-            return []
+            return [], False
         data = json.loads(BATCH_HISTORY_PATH.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             records = data.get("records", [])
         elif isinstance(data, list):
             records = data
         else:
-            records = []
-        return [r for r in records if isinstance(r, dict)]
-    except (OSError, json.JSONDecodeError, ValueError) as e:
+            _diag_log("batch history has an invalid top-level shape", level="WARNING")
+            return [], True
+        if not isinstance(records, list):
+            _diag_log("batch history records have an invalid shape", level="WARNING")
+            return [], True
+        return [r for r in records if isinstance(r, dict)], False
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
         _diag_log(f"batch history load failed: {e}", level="WARNING")
-        return []
+        return [], True
+    except OSError as e:
+        _diag_log(f"batch history load failed: {e}", level="WARNING")
+        return [], False
+
+
+def _load_batch_history() -> list[dict]:
+    records, _corrupt = _read_batch_history_unlocked()
+    return records
 
 
 def _write_batch_history(records: list[dict]) -> None:
@@ -5456,6 +5497,18 @@ def _write_batch_history(records: list[dict]) -> None:
     )
 
 
+def _next_corrupt_history_path() -> Path:
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    candidate = BATCH_HISTORY_PATH.with_name(f"{BATCH_HISTORY_PATH.name}.corrupt-{stamp}")
+    suffix = 1
+    while candidate.exists():
+        candidate = BATCH_HISTORY_PATH.with_name(
+            f"{BATCH_HISTORY_PATH.name}.corrupt-{stamp}-{suffix}"
+        )
+        suffix += 1
+    return candidate
+
+
 def _batch_history_payload() -> dict[str, object]:
     return {
         "schema_version": BATCH_HISTORY_SCHEMA,
@@ -5466,9 +5519,18 @@ def _batch_history_payload() -> dict[str, object]:
 
 def _append_batch_history(record: dict) -> tuple[bool, str | None]:
     try:
-        records = _load_batch_history()
-        records.append(record)
-        _write_batch_history(records)
+        with _batch_history_lock():
+            records, corrupt = _read_batch_history_unlocked()
+            if corrupt:
+                backup = _next_corrupt_history_path()
+                try:
+                    os.replace(BATCH_HISTORY_PATH, backup)
+                except OSError as e:
+                    _diag_log(f"batch history quarantine failed: {e}", level="WARNING")
+                    return False, str(e)
+                _diag_log(f"quarantined corrupt batch history as {backup.name}", level="WARNING")
+            records.append(record)
+            _write_batch_history(records)
         return True, None
     except OSError as e:
         _diag_log(f"batch history write failed: {e}", level="WARNING")
@@ -5479,14 +5541,18 @@ def _update_batch_history_artifact(record_id: str | None, artifact: str, path: s
     if not record_id or artifact not in {"report", "support_bundle"}:
         return False
     try:
-        records = _load_batch_history()
-        for record in reversed(records):
-            if record.get("id") == record_id:
-                record.setdefault("artifacts", {})[artifact] = _redact_history_path(path)
-                from datetime import datetime, timezone
-                record["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                _write_batch_history(records)
-                return True
+        with _batch_history_lock():
+            records, corrupt = _read_batch_history_unlocked()
+            if corrupt:
+                _diag_log("batch history artifact update skipped for corrupt history", level="WARNING")
+                return False
+            for record in reversed(records):
+                if record.get("id") == record_id:
+                    record.setdefault("artifacts", {})[artifact] = _redact_history_path(path)
+                    from datetime import datetime, timezone
+                    record["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                    _write_batch_history(records)
+                    return True
     except OSError as e:
         _diag_log(f"batch history artifact update failed: {e}", level="WARNING")
     return False
