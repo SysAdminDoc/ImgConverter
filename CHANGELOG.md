@@ -34,6 +34,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Pruned removed source paths from watch-mode state so re-dropped files with the same name can be processed again.
 - Serialized batch-history updates with a cross-platform lock and quarantined corrupt history before recovery.
 - Preserved UTF-8 and significant whitespace in `--stdin-files` and `--stdin-null` path streams.
+- Cached source C2PA marker detection in the opened-image metadata path to avoid duplicate scans.
 
 ## [v3.6.0] — 2026-07-10
 

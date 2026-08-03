@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `_file_contains_marker` re-reads up to 2 MB up to 3× per conversion, uncached
-  Why: Read in `_open_image` (3003), again via metadata presence (3755→2922), again on output (4314/3363).
-  Where: `imgconverter.py:2886-2893`. Fix: always record `meta["c2pa"]` after the first read; have `_metadata_presence_from_image` trust a present key. (Output read is genuinely needed.)
-
 - [ ] P3 — `--max-memory` only warns; "throttle" strings are false
   Why: Startup message (11452) and parity matrix (11433) say "throttle threshold"; implementation prints `[WARN]` and does nothing (argparse help honestly says "Warn").
   Where: `imgconverter.py:11737-11740`. Fix: pause new submissions until free memory recovers, or change the two "throttle" strings to "warn".

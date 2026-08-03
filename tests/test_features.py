@@ -1907,6 +1907,28 @@ class TestScanExclude:
 
         assert files == [first.resolve(), second.resolve()]
 
+    def test_metadata_marker_probe_is_cached_in_open_metadata(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        source = tmp_workdir / "source.jpg"
+        Image.new("RGB", (4, 4), (10, 20, 30)).save(source)
+        probes = []
+
+        def fake_marker(path, marker):
+            probes.append((path, marker))
+            return False
+
+        monkeypatch.setattr(imgconverter, "_file_contains_marker", fake_marker)
+        image, meta = imgconverter._open_image(source)
+        try:
+            presence = imgconverter._metadata_presence_from_image(image, meta, source)
+        finally:
+            image.close()
+
+        assert probes == [(source, b"c2pa")]
+        assert meta["c2pa"] is False
+        assert presence["c2pa"] is False
+
     def test_scan_directory_honors_cancellation(self, tmp_workdir):
         import imgconverter
 

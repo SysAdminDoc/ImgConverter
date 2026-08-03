@@ -3099,7 +3099,11 @@ def _metadata_presence_from_image(
         except Exception:
             maker = None
     presence["makernotes"] = bool(maker)
-    presence["c2pa"] = bool(meta.get("c2pa")) or _file_contains_marker(path, b"c2pa")
+    presence["c2pa"] = (
+        bool(meta["c2pa"])
+        if "c2pa" in meta
+        else _file_contains_marker(path, b"c2pa")
+    )
     return presence
 
 
@@ -3180,8 +3184,7 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
             meta["makernotes"] = maker
     except Exception:
         pass
-    if _file_contains_marker(src, b"c2pa"):
-        meta["c2pa"] = True
+    meta["c2pa"] = _file_contains_marker(src, b"c2pa")
 
     if suffix in HEIC_EXTS:
         try:
