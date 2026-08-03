@@ -3133,6 +3133,19 @@ class TestQtAccessibility:
         assert calls
         assert calls[0] == ("ImgConverter", "ImgConverter")
 
+    def test_power_actions_are_not_persisted_between_sessions(self):
+        w = self.window
+        w.when_done_combo.setCurrentIndex(3)
+        w._save_state()
+        assert w.settings.value("when_done") == 0
+
+        w.settings.setValue("when_done", 3)
+        w.when_done_combo.setCurrentIndex(3)
+        w._restore_state()
+
+        assert w.when_done_combo.currentIndex() == 0
+        assert w.settings.value("when_done") == 0
+
     def test_recent_dirs_normalize_case_and_reject_invalid_shapes(self):
         import imgconverter
 

@@ -10728,7 +10728,9 @@ class MainWindow(QMainWindow):
         self.settings.setValue("png_compress_level", self.png_level_spin.value())
         # strip_metadata persisted as metadata_mode combo index now
         self.settings.setValue("auto_open_output", self.auto_open_chk.isChecked())
-        self.settings.setValue("when_done", self.when_done_combo.currentIndex())
+        # Power actions are deliberately per-run; never carry Close/Sleep/
+        # Shutdown into a future session.
+        self.settings.setValue("when_done", 0)
         self.settings.setValue("template", self.template_edit.text())
         self.settings.setValue("dpi", self.dpi_spin.value())
         self.settings.setValue("avif_speed", self.avif_speed_spin.value())
@@ -10869,9 +10871,10 @@ class MainWindow(QMainWindow):
                 self.meta_combo.setCurrentIndex(3)
         if (v := self.settings.value("auto_open_output")) is not None:
             self.auto_open_chk.setChecked(v == "true" or v is True)
-        if (n := self._safe_int(self.settings.value("when_done"))) is not None:
-            if 0 <= n < self.when_done_combo.count():
-                self.when_done_combo.setCurrentIndex(n)
+        stored_when_done = self._safe_int(self.settings.value("when_done"))
+        if stored_when_done not in (None, 0):
+            self.settings.setValue("when_done", 0)
+        self.when_done_combo.setCurrentIndex(0)
         if v := self.settings.value("template"):
             self.template_edit.setText(v)
         if (n := self._safe_int(self.settings.value("dpi"))) is not None:

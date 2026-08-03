@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `when_done_combo` persists Sleep/Shutdown across sessions
-  Why: Picking Shutdown once shuts the machine down after every future batch, sessions later, with only the 30s countdown as a guard. Power actions should be per-run.
-  Where: `imgconverter.py:9889, 10014-10016`. Fix: don't persist indexes > 0.
-
 - [ ] P3 — `_add_profile` validation gaps (WatchFolderDialog)
   Why: No rejection of output == source / output inside source (feeds the Run Now self-conversion item) / duplicate profiles; cancelling the output picker silently defaults to `source/converted`; deleted preset silently falls back to all-default options.
   Where: `imgconverter.py:6451-6476, 6520`. Fix: validate at add time with `_set_dialog_status` feedback; warn when preset unresolvable.
