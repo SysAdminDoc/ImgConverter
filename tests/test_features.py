@@ -27,6 +27,7 @@ from imgconverter import (
     ADJUST_PRESETS,
     SOCIAL_PRESETS,
     _build_parser,
+    _is_cli_only_argv,
     _build_quality_mode,
     _convert_animated_or_sequence,
     _estimate_output_size,
@@ -74,6 +75,13 @@ class TestCLIParsing:
         assert args.output == "/out"
         assert args.format == "webp"
         assert args.quality == 80
+
+    def test_cli_only_detection_covers_equals_and_admin_forms(self):
+        assert _is_cli_only_argv(["imgconverter.py", "--input=C:\\photos"])
+        assert _is_cli_only_argv(["imgconverter.py", "--trust-plugin=demo.py"])
+        assert _is_cli_only_argv(["imgconverter.py", "--watch"])
+        assert _is_cli_only_argv(["imgconverter.py", "--register-shell"])
+        assert not _is_cli_only_argv(["imgconverter.py"])
 
     def test_advanced_flags(self):
         parser = _build_parser()

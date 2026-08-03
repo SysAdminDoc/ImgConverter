@@ -29,6 +29,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Marked PEP 660 editable entry-point installs as requiring re-audit instead of granting metadata-only trust.
 - Guaranteed C2PA SDK reader cleanup when manifest parsing or validation fails.
 - Fixed `--untrust-plugin` for entry-point package refs with dotless versions.
+- Expanded early headless-mode detection to equals-form inputs, watch/admin commands, and stdin flows, allowing CLI use without PyQt6.
 
 ## [v3.6.0] — 2026-07-10
 

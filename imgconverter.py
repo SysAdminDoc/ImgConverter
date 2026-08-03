@@ -57,6 +57,34 @@ DEP_FLOORS = {
 REQUIRED_DEPS = ("PIL", "pillow_heif", "PyQt6")
 OPTIONAL_DEPS = ("rawpy", "pillow_jxl", "c2pa", "watchdog")
 
+_CLI_ONLY_EXACT_FLAGS = frozenset({
+    "--input", "-i", "--files", "--support-bundle",
+    "--backend-info", "--backend-benchmark", "--format-matrix",
+    "--install-deps", "--version", "--list-presets", "--list-plugins",
+    "--history", "--help", "-h", "--trust-plugin", "--untrust-plugin",
+    "--watch", "--watch-interval", "--register-shell", "--unregister-shell",
+    "--stdin-files", "--stdin-null", "--clear-cache", "--export-preset",
+    "--import-preset", "--dry-run", "--proof", "--progress",
+})
+_CLI_ONLY_VALUE_FLAGS = frozenset({
+    "--input", "--files", "--support-bundle", "--backend-benchmark",
+    "--trust-plugin", "--untrust-plugin", "--watch-interval",
+    "--import-preset",
+})
+
+
+def _is_cli_only_argv(argv) -> bool:
+    """Return whether argv requests a headless/admin surface instead of the GUI."""
+    args = list(argv)[1:]
+    return any(
+        arg in _CLI_ONLY_EXACT_FLAGS
+        or any(arg.startswith(f"{flag}=") for flag in _CLI_ONLY_VALUE_FLAGS)
+        for arg in args
+    )
+
+
+_CLI_ONLY = _is_cli_only_argv(sys.argv)
+
 
 def _is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"))
@@ -107,6 +135,8 @@ def _check_required_deps_or_exit():
     """Verify required deps are importable; print actionable install hint if not."""
     missing = []
     for module in REQUIRED_DEPS:
+        if _CLI_ONLY and module == "PyQt6":
+            continue
         try:
             importlib.import_module(module)
         except ImportError:
@@ -1247,10 +1277,6 @@ def _run_exiftool_copy(src: Path, dst: Path,
     except Exception as e:
         return False, str(e)
 
-_CLI_ONLY = any(a in sys.argv for a in ("--input", "-i", "--files", "--support-bundle",
-                                         "--backend-info", "--backend-benchmark", "--format-matrix",
-                                         "--install-deps", "--version", "--list-presets",
-                                         "--list-plugins", "--history", "--help", "-h"))
 try:
     from PyQt6.QtCore import (
         Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QUrl,

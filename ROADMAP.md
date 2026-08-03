@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `_CLI_ONLY` detection misses `--input=PATH` form and GUI-free admin flags; dead PyQt6 stub block
-  Why: `--input=x` (equals form), `--trust-plugin`, `--untrust-plugin`, `--watch` don't trigger CLI mode detection. The ~25-line Qt stub-class block (1139-1188) is reachable only for partially-broken PyQt6 installs while its own message advertises headless use that `_check_required_deps_or_exit` (hard exit 3) makes impossible.
-  Where: `imgconverter.py:106-123, 1139-1188`. Fix: extend `_CLI_ONLY` detection; either make CLI genuinely PyQt6-optional or delete the stub and fix the message.
-
 - [ ] P3 — Blanket `except Exception: pass` swallowers hide real failures
   Why: `_discover_entrypoint_plugins` (917-918) makes all entry-point plugins silently vanish on any importlib error; `_verify_quality` bare excepts (398-399, 413-414) kept its dead-code breakage invisible through four audits.
   Where: `imgconverter.py:917-918, 398-399, 413-414`. Fix: log to stderr/diag at minimum.
