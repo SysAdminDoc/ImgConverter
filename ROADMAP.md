@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Management dialogs leak one instance per open
-  Why: Every `_open_*` creates a dialog parented to MainWindow, `exec()`s, drops the local — C++ objects accumulate for process lifetime.
-  Where: `imgconverter.py:8776-8796, 7196-7198, 8812`. Fix: `WA_DeleteOnClose` or `deleteLater()` after exec.
-
 - [ ] P3 — PluginTrustDialog hashes every plugin file + full entry-point distributions on the GUI thread
   Why: Large entry-point package → dialog open/Refresh stalls the UI for the hashing duration.
   Where: `imgconverter.py:6044-6045 → 846-892, 915`. Fix: move to a worker if entry-point plugins become a real use case.

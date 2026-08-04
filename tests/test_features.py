@@ -2702,6 +2702,23 @@ class TestWatchProfilePersistence:
             history_dialog.close()
             history_dialog.deleteLater()
 
+    def test_modal_dialog_helper_deletes_after_exec(self):
+        import imgconverter
+
+        class FakeDialog:
+            def __init__(self):
+                self.deleted = False
+
+            def exec(self):
+                return 7
+
+            def deleteLater(self):
+                self.deleted = True
+
+        dialog = FakeDialog()
+        assert imgconverter._exec_dialog_and_delete(dialog) == 7
+        assert dialog.deleted
+
 
 class TestQueuePersistence:
 

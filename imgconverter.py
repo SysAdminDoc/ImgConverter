@@ -6394,6 +6394,14 @@ def _set_dialog_status(label: QLabel, message: str, tone: str = "ready"):
     _refresh_widget_style(label)
 
 
+def _exec_dialog_and_delete(dialog: QDialog) -> int:
+    """Run a modal dialog and release its Qt object after the nested loop."""
+    try:
+        return dialog.exec()
+    finally:
+        dialog.deleteLater()
+
+
 class PluginTrustDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -7818,7 +7826,7 @@ class MainWindow(QMainWindow):
         ]
         dialog = CommandPaletteDialog(commands, self)
         dialog.command_selected.connect(self._run_palette_command)
-        dialog.exec()
+        _exec_dialog_and_delete(dialog)
 
     def _run_palette_command(self, key: str):
         dispatch = {
@@ -9504,25 +9512,25 @@ class MainWindow(QMainWindow):
 
     def _open_plugin_trust(self):
         dialog = PluginTrustDialog(self)
-        dialog.exec()
+        _exec_dialog_and_delete(dialog)
         rows = get_plugin_trust_rows()
         self._log(f"Plugin trust inventory: {len(rows)} entr{'y' if len(rows) == 1 else 'ies'}")
 
     def _open_watch_folders(self):
         dialog = WatchFolderDialog(self)
-        dialog.exec()
+        _exec_dialog_and_delete(dialog)
         profiles = _load_watch_profiles()
         self._log(f"Watch folder profiles: {len(profiles)} on-demand profile(s)")
 
     def _open_batch_history(self):
         dialog = BatchHistoryDialog(self)
-        dialog.exec()
+        _exec_dialog_and_delete(dialog)
         records = _load_batch_history()
         self._log(f"Batch history: {len(records)} completed session{'s' if len(records) != 1 else ''}")
 
     def _open_shell_integration(self):
         dialog = ShellIntegrationDialog(self)
-        dialog.exec()
+        _exec_dialog_and_delete(dialog)
 
     def _check_duplicates(self):
         if (
@@ -9604,10 +9612,12 @@ class MainWindow(QMainWindow):
         groups = _dedup_groups(dupes)
         self._log(f"[dedup] Found {len(dupes)} pair(s) in {len(groups)} group(s).")
         dialog = DuplicateReviewDialog(groups, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.skip_set:
+        result = _exec_dialog_and_delete(dialog)
+        skip_set = set(dialog.skip_set)
+        if result == QDialog.DialogCode.Accepted and skip_set:
             pre = len(self._scan_result.files)
             self._scan_result.files = [
-                f for f in self._scan_result.files if f not in dialog.skip_set
+                f for f in self._scan_result.files if f not in skip_set
             ]
             removed = pre - len(self._scan_result.files)
             self._scan_result.total_size = sum(
@@ -10753,7 +10763,7 @@ class MainWindow(QMainWindow):
                 _timer = QTimer(self)
                 _timer.timeout.connect(_tick)
                 _timer.start(1000)
-                countdown.exec()
+                _exec_dialog_and_delete(countdown)
                 _timer.stop()
                 if not _cancelled[0]:
                     _execute_when_done(action)
