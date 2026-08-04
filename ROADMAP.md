@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — `_add_profile` validation gaps (WatchFolderDialog)
-  Why: No rejection of output == source / output inside source (feeds the Run Now self-conversion item) / duplicate profiles; cancelling the output picker silently defaults to `source/converted`; deleted preset silently falls back to all-default options.
-  Where: `imgconverter.py:6451-6476, 6520`. Fix: validate at add time with `_set_dialog_status` feedback; warn when preset unresolvable.
-
 - [ ] P3 — DuplicateReviewDialog inconsistent skip microcopy
   Why: Same checked state labeled "Skip smaller file" initially but "Skip this file" after any toggle round-trip.
   Where: `imgconverter.py:6673 vs 6717`. Fix: one label string.

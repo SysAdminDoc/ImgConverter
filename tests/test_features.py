@@ -2465,6 +2465,97 @@ class TestWatchProfilePersistence:
             dialog.close()
             dialog.deleteLater()
 
+    def test_watch_profile_add_requires_distinct_output_and_rejects_duplicates(
+        self, tmp_workdir, monkeypatch
+    ):
+        import imgconverter
+
+        source = tmp_workdir / "source"
+        output = tmp_workdir / "output"
+        source.mkdir()
+        output.mkdir()
+        config = tmp_workdir / "watch-profiles.json"
+        monkeypatch.setattr(imgconverter, "WATCH_PROFILES_FILE", config)
+        monkeypatch.setattr(
+            imgconverter.QInputDialog,
+            "getItem",
+            lambda *_args, **_kwargs: ("Web Optimized", True),
+        )
+
+        selections = iter([str(source), str(source / "nested"), str(source), str(output)])
+        monkeypatch.setattr(
+            imgconverter.QFileDialog,
+            "getExistingDirectory",
+            lambda *_args, **_kwargs: next(selections),
+        )
+        dialog = imgconverter.WatchFolderDialog()
+        try:
+            dialog._add_profile()
+            assert dialog._profiles == []
+            assert "outside the source" in dialog.status_label.text()
+
+            dialog._add_profile()
+            assert len(dialog._profiles) == 1
+
+            selections = iter([str(source), str(output)])
+            dialog._add_profile()
+            assert len(dialog._profiles) == 1
+            assert "already exists" in dialog.status_label.text()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_watch_profile_add_cancelled_output_does_not_create_default(
+        self, tmp_workdir, monkeypatch
+    ):
+        import imgconverter
+
+        source = tmp_workdir / "source"
+        source.mkdir()
+        config = tmp_workdir / "watch-profiles.json"
+        monkeypatch.setattr(imgconverter, "WATCH_PROFILES_FILE", config)
+        selections = iter([str(source), ""])
+        monkeypatch.setattr(
+            imgconverter.QFileDialog,
+            "getExistingDirectory",
+            lambda *_args, **_kwargs: next(selections),
+        )
+
+        dialog = imgconverter.WatchFolderDialog()
+        try:
+            dialog._add_profile()
+            assert dialog._profiles == []
+            assert "Choose an output folder" in dialog.status_label.text()
+            assert not config.exists()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_watch_profile_run_reports_deleted_preset(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        source = tmp_workdir / "source"
+        output = tmp_workdir / "output"
+        source.mkdir()
+        output.mkdir()
+        config = tmp_workdir / "watch-profiles.json"
+        config.write_text(json.dumps([{
+            "source": str(source),
+            "output": str(output),
+            "preset": "Deleted preset",
+        }]), encoding="utf-8")
+        monkeypatch.setattr(imgconverter, "WATCH_PROFILES_FILE", config)
+
+        dialog = imgconverter.WatchFolderDialog()
+        try:
+            dialog.table.selectRow(0)
+            dialog._run_now()
+            assert not dialog._run_active
+            assert "no longer available" in dialog.status_label.text()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
 
 class TestQueuePersistence:
 

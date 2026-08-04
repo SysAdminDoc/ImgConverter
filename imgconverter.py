@@ -6704,6 +6704,34 @@ class BatchHistoryDialog(QDialog):
 WATCH_PROFILES_FILE = USER_CONFIG_DIR / "watch-profiles.json"
 
 
+def _watch_profile_path_key(path: str | Path) -> str:
+    """Return a stable comparison key for a watch-profile directory."""
+    raw = os.path.expanduser(str(path).strip())
+    try:
+        resolved = Path(raw).resolve(strict=False)
+        return os.path.normcase(os.path.abspath(os.path.normpath(str(resolved))))
+    except (OSError, RuntimeError, ValueError):
+        return os.path.normcase(os.path.abspath(os.path.normpath(raw)))
+
+
+def _watch_profile_path_error(source: str, output: str) -> str | None:
+    """Return an actionable error when a profile's folders overlap."""
+    if not source or not output:
+        return "Choose both a source folder and an output folder."
+    source_key = _watch_profile_path_key(source)
+    output_key = _watch_profile_path_key(output)
+    if source_key == output_key:
+        return "Choose a different output folder from the source folder."
+    try:
+        source_path = Path(source).expanduser().resolve(strict=False)
+        output_path = Path(output).expanduser().resolve(strict=False)
+        if output_path.is_relative_to(source_path):
+            return "Choose an output folder outside the source folder."
+    except (OSError, RuntimeError, ValueError):
+        return "Choose valid source and output folders."
+    return None
+
+
 def _load_watch_profiles() -> list[dict]:
     try:
         if WATCH_PROFILES_FILE.is_file():
@@ -6902,7 +6930,32 @@ class WatchFolderDialog(QDialog):
             return
         out = QFileDialog.getExistingDirectory(self, self.tr("Select Output Folder"))
         if not out:
-            out = str(Path(src) / "converted")
+            _set_dialog_status(
+                self.status_label,
+                self.tr("Choose an output folder before saving the profile."),
+                "warning",
+            )
+            return
+
+        path_error = _watch_profile_path_error(src, out)
+        if path_error:
+            _set_dialog_status(self.status_label, path_error, "warning")
+            return
+
+        source_key = _watch_profile_path_key(src)
+        output_key = _watch_profile_path_key(out)
+        if any(
+            _watch_profile_path_key(profile.get("source", "")) == source_key
+            and _watch_profile_path_key(profile.get("output", "")) == output_key
+            for profile in self._profiles
+        ):
+            _set_dialog_status(
+                self.status_label,
+                self.tr("A profile for these source and output folders already exists."),
+                "warning",
+            )
+            return
+
         presets = list(list_presets().keys())
         if presets:
             preset_name, ok = QInputDialog.getItem(
@@ -6912,6 +6965,13 @@ class WatchFolderDialog(QDialog):
                 return
         else:
             preset_name = "Default"
+        if preset_name != "Default" and load_preset(preset_name) is None:
+            _set_dialog_status(
+                self.status_label,
+                self.tr("The selected preset is no longer available. Choose another preset."),
+                "warning",
+            )
+            return
         self._profiles.append({
             "source": src,
             "output": out,
@@ -6945,6 +7005,16 @@ class WatchFolderDialog(QDialog):
         if not src or not Path(src).is_dir():
             _set_dialog_status(self.status_label, self.tr("Source folder not found: {}.").format(src), "danger")
             return
+        preset = {} if preset_name == "Default" else load_preset(preset_name)
+        if preset is None:
+            _set_dialog_status(
+                self.status_label,
+                self.tr("Preset '{}' is no longer available. Choose another preset or remove this profile.").format(
+                    preset_name
+                ),
+                "danger",
+            )
+            return
         self._run_active = True
         self._run_now_cancelled = False
         self._update_actions()
@@ -6959,7 +7029,6 @@ class WatchFolderDialog(QDialog):
         _refresh_widget_style(self.run_progress)
         self.run_progress.setVisible(True)
 
-        preset = load_preset(preset_name)
         opts = _convert_options_from_preset(preset, Path(src))
         if not out:
             out = str(Path(src) / "converted")
