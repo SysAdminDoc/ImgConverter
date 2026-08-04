@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Plugin trust dialog never exposes the full SHA-256 it asks users to trust
-  Why: Only the 12-char prefix is shown anywhere (tooltip repeats the truncation); cross-checking a published hash is impossible from the GUI.
-  Where: `imgconverter.py:867/878/889, 6049-6050, 5999`. Fix: full digest in tooltip/details pane; retitle column "Hash (first 12)".
-
 - [ ] P3 — Grammar: "1 need review." in plugin-trust and history status lines
   Why: Second clause of `"{total} plugin entries found; {needs_review} need review."` isn't pluralized for count == 1.
   Where: `imgconverter.py:6059, 6200`. Fix: `need{'s' if n == 1 else ''}`.

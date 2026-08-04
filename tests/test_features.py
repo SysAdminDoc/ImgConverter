@@ -2577,6 +2577,28 @@ class TestWatchProfilePersistence:
             dialog.close()
             dialog.deleteLater()
 
+    def test_plugin_trust_table_exposes_full_sha256_on_hover(self, monkeypatch):
+        import imgconverter
+
+        digest = "a" * 64
+        monkeypatch.setattr(imgconverter, "get_plugin_trust_rows", lambda: [{
+            "name": "demo.py",
+            "path": "C:/plugins/demo.py",
+            "trust_ref": "demo.py",
+            "status": "untrusted",
+            "hash_prefix": digest[:12],
+            "sha256": digest,
+            "reason": "review required",
+        }])
+        dialog = imgconverter.PluginTrustDialog()
+        try:
+            assert dialog.table.horizontalHeaderItem(3).text() == "Hash (first 12)"
+            assert dialog.table.item(0, 3).text() == digest[:12]
+            assert dialog.table.item(0, 3).toolTip() == digest
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
 
 class TestQueuePersistence:
 

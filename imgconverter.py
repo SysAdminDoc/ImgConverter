@@ -973,6 +973,7 @@ def get_plugin_trust_rows() -> list[dict]:
                 "trust_ref": str(py),
                 "status": status,
                 "hash_prefix": digest[:12],
+                "sha256": digest,
                 "reason": "trusted file matches manifest" if status == "trusted" else detail,
             })
     for name in sorted(set(records) - seen):
@@ -984,6 +985,7 @@ def get_plugin_trust_rows() -> list[dict]:
             "trust_ref": name,
             "status": "missing",
             "hash_prefix": str(records[name].get("sha256", ""))[:12],
+            "sha256": str(records[name].get("sha256", "")),
             "reason": "trusted manifest entry has no file on disk",
         })
 
@@ -995,6 +997,7 @@ def get_plugin_trust_rows() -> list[dict]:
             "trust_ref": ep_info["trust_key"],
             "status": status,
             "hash_prefix": str(ep_info.get("sha256", ""))[:12],
+            "sha256": str(ep_info.get("sha256", "")),
             "reason": detail,
         })
     return rows
@@ -6426,11 +6429,15 @@ class PluginTrustDialog(QDialog):
         layout.addWidget(self.empty_label)
 
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels([self.tr("Plugin"), self.tr("Path"), self.tr("Status"), self.tr("Hash"), self.tr("Reason")])
+        self.table.setHorizontalHeaderLabels([
+            self.tr("Plugin"), self.tr("Path"), self.tr("Status"), self.tr("Hash (first 12)"), self.tr("Reason")
+        ])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAccessibleName(self.tr("Plugin trust inventory"))
-        self.table.setAccessibleDescription(self.tr("Installed plugin files with trust status and hash prefix"))
+        self.table.setAccessibleDescription(self.tr(
+            "Installed plugin files with a short hash and the full SHA-256 available on hover"
+        ))
         _configure_inventory_table(self.table)
         self.table.itemSelectionChanged.connect(self._update_actions)
         layout.addWidget(self.table)
@@ -6477,7 +6484,10 @@ class PluginTrustDialog(QDialog):
         for row_idx, row in enumerate(self._rows):
             for col_idx, key in enumerate(("name", "path", "status", "hash_prefix", "reason")):
                 item = QTableWidgetItem(str(row.get(key, "")))
-                item.setToolTip(str(row.get(key, "")))
+                if key == "hash_prefix":
+                    item.setToolTip(str(row.get("sha256") or row.get(key, "")))
+                else:
+                    item.setToolTip(str(row.get(key, "")))
                 self.table.setItem(row_idx, col_idx, item)
         self.table.resizeColumnsToContents()
         total = len(self._rows)

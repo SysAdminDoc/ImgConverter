@@ -145,6 +145,8 @@ def test_plugin_trust_rows_do_not_execute_plugin_code(tmp_workdir, monkeypatch):
     assert rows[0]["name"] == "03-danger.py"
     assert rows[0]["status"] == "untrusted"
     assert rows[0]["hash_prefix"]
+    assert len(rows[0]["sha256"]) == 64
+    assert rows[0]["hash_prefix"] == rows[0]["sha256"][:12]
     assert "trust-plugin" in rows[0]["reason"]
     assert rows[0]["trust_ref"] == str(plugin)
 
@@ -180,6 +182,7 @@ def test_entrypoint_plugin_rows_can_be_trusted_by_trust_ref(tmp_workdir, monkeyp
     rows = imgconverter.get_plugin_trust_rows()
     assert rows[0]["status"] == "trusted"
     assert rows[0]["hash_prefix"] == "a" * 12
+    assert rows[0]["sha256"] == ep_info["sha256"]
 
 
 def test_untrust_entrypoint_ref_keeps_manifest_key_verbatim(tmp_workdir, monkeypatch):
