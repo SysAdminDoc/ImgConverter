@@ -1097,6 +1097,44 @@ class TestShellIntegration:
             dialog.close()
             dialog.deleteLater()
 
+    def test_linux_shell_preview_uses_desktop_file_arguments(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(imgconverter.sys, "executable", str(tmp_workdir / "Python Folder" / "python"))
+        monkeypatch.setattr(imgconverter, "__file__", str(tmp_workdir / "App Folder" / "imgconverter.py"))
+        dialog = imgconverter.ShellIntegrationDialog()
+        try:
+            preview = dialog.cmd_view.toPlainText()
+            assert "--files %F" in preview
+            assert "--input %F" in preview
+            assert '"%1"' not in preview
+            index = dialog.preset_combo.findText("Web Optimized")
+            dialog.preset_combo.setCurrentIndex(index)
+            assert '--preset "Web Optimized"' in dialog.cmd_view.toPlainText()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_macos_shell_preview_uses_automator_arguments(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(imgconverter.sys, "executable", str(tmp_workdir / "Python Folder" / "python"))
+        monkeypatch.setattr(imgconverter, "__file__", str(tmp_workdir / "App Folder" / "imgconverter.py"))
+        dialog = imgconverter.ShellIntegrationDialog()
+        try:
+            preview = dialog.cmd_view.toPlainText()
+            assert '--files "$@"' in preview
+            assert '--input "$@"' in preview
+            assert '"%1"' not in preview
+            index = dialog.preset_combo.findText("Web Optimized")
+            dialog.preset_combo.setCurrentIndex(index)
+            assert "--preset 'Web Optimized'" in dialog.cmd_view.toPlainText()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
     def test_linux_install_permission_error_returns_input_error(self, tmp_workdir, monkeypatch, capsys):
         import imgconverter
 

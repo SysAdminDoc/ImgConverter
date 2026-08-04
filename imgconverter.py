@@ -12,7 +12,7 @@ import multiprocessing
 multiprocessing.freeze_support()
 
 import errno
-import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil, tempfile
+import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil, tempfile, shlex
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -7522,16 +7522,35 @@ class ShellIntegrationDialog(QDialog):
         exe = sys.executable
         script = str(Path(__file__).resolve())
         preset_name = self._selected_preset_name()
-        preset_arg = (
+        windows_preset_arg = (
             f" --preset {subprocess.list2cmdline([preset_name])}"
             if preset_name else ""
         )
-        self.cmd_view.setPlainText(
-            self.tr(
+        unix_preset_arg = (
+            f" --preset {shlex.quote(preset_name)}"
+            if preset_name else ""
+        )
+        desktop_preset_arg = (
+            f" --preset {_desktop_exec_arg(preset_name)}"
+            if preset_name else ""
+        )
+        system = platform.system()
+        if system == "Windows":
+            preview = self.tr(
                 'Files:   "{0}" "{1}"{2} --files "%1"\n'
                 'Folders: "{0}" "{1}"{2} --input "%1"'
-            ).format(exe, script, preset_arg)
-        )
+            ).format(exe, script, windows_preset_arg)
+        elif system == "Linux":
+            preview = self.tr(
+                "Files:   Exec={0} {1}{2} --files %F\n"
+                "Folders: Exec={0} {1}{2} --input %F"
+            ).format(_desktop_exec_arg(exe), _desktop_exec_arg(script), desktop_preset_arg)
+        else:
+            preview = self.tr(
+                "Files:   {0} {1}{2} --files \"$@\"\n"
+                "Folders: {0} {1}{2} --input \"$@\""
+            ).format(shlex.quote(exe), shlex.quote(script), unix_preset_arg)
+        self.cmd_view.setPlainText(preview)
 
     def _detect_state(self):
         system = platform.system()
@@ -11876,6 +11895,10 @@ def _install_shell_integration(
         f" --preset {_desktop_exec_arg(preset_name)}"
         if preset_name else ""
     )
+    unix_preset_args = (
+        f" --preset {shlex.quote(preset_name)}"
+        if preset_name else ""
+    )
     file_cmd_args = f'"{exe}" "{script}"{preset_args} --files "%1"'
     dir_cmd_args = f'"{exe}" "{script}"{preset_args} --input "%1"'
 
@@ -11980,7 +12003,7 @@ def _install_shell_integration(
             "  1. Open Automator -> New -> Quick Action\n"
             "  2. Workflow receives: image files in Finder\n"
             "  3. Add 'Run Shell Script' action:\n"
-            f"      {exe} {script} --files \"$@\"\n"
+            f"      {shlex.quote(exe)} {shlex.quote(script)}{unix_preset_args} --files \"$@\"\n"
             "  4. Save as 'Convert with ImgConverter'\n"
             "  Auto-install into ~/Library/Services is intentionally skipped\n"
             "  because Automator workflows are signed bundles."

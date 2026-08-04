@@ -38,6 +38,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Made duplicate-review skip actions keep the same “Skip this file” label before and after toggling.
 - Exposed full plugin SHA-256 digests in trust-inventory rows and tooltips while retaining compact hash-prefix display.
 - Corrected plugin-trust and batch-history review summaries to say “needs review” for a single item.
+- Made shell-integration previews use Windows `%1`, Linux desktop-entry `%F`, or macOS Automator `"$@"` arguments according to the active platform.
 - Preserved UTF-8 and significant whitespace in `--stdin-files` and `--stdin-null` path streams.
 - Cached source C2PA marker detection in the opened-image metadata path to avoid duplicate scans.
 - Clarified that `--max-memory` reports a warning threshold and does not throttle worker submissions.

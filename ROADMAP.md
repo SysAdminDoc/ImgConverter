@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — ShellIntegrationDialog preview shows Windows registry syntax on Linux/macOS
-  Why: Preview always shows `--files %*` / `"%1"`; Linux uses `%F` desktop syntax and macOS status text tells the user to paste the preview into Automator (needs `"$@"`).
-  Where: `imgconverter.py:6917-6920, 10843, 6984-6987`. Fix: branch preview on `platform.system()`.
-
 - [ ] P3 — Windows context menu registered under `*` (all file types), not images
   Why: "Convert with ImgConverter" appears on `.docx`, `.exe`, everything; docstring says "for image files"; Linux path correctly scopes via MimeType.
   Where: `imgconverter.py:10770-10771, 10790`. Fix: register under `SystemFileAssociations\image\shell` (update `_detect_state` 6975 + uninstall keys to match).
