@@ -2645,7 +2645,7 @@ class TestWatchProfilePersistence:
             dialog.close()
             dialog.deleteLater()
 
-    def test_plugin_trust_table_exposes_full_sha256_on_hover(self, monkeypatch):
+    def test_plugin_trust_table_exposes_full_sha256_on_hover(self, monkeypatch, qtbot):
         import imgconverter
 
         digest = "a" * 64
@@ -2660,6 +2660,7 @@ class TestWatchProfilePersistence:
         }])
         dialog = imgconverter.PluginTrustDialog()
         try:
+            qtbot.waitUntil(lambda: dialog.table.rowCount() == 1, timeout=3000)
             assert dialog.table.horizontalHeaderItem(3).text() == "Hash (first 12)"
             assert dialog.table.item(0, 3).text() == digest[:12]
             assert dialog.table.item(0, 3).toolTip() == digest
@@ -2667,7 +2668,7 @@ class TestWatchProfilePersistence:
             dialog.close()
             dialog.deleteLater()
 
-    def test_review_summaries_use_singular_agreement(self, monkeypatch):
+    def test_review_summaries_use_singular_agreement(self, monkeypatch, qtbot):
         import imgconverter
 
         monkeypatch.setattr(imgconverter, "get_plugin_trust_rows", lambda: [{
@@ -2681,6 +2682,7 @@ class TestWatchProfilePersistence:
         }])
         plugin_dialog = imgconverter.PluginTrustDialog()
         try:
+            qtbot.waitUntil(lambda: plugin_dialog.table.rowCount() == 1, timeout=3000)
             assert plugin_dialog.status_label.text() == "1 plugin entry found; 1 needs review."
         finally:
             plugin_dialog.close()
@@ -2701,6 +2703,34 @@ class TestWatchProfilePersistence:
         finally:
             history_dialog.close()
             history_dialog.deleteLater()
+
+    def test_plugin_trust_inventory_hashes_off_gui_thread(self, monkeypatch, qtbot):
+        import threading
+        import imgconverter
+
+        worker_thread_ids = []
+
+        def fake_rows():
+            worker_thread_ids.append(threading.get_ident())
+            return [{
+                "name": "demo.py",
+                "path": "C:/plugins/demo.py",
+                "trust_ref": "demo.py",
+                "status": "trusted",
+                "hash_prefix": "b" * 12,
+                "sha256": "b" * 64,
+                "reason": "trusted file matches manifest",
+            }]
+
+        monkeypatch.setattr(imgconverter, "get_plugin_trust_rows", fake_rows)
+        dialog = imgconverter.PluginTrustDialog()
+        try:
+            qtbot.waitUntil(lambda: dialog.table.rowCount() == 1, timeout=3000)
+            assert worker_thread_ids
+            assert worker_thread_ids[0] != threading.get_ident()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
 
     def test_modal_dialog_helper_deletes_after_exec(self):
         import imgconverter

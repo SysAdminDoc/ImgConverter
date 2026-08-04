@@ -41,6 +41,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Made shell-integration previews use Windows `%1`, Linux desktop-entry `%F`, or macOS Automator `"$@"` arguments according to the active platform.
 - Scoped the Windows shell integration command to image files instead of the wildcard all-file association, while uninstalling legacy wildcard keys too.
 - Added a shared modal-dialog cleanup path so management and duplicate-review dialogs release their Qt objects after `exec()`.
+- Moved plugin trust inventory discovery and SHA-256 computation off the dialog thread with close-time interruption handling.
 - Preserved UTF-8 and significant whitespace in `--stdin-files` and `--stdin-null` path streams.
 - Cached source C2PA marker detection in the opened-image metadata path to avoid duplicate scans.
 - Clarified that `--max-memory` reports a warning threshold and does not throttle worker submissions.

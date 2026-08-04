@@ -6057,6 +6057,25 @@ class _UpdateCheckWorker(QThread):
             self.result.emit(tag)
 
 
+class _PluginTrustWorker(QThread):
+    """Build the plugin trust inventory without blocking the dialog thread."""
+
+    rows_ready = pyqtSignal(list)
+    failed = pyqtSignal(str)
+
+    def run(self):
+        if self.isInterruptionRequested():
+            return
+        try:
+            rows = get_plugin_trust_rows()
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.failed.emit(str(exc))
+            return
+        if not self.isInterruptionRequested():
+            self.rows_ready.emit(rows)
+
+
 
 
 def _seed_user_preset_dir():
@@ -6408,6 +6427,10 @@ class PluginTrustDialog(QDialog):
         self.setWindowTitle(self.tr("Plugin Trust"))
         _restore_dialog_geometry(self, 880, 460)
         self._rows: list[dict] = []
+        self._refresh_worker: _PluginTrustWorker | None = None
+        self._refresh_announcement: str | None = None
+        self._refresh_tone: str | None = None
+        self._deferred_close = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -6486,8 +6509,63 @@ class PluginTrustDialog(QDialog):
         self._refresh()
         self._update_actions()
 
+    def _set_refresh_busy(self, busy: bool):
+        self.refresh_btn.setEnabled(not busy)
+        if busy:
+            self.trust_btn.setEnabled(False)
+            self.untrust_btn.setEnabled(False)
+        else:
+            self._update_actions()
+
     def _refresh(self, announcement: str | None = None, tone: str | None = None):
-        self._rows = get_plugin_trust_rows()
+        worker = self._refresh_worker
+        if worker is not None and worker.isRunning():
+            return
+        self._refresh_announcement = announcement
+        self._refresh_tone = tone
+        self._set_refresh_busy(True)
+        _set_dialog_status(
+            self.status_label,
+            self.tr("Loading plugin trust inventory..."),
+            "active",
+        )
+        worker = _PluginTrustWorker(self)
+        self._refresh_worker = worker
+        worker.rows_ready.connect(self._on_refresh_rows)
+        worker.failed.connect(self._on_refresh_failed)
+        worker.finished.connect(self._on_refresh_worker_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_refresh_rows(self, rows: list):
+        self._apply_rows(
+            rows,
+            self._refresh_announcement,
+            self._refresh_tone,
+        )
+
+    def _on_refresh_failed(self, error: str):
+        self._apply_rows(
+            [],
+            self.tr("Could not load plugin trust inventory: {}.").format(error),
+            "danger",
+        )
+
+    def _on_refresh_worker_finished(self):
+        worker = self.sender()
+        if worker is self._refresh_worker:
+            self._refresh_worker = None
+        if self._deferred_close:
+            self._deferred_close = False
+            self.close()
+
+    def _apply_rows(
+        self,
+        rows: list[dict],
+        announcement: str | None = None,
+        tone: str | None = None,
+    ):
+        self._rows = list(rows)
         self.table.setRowCount(len(self._rows))
         for row_idx, row in enumerate(self._rows):
             for col_idx, key in enumerate(("name", "path", "status", "hash_prefix", "reason")):
@@ -6523,7 +6601,20 @@ class PluginTrustDialog(QDialog):
         _set_dialog_status(self.status_label, announcement or text, tone or summary_tone)
         self.empty_label.setVisible(total == 0)
         self.table.setVisible(total > 0)
-        self._update_actions()
+        self._refresh_announcement = None
+        self._refresh_tone = None
+        self._set_refresh_busy(False)
+
+    def closeEvent(self, event):
+        worker = self._refresh_worker
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+            if not worker.wait(3000):
+                self._deferred_close = True
+                self.hide()
+                event.ignore()
+                return
+        super().closeEvent(event)
 
     def _selected_row(self) -> dict | None:
         row = self.table.currentRow()
