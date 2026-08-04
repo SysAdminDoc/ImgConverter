@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Missing test coverage
-  Why: Zero coverage for: watch loop (`_watch_directory`, `_WatchHandler`), --stdin-files, --use-cache/--clear-cache, --dedup, --sidecar-history, --progress JSON events, RAW/HEIC input roundtrips, RGBA-to-format transparency handling, the in-place same-format failure path (P0 above), edit flags on same-format sources (P1 above).
-  Where: `tests/`. Fix: add alongside the corresponding fixes; regression test per bug.
-
 ### Audited and found sound (do not re-chase)
 
 Verified non-issues this pass: subprocess calls are all list-form/shell=False (no injection); `_write_text_atomic` is a correct atomic pattern; template/prefix path-traversal guards hold; plugin symlink/hash pinning works as documented (except items above); c2pa-python SDK path already uses `Reader.try_create` + `get_validation_state()` (the researched `is_valid()` claim was fixed in v3.4.0); QSettings bool/combo restores are range-checked; pause/stop deadlock, countdown escape routes, log growth caps, stale-scan guards, dedup-dialog escape semantics all correct; stylesheet colors flow from CAT tokens.

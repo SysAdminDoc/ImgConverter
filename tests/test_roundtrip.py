@@ -48,6 +48,58 @@ def test_rgba_to_jpeg_falls_back_to_png(rgba_image, tmp_workdir):
     assert result.dst.suffix == ".png"
 
 
+def test_heic_input_roundtrips_to_png(rgb_image, tmp_workdir):
+    """The required HEIC decoder can feed the normal conversion pipeline."""
+    import pillow_heif
+    from PIL import Image
+
+    src = tmp_workdir / "source.heic"
+    pillow_heif.from_pillow(rgb_image).save(src)
+    result = convert_file(src, tmp_workdir / "out", fmt="png")
+
+    assert result.success, result.error
+    assert result.dst is not None
+    with Image.open(result.dst) as output:
+        assert output.size == rgb_image.size
+
+
+def test_raw_input_roundtrips_through_the_rawpy_decoder(tmp_workdir, monkeypatch):
+    """The RAW branch is covered without requiring a binary camera fixture."""
+    import numpy as np
+    import imgconverter
+    from PIL import Image
+
+    source = tmp_workdir / "source.dng"
+    source.write_bytes(b"synthetic raw payload")
+    calls = {}
+
+    class FakeRaw:
+        def postprocess(self, **kwargs):
+            calls["postprocess"] = kwargs
+            return np.full((6, 8, 3), (40, 80, 120), dtype=np.uint8)
+
+        def close(self):
+            calls["closed"] = True
+
+    class FakeRawPy:
+        @staticmethod
+        def imread(path):
+            calls["path"] = path
+            return FakeRaw()
+
+    monkeypatch.setattr(imgconverter, "HAS_RAWPY", True)
+    monkeypatch.setattr(imgconverter, "rawpy", FakeRawPy)
+    result = convert_file(source, tmp_workdir / "out", fmt="png")
+
+    assert result.success, result.error
+    assert result.dst is not None
+    assert calls["path"] == str(source)
+    assert calls["postprocess"] == {"use_camera_wb": True, "output_bps": 8}
+    assert calls["closed"] is True
+    with Image.open(result.dst) as output:
+        assert output.size == (8, 6)
+
+
 def test_auto_rgb_selects_jpeg(rgb_image, tmp_workdir):
     """auto-mode RGB input (no alpha) should pick JPEG, not PNG."""
     src = tmp_workdir / "solid.bmp"

@@ -833,6 +833,118 @@ class TestWhenDoneCLI:
         assert "because 1 file failed" in error
 
 
+class TestCLIBatchFeatures:
+
+    def test_use_cache_skips_a_previous_conversion(self, rgb_image, tmp_workdir, monkeypatch, capsys):
+        import imgconverter
+
+        source_dir = tmp_workdir / "source"
+        source_dir.mkdir()
+        source = source_dir / "photo.bmp"
+        rgb_image.save(source)
+        output_dir = tmp_workdir / "output"
+        cache_dir = tmp_workdir / "cache"
+        monkeypatch.setattr(imgconverter, "USER_CACHE_DIR", cache_dir)
+        monkeypatch.setattr(imgconverter, "HASH_CACHE_PATH", cache_dir / "seen.sqlite")
+        monkeypatch.setattr(imgconverter, "QUEUE_STATE_PATH", tmp_workdir / "queue.json")
+
+        argv = [
+            "--input", str(source_dir), "--output", str(output_dir),
+            "--format", "png", "--workers", "1", "--use-cache",
+        ]
+        with pytest.raises(SystemExit) as first_exc:
+            _run_cli(_build_parser().parse_args(argv))
+        assert first_exc.value.code == EXIT_OK
+        assert (output_dir / "photo.png").exists()
+        capsys.readouterr()
+
+        with pytest.raises(SystemExit) as second_exc:
+            _run_cli(_build_parser().parse_args(argv))
+        second_output = capsys.readouterr().out
+
+        assert second_exc.value.code == EXIT_OK
+        assert "[cache] skipping 1 files seen with this preset" in second_output
+        assert (output_dir / "photo.png").exists()
+
+    def test_clear_cache_removes_the_hash_database(self, tmp_workdir, monkeypatch, capsys):
+        import imgconverter
+
+        cache_path = tmp_workdir / "cache" / "seen.sqlite"
+        cache_path.parent.mkdir()
+        cache_path.write_bytes(b"sqlite placeholder")
+        monkeypatch.setattr(imgconverter, "HASH_CACHE_PATH", cache_path)
+        monkeypatch.setattr(sys, "argv", ["imgconverter", "--clear-cache"])
+
+        with pytest.raises(SystemExit) as exc:
+            imgconverter.main()
+
+        assert exc.value.code == EXIT_OK
+        assert not cache_path.exists()
+        assert "[cache] removed" in capsys.readouterr().out
+
+    def test_sidecar_history_records_conversion_hashes_and_preset(
+        self, rgb_image, tmp_workdir, monkeypatch,
+    ):
+        import hashlib
+        import imgconverter
+
+        source = tmp_workdir / "photo.bmp"
+        rgb_image.save(source)
+        output_dir = tmp_workdir / "output"
+        monkeypatch.setattr(imgconverter, "QUEUE_STATE_PATH", tmp_workdir / "queue.json")
+        args = _build_parser().parse_args([
+            "--input", str(source), "--output", str(output_dir),
+            "--format", "png", "--workers", "1", "--sidecar-history",
+        ])
+
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        output = output_dir / "photo.png"
+        sidecar = output.with_suffix(output.suffix + ".imgconverter.json")
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+
+        assert exc.value.code == EXIT_OK
+        assert payload["version"] == imgconverter.APP_VERSION
+        assert payload["src"] == str(source)
+        assert payload["src_hash"] == hashlib.sha256(source.read_bytes()).hexdigest()
+        assert payload["dst_hash"] == hashlib.sha256(output.read_bytes()).hexdigest()
+        assert payload["preset"]["format"] == "png"
+        assert payload["result"]["size_out"] == output.stat().st_size
+
+    def test_dedup_skip_converts_only_the_largest_member(self, rgb_image, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        source_dir = tmp_workdir / "source"
+        source_dir.mkdir()
+        smaller = source_dir / "smaller.bmp"
+        larger = source_dir / "larger.bmp"
+        Image.new("RGB", (20, 20), (10, 20, 30)).save(smaller)
+        Image.new("RGB", (80, 80), (10, 20, 30)).save(larger)
+        output_dir = tmp_workdir / "output"
+        calls = []
+
+        monkeypatch.setitem(sys.modules, "imagehash", types.ModuleType("imagehash"))
+        monkeypatch.setattr(
+            imgconverter,
+            "_dedup_scan",
+            lambda files: calls.append(list(files)) or [(smaller, larger, 0)],
+        )
+        monkeypatch.setattr(imgconverter, "QUEUE_STATE_PATH", tmp_workdir / "queue.json")
+        args = _build_parser().parse_args([
+            "--input", str(source_dir), "--output", str(output_dir),
+            "--format", "png", "--workers", "1", "--dedup-skip",
+        ])
+
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(args)
+
+        assert exc.value.code == EXIT_OK
+        assert calls == [[larger, smaller]]
+        assert not (output_dir / "smaller.png").exists()
+        assert (output_dir / "larger.png").exists()
+
+
 class TestBatchHistory:
 
     def test_history_record_summarizes_without_source_paths(self, tmp_workdir, monkeypatch):
