@@ -4,6 +4,8 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [Unreleased]
 
+## [v3.7.0] — 2026-08-03
+
 ### Fixed
 
 - Prevented failed same-format in-place conversions from deleting the original source, and ensured editing and lossy-PNG requests bypass the same-format no-op guard.

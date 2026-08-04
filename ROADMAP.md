@@ -1,6 +1,6 @@
 # ImgConverter Roadmap
 
-**Current version:** v3.6.0 (released 2026-07-15) · **Roadmap revision:** 2026-07-16
+**Current version:** v3.7.0 (released 2026-08-03) · **Roadmap revision:** 2026-08-03
 
 ## Working Rules
 
