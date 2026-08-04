@@ -7558,12 +7558,22 @@ class ShellIntegrationDialog(QDialog):
         if system == "Windows":
             try:
                 import winreg
-                winreg.OpenKey(
-                    winreg.HKEY_CURRENT_USER,
+                for key_path in (
+                    r"Software\Classes\SystemFileAssociations\image\shell\ImgConverter",
+                    # Recognize the pre-v3.7 wildcard registration so the
+                    # dialog can guide users to reinstall the image-scoped one.
                     r"Software\Classes\*\shell\ImgConverter",
-                    0, winreg.KEY_READ,
-                ).Close()
-                installed = True
+                ):
+                    try:
+                        winreg.OpenKey(
+                            winreg.HKEY_CURRENT_USER,
+                            key_path,
+                            0, winreg.KEY_READ,
+                        ).Close()
+                        installed = True
+                        break
+                    except (FileNotFoundError, OSError):
+                        continue
             except (FileNotFoundError, OSError, ImportError):
                 pass
         elif system == "Linux":
@@ -11873,7 +11883,7 @@ def _install_shell_integration(
     """Install / uninstall OS-level shell integration.
 
     Windows : adds 'Convert with ImgConverter' to the Explorer right-click menu
-              for image files via HKCU\\Software\\Classes\\* registry keys.
+              for image files via the image-scoped SystemFileAssociations key.
     macOS   : prints the Automator Quick Action recipe (manual; safer than
               auto-installing into ~/Library/Services).
     Linux   : writes ~/.local/share/applications/imgconverter.desktop +
@@ -11909,13 +11919,19 @@ def _install_shell_integration(
             print("[shell-integration] winreg unavailable.", file=sys.stderr)
             return EXIT_DEP_MISSING
         root = winreg.HKEY_CURRENT_USER
-        file_base = r"Software\Classes\*\shell\ImgConverter"
+        file_base = r"Software\Classes\SystemFileAssociations\image\shell\ImgConverter"
+        legacy_file_base = r"Software\Classes\*\shell\ImgConverter"
         file_cmd_key = file_base + r"\command"
         dir_base = r"Software\Classes\Directory\shell\ImgConverter"
         dir_cmd_key = dir_base + r"\command"
         if uninstall:
             failures = []
-            for cmd_key, base in ((file_cmd_key, file_base), (dir_cmd_key, dir_base)):
+            registry_trees = [
+                (file_cmd_key, file_base),
+                (legacy_file_base + r"\command", legacy_file_base),
+                (dir_cmd_key, dir_base),
+            ]
+            for cmd_key, base in registry_trees:
                 try:
                     winreg.DeleteKey(root, cmd_key)
                 except FileNotFoundError:

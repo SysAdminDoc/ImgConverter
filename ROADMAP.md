@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Windows context menu registered under `*` (all file types), not images
-  Why: "Convert with ImgConverter" appears on `.docx`, `.exe`, everything; docstring says "for image files"; Linux path correctly scopes via MimeType.
-  Where: `imgconverter.py:10770-10771, 10790`. Fix: register under `SystemFileAssociations\image\shell` (update `_detect_state` 6975 + uninstall keys to match).
-
 - [ ] P3 — Management dialogs leak one instance per open
   Why: Every `_open_*` creates a dialog parented to MainWindow, `exec()`s, drops the local — C++ objects accumulate for process lifetime.
   Where: `imgconverter.py:8776-8796, 7196-7198, 8812`. Fix: `WA_DeleteOnClose` or `deleteLater()` after exec.

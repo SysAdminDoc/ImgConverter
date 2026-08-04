@@ -1040,8 +1040,8 @@ class TestShellIntegration:
         monkeypatch.setitem(sys.modules, "winreg", FakeWinreg)
 
         assert _install_shell_integration(False) == EXIT_OK
-        assert '--files "%1"' in values[(r"Software\Classes\*\shell\ImgConverter\command", "")]
-        assert values[(r"Software\Classes\*\shell\ImgConverter", "MultiSelectModel")] == "Player"
+        assert '--files "%1"' in values[(r"Software\Classes\SystemFileAssociations\image\shell\ImgConverter\command", "")]
+        assert values[(r"Software\Classes\SystemFileAssociations\image\shell\ImgConverter", "MultiSelectModel")] == "Player"
         assert '--input "%1"' in values[(r"Software\Classes\Directory\shell\ImgConverter\command", "")]
 
     def test_windows_registry_commands_include_selected_preset(self, monkeypatch):
@@ -1076,8 +1076,38 @@ class TestShellIntegration:
         monkeypatch.setitem(sys.modules, "winreg", FakeWinreg)
 
         assert _install_shell_integration(False, preset_name="Archive Quality") == EXIT_OK
-        command = values[(r"Software\Classes\*\shell\ImgConverter\command", "")]
+        command = values[(r"Software\Classes\SystemFileAssociations\image\shell\ImgConverter\command", "")]
         assert '--preset "Archive Quality"' in command
+
+    def test_windows_shell_state_checks_image_scoped_registration(self, monkeypatch):
+        import imgconverter
+
+        opened = []
+
+        class Key:
+            def Close(self):
+                return None
+
+        class FakeWinreg:
+            HKEY_CURRENT_USER = object()
+            KEY_READ = 1
+
+            @staticmethod
+            def OpenKey(root, key, reserved, access):
+                opened.append(key)
+                if "SystemFileAssociations\\image\\shell" in key:
+                    return Key()
+                raise FileNotFoundError(key)
+
+        monkeypatch.setattr(imgconverter.platform, "system", lambda: "Windows")
+        monkeypatch.setitem(sys.modules, "winreg", FakeWinreg)
+        dialog = imgconverter.ShellIntegrationDialog()
+        try:
+            assert opened == [r"Software\Classes\SystemFileAssociations\image\shell\ImgConverter"]
+            assert "currently installed" in dialog.status_label.text()
+        finally:
+            dialog.close()
+            dialog.deleteLater()
 
     def test_shell_file_command_quotes_single_path_in_preview(self, monkeypatch):
         import imgconverter
