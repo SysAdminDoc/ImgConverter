@@ -42,6 +42,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Scoped the Windows shell integration command to image files instead of the wildcard all-file association, while uninstalling legacy wildcard keys too.
 - Added a shared modal-dialog cleanup path so management and duplicate-review dialogs release their Qt objects after `exec()`.
 - Moved plugin trust inventory discovery and SHA-256 computation off the dialog thread with close-time interruption handling.
+- Normalized sentence-case UI copy, fixed the non-recursive scan status and singular failure message, and removed a dead duplicate-review tooltip assignment.
 - Preserved UTF-8 and significant whitespace in `--stdin-files` and `--stdin-null` path streams.
 - Cached source C2PA marker detection in the opened-image metadata path to avoid duplicate scans.
 - Clarified that `--max-memory` reports a warning threshold and does not throttle worker submissions.

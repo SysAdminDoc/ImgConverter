@@ -828,7 +828,9 @@ class TestWhenDoneCLI:
 
         assert exc.value.code == EXIT_PARTIAL_FAILURE
         assert called == []
-        assert "skipped 'close'" in capsys.readouterr().err
+        error = capsys.readouterr().err
+        assert "skipped 'close'" in error
+        assert "because 1 file failed" in error
 
 
 class TestBatchHistory:
@@ -2133,6 +2135,16 @@ class TestScanExclude:
         worker.stop()
         assert worker._stop_event.is_set()
 
+    def test_scan_worker_log_uses_clean_non_recursive_grammar(self, tmp_workdir):
+        import imgconverter
+
+        logs = []
+        worker = imgconverter.ScanWorker(tmp_workdir, False)
+        worker.log.connect(logs.append)
+        worker.run()
+
+        assert logs[0] == f"Scanning: {tmp_workdir}"
+
     def test_max_file_size_skips_large_inputs(self, tmp_workdir):
         scan_root = tmp_workdir / "photos"
         scan_root.mkdir()
@@ -3164,6 +3176,24 @@ class TestQtAccessibility:
             if widget and widget.accessibleName():
                 named.append(attr)
         assert len(named) >= 6
+
+    def test_main_controls_use_sentence_case_microcopy(self):
+        w = self.window
+
+        assert w.paste_btn.text() == "Paste image"
+        assert w.open_output_btn.text() == "Open output"
+        assert w.export_log_btn.text() == "Export log"
+        assert w.export_csv_btn.text() == "Export CSV"
+        assert [w.when_done_combo.itemText(i) for i in range(4)] == [
+            "Do nothing", "Close app", "Sleep", "Shutdown",
+        ]
+        assert [w.meta_combo.itemText(i) for i in range(4)] == [
+            "Preserve all", "Strip GPS only", "Strip GPS + device info", "Strip all",
+        ]
+        assert [w.resize_combo.itemText(i) for i in range(2)] == ["Max dimension", "Scale"]
+        assert [w.frames_combo.itemText(i) for i in range(3)] == [
+            "First frame only", "Extract all frames", "Preserve animation",
+        ]
 
     def test_update_check_thread_stops_before_window_close(self, monkeypatch):
         import threading

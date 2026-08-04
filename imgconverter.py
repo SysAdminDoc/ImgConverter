@@ -4865,7 +4865,7 @@ class ScanWorker(QThread):
     def run(self):
         if self._stop_event.is_set():
             return
-        self.log.emit(f"Scanning {'recursively' if self.recursive else ''}: {self.directory}")
+        self.log.emit(f"Scanning{' recursively' if self.recursive else ''}: {self.directory}")
         result = scan_directory(
             self.directory, self.recursive, self.extensions,
             exclude_patterns=self.exclude_patterns,
@@ -7897,23 +7897,23 @@ class MainWindow(QMainWindow):
             }
 
         commands = [
-            command("scan", "Scan Source", "Scan the source folder for supported image files",
+            command("scan", "Scan source", "Scan the source folder for supported image files",
                     "" if not is_converting else "Disabled (converting)"),
-            command("convert", "Convert Batch", "Convert all scanned files",
+            command("convert", "Convert batch", "Convert all scanned files",
                     "" if has_scan and not is_converting else "Disabled (no scan)" if not has_scan else "Disabled (converting)"),
-            command("open_output", "Open Output Folder", "Open the output folder in the file manager",
+            command("open_output", "Open output folder", "Open the output folder in the file manager",
                     "" if self._last_ok_dst else "Disabled (no output yet)"),
-            command("paste", "Paste Clipboard Image", "Paste an image from the clipboard"),
-            command("plugins", "Manage Plugins", "Review plugin trust status"),
-            command("watch", "Watch Folder Profiles", "Manage hot-folder watch profiles"),
-            command("history", "Batch History", "Review local batch history"),
-            command("shell", "Shell Integration", "Manage context-menu integration"),
-            command("duplicates", "Check Duplicates", "Find near-duplicate images",
+            command("paste", "Paste clipboard image", "Paste an image from the clipboard"),
+            command("plugins", "Manage plugins", "Review plugin trust status"),
+            command("watch", "Watch folder profiles", "Manage hot-folder watch profiles"),
+            command("history", "Batch history", "Review local batch history"),
+            command("shell", "Shell integration", "Manage context-menu integration"),
+            command("duplicates", "Check duplicates", "Find near-duplicate images",
                     "" if has_scan else "Disabled (scan first)"),
-            command("export_log", "Export Log", "Save the activity log to a file"),
-            command("export_csv", "Export CSV Report", "Export conversion results as CSV"),
-            command("support", "Export Support Bundle", "Save redacted diagnostics"),
-            command("clear_log", "Clear Log", "Clear the activity log"),
+            command("export_log", "Export log", "Save the activity log to a file"),
+            command("export_csv", "Export CSV report", "Export conversion results as CSV"),
+            command("support", "Export support bundle", "Save redacted diagnostics"),
+            command("clear_log", "Clear log", "Clear the activity log"),
         ]
         dialog = CommandPaletteDialog(commands, self)
         dialog.command_selected.connect(self._run_palette_command)
@@ -8416,16 +8416,16 @@ class MainWindow(QMainWindow):
         opt_grid.addWidget(meta_label, 2, 2)
         self.meta_combo = QComboBox()
         self.meta_combo.addItems([
-            self.tr("Preserve All"),
-            self.tr("Strip GPS Only"),
-            self.tr("Strip GPS + Device Info"),
-            self.tr("Strip All"),
+            self.tr("Preserve all"),
+            self.tr("Strip GPS only"),
+            self.tr("Strip GPS + device info"),
+            self.tr("Strip all"),
         ])
         self.meta_combo.setToolTip(
-            self.tr("Preserve All: keep EXIF/ICC/XMP intact\n"
-            "Strip GPS Only: remove location data, keep copyright and color\n"
-            "Strip GPS + Device Info: remove location + camera make/model/serial\n"
-            "Strip All: remove all EXIF, ICC, and XMP metadata")
+            self.tr("Preserve all: keep EXIF/ICC/XMP intact\n"
+            "Strip GPS only: remove location data, keep copyright and color\n"
+            "Strip GPS + device info: remove location + camera make/model/serial\n"
+            "Strip all: remove all EXIF, ICC, and XMP metadata")
         )
         self.meta_combo.setAccessibleName(self.tr("Metadata handling"))
         self.meta_combo.setAccessibleDescription(
@@ -8462,7 +8462,7 @@ class MainWindow(QMainWindow):
         self.resize_combo = QComboBox()
         self.resize_combo.setMinimumWidth(100)
         self.resize_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.resize_combo.addItems([self.tr("Max Dimension"), self.tr("Scale")])
+        self.resize_combo.addItems([self.tr("Max dimension"), self.tr("Scale")])
         self.resize_combo.setEnabled(False)
         self.resize_combo.currentIndexChanged.connect(self._on_resize_mode_changed)
         opt_grid.addWidget(self.resize_combo, 4, 1)
@@ -8595,7 +8595,7 @@ class MainWindow(QMainWindow):
         self.frames_label.setObjectName("fieldLabel")
         adv_grid.addWidget(self.frames_label, 2, 0)
         self.frames_combo = QComboBox()
-        self.frames_combo.addItems([self.tr("First Frame Only"), self.tr("Extract All Frames"), self.tr("Preserve Animation")])
+        self.frames_combo.addItems([self.tr("First frame only"), self.tr("Extract all frames"), self.tr("Preserve animation")])
         self.frames_combo.setToolTip(
             self.tr("How to handle multi-frame sources (animated WebP/GIF/APNG, multi-page TIFF, HEIC sequences)")
         )
@@ -8883,7 +8883,7 @@ class MainWindow(QMainWindow):
         self.pause_btn.clicked.connect(self._toggle_pause)
         primary_actions.addWidget(self.pause_btn)
 
-        self.paste_btn = QPushButton(self.tr("Paste Image"))
+        self.paste_btn = QPushButton(self.tr("Paste image"))
         self.paste_btn.setObjectName("secondaryBtn")
         self.paste_btn.setToolTip(self.tr("Paste an image from the clipboard as a temporary PNG input"))
         self.paste_btn.setIcon(_create_line_icon("paste"))
@@ -8926,7 +8926,6 @@ class MainWindow(QMainWindow):
 
         self.dedup_btn = QPushButton(self.tr("Find similar"))
         self.dedup_btn.setObjectName("secondaryBtn")
-        self.dedup_btn.setToolTip(self.tr("Check for near-duplicate images in the scanned files"))
         self.dedup_btn.setAccessibleName(self.tr("Duplicate review"))
         self.dedup_btn.setIcon(_create_line_icon("similar"))
         self.dedup_btn.setEnabled(False)
@@ -8945,13 +8944,13 @@ class MainWindow(QMainWindow):
         when_done_label.setObjectName("fieldLabel")
         output_actions.addWidget(when_done_label)
         self.when_done_combo = QComboBox()
-        self.when_done_combo.addItems([self.tr("Do Nothing"), self.tr("Close App"), self.tr("Sleep"), self.tr("Shutdown")])
+        self.when_done_combo.addItems([self.tr("Do nothing"), self.tr("Close app"), self.tr("Sleep"), self.tr("Shutdown")])
         self.when_done_combo.setToolTip(self.tr("Action to take after batch conversion completes"))
         self.when_done_combo.setAccessibleName(self.tr("When done action"))
         self.when_done_combo.setFixedWidth(130)
         output_actions.addWidget(self.when_done_combo)
 
-        self.open_output_btn = QPushButton(self.tr("Open Output"))
+        self.open_output_btn = QPushButton(self.tr("Open output"))
         self.open_output_btn.setObjectName("secondaryBtn")
         self.open_output_btn.setEnabled(False)
         self.open_output_btn.setToolTip(self.tr("Available after at least one image is converted"))
@@ -9140,7 +9139,7 @@ class MainWindow(QMainWindow):
         log_header.addWidget(log_label)
         log_header.addStretch()
 
-        self.export_log_btn = QPushButton(self.tr("Export Log"))
+        self.export_log_btn = QPushButton(self.tr("Export log"))
         self.export_log_btn.setObjectName("miniBtn")
         self.export_log_btn.setToolTip(self.tr("Save the conversion log as a text file"))
         self.export_log_btn.setIcon(_create_line_icon("export"))
@@ -9873,16 +9872,16 @@ class MainWindow(QMainWindow):
     # ── Log context menu ──
     def _on_log_context_menu(self, pos):
         menu = QMenu(self)
-        copy_sel = menu.addAction(self.tr("Copy Selection"))
+        copy_sel = menu.addAction(self.tr("Copy selection"))
         copy_sel.setEnabled(self.log_view.textCursor().hasSelection())
         copy_sel.triggered.connect(self.log_view.copy)
 
-        copy_all = menu.addAction(self.tr("Copy All"))
+        copy_all = menu.addAction(self.tr("Copy all"))
         copy_all.triggered.connect(lambda: QApplication.clipboard().setText(self.log_view.toPlainText()))
 
         menu.addSeparator()
 
-        open_loc = menu.addAction(self.tr("Open File Location"))
+        open_loc = menu.addAction(self.tr("Open file location"))
         open_loc.setEnabled(self._last_ok_dst is not None)
         open_loc.triggered.connect(
             lambda: _open_path(str(self._last_ok_dst.parent)) if self._last_ok_dst else None
@@ -9894,11 +9893,11 @@ class MainWindow(QMainWindow):
         # gives users a working alternative that doesn't require GUI tests.
         if self._last_ok_dst is not None:
             menu.addSeparator()
-            copy_dst_path = menu.addAction(self.tr("Copy Output Path"))
+            copy_dst_path = menu.addAction(self.tr("Copy output path"))
             copy_dst_path.triggered.connect(
                 lambda: QApplication.clipboard().setText(str(self._last_ok_dst))
             )
-            reveal_dst = menu.addAction(self.tr("Reveal Output in File Manager"))
+            reveal_dst = menu.addAction(self.tr("Reveal output in file manager"))
             reveal_dst.triggered.connect(
                 lambda: _open_path(str(self._last_ok_dst.parent))
             )
@@ -10118,7 +10117,7 @@ class MainWindow(QMainWindow):
     # ── Log controls ──
     def _export_log(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, self.tr("Export Log"), str(Path.home() / "imgconverter_log.txt"),
+            self, self.tr("Export log"), str(Path.home() / "imgconverter_log.txt"),
             self.tr("Text Files (*.txt);;All Files (*)")
         )
         if path:
@@ -10137,7 +10136,7 @@ class MainWindow(QMainWindow):
             self._set_workflow_state(self.tr("No report"), self.tr("Run a conversion before exporting a CSV report."))
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, self.tr("Export CSV Report"), str(Path.home() / "imgconverter_report.csv"),
+            self, self.tr("Export CSV report"), str(Path.home() / "imgconverter_report.csv"),
             self.tr("CSV Files (*.csv);;All Files (*)")
         )
         if path:
@@ -10216,7 +10215,7 @@ class MainWindow(QMainWindow):
 
     def _export_support_bundle(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, self.tr("Export Support Bundle"), str(Path.home() / "imgconverter_support.zip"),
+            self, self.tr("Export support bundle"), str(Path.home() / "imgconverter_support.zip"),
             self.tr("Zip Files (*.zip);;All Files (*)")
         )
         if not path:
@@ -13346,7 +13345,8 @@ def _run_cli(args):
             _execute_when_done(when_done)
         else:
             print(
-                f"[when-done] skipped {when_done!r} because {fail_count} file(s) failed",
+                f"[when-done] skipped {when_done!r} because {fail_count} "
+                f"{'file' if fail_count == 1 else 'files'} failed",
                 file=sys.stderr,
             )
 

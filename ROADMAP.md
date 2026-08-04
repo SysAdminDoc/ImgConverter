@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Microcopy: casing drift and small string bugs
-  Why: Title Case stragglers in a sentence-case UI — "Paste Image" (8057) vs More-menu "Paste image" (8154); "Open Output" (8125), "Export Log" (8314), "Export CSV" (8321); log context menu fully Title Case (8945-8973); combo items "Do Nothing"/"Close App" (8119), "Preserve All"/"Strip GPS Only" (7694-7699), "First Frame Only" (7874), "Max Dimension" (7741). Also: non-recursive scans log "Scanning : C:\dir" (stray space, 4631); "All {fail} file(s) failed" uses "(s)" while every other string does real pluralization (9769); `dedup_btn.setToolTip` called twice back-to-back, first is dead (8100/8104).
-  Where: as listed. Fix: normalize to sentence case, fix the three string bugs.
-
 - [ ] P3 — Missing test coverage
   Why: Zero coverage for: watch loop (`_watch_directory`, `_WatchHandler`), --stdin-files, --use-cache/--clear-cache, --dedup, --sidecar-history, --progress JSON events, RAW/HEIC input roundtrips, RGBA-to-format transparency handling, the in-place same-format failure path (P0 above), edit flags on same-format sources (P1 above).
   Where: `tests/`. Fix: add alongside the corresponding fixes; regression test per bug.
