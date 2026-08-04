@@ -2556,6 +2556,27 @@ class TestWatchProfilePersistence:
             dialog.close()
             dialog.deleteLater()
 
+    def test_duplicate_review_uses_one_skip_label_after_toggles(self, tmp_workdir):
+        import imgconverter
+        from PyQt6.QtCore import Qt
+
+        larger = tmp_workdir / "larger.png"
+        smaller = tmp_workdir / "smaller.png"
+        larger.write_bytes(b"x" * 20)
+        smaller.write_bytes(b"x" * 10)
+        dialog = imgconverter.DuplicateReviewDialog([[smaller, larger]])
+        try:
+            item = dialog.table.item(1, 3)
+            assert item.text() == "Skip this file"
+
+            item.setCheckState(Qt.CheckState.Unchecked)
+            assert item.text() == "Keep"
+            item.setCheckState(Qt.CheckState.Checked)
+            assert item.text() == "Skip this file"
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
 
 class TestQueuePersistence:
 

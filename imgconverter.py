@@ -7210,7 +7210,7 @@ class DuplicateReviewDialog(QDialog):
                 self.table.setItem(row_idx, 1, name_item)
                 size = _size_or_zero(f)
                 self.table.setItem(row_idx, 2, QTableWidgetItem(_fmt_size(size)))
-                action_item = QTableWidgetItem(self.tr("Keep") if fi == 0 else self.tr("Skip smaller file"))
+                action_item = QTableWidgetItem(self.tr("Keep") if fi == 0 else self.tr("Skip this file"))
                 action_item.setData(Qt.ItemDataRole.UserRole, str(f))
                 action_item.setFlags(
                     Qt.ItemFlag.ItemIsEnabled

@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — DuplicateReviewDialog inconsistent skip microcopy
-  Why: Same checked state labeled "Skip smaller file" initially but "Skip this file" after any toggle round-trip.
-  Where: `imgconverter.py:6673 vs 6717`. Fix: one label string.
-
 - [ ] P3 — Plugin trust dialog never exposes the full SHA-256 it asks users to trust
   Why: Only the 12-char prefix is shown anywhere (tooltip repeats the truncation); cross-checking a published hash is impossible from the GUI.
   Where: `imgconverter.py:867/878/889, 6049-6050, 5999`. Fix: full digest in tooltip/details pane; retitle column "Hash (first 12)".

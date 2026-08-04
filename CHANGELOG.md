@@ -35,6 +35,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Serialized batch-history updates with a cross-platform lock and quarantined corrupt history before recovery.
 - Kept Close, Sleep, and Shutdown completion actions scoped to the current run instead of persisting them across sessions.
 - Validated watch-folder profile paths, rejected duplicate or overlapping destinations, preserved output-picker cancellation, and surfaced deleted presets before a run.
+- Made duplicate-review skip actions keep the same “Skip this file” label before and after toggling.
 - Preserved UTF-8 and significant whitespace in `--stdin-files` and `--stdin-null` path streams.
 - Cached source C2PA marker detection in the opened-image metadata path to avoid duplicate scans.
 - Clarified that `--max-memory` reports a warning threshold and does not throttle worker submissions.
