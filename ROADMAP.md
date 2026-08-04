@@ -22,10 +22,6 @@ to `imgconverter.py` at commit `53fb9a3`.
 
 ### P3 — Edge cases, polish, maintainability
 
-- [ ] P3 — Grammar: "1 need review." in plugin-trust and history status lines
-  Why: Second clause of `"{total} plugin entries found; {needs_review} need review."` isn't pluralized for count == 1.
-  Where: `imgconverter.py:6059, 6200`. Fix: `need{'s' if n == 1 else ''}`.
-
 - [ ] P3 — ShellIntegrationDialog preview shows Windows registry syntax on Linux/macOS
   Why: Preview always shows `--files %*` / `"%1"`; Linux uses `%F` desktop syntax and macOS status text tells the user to paste the preview into Automator (needs `"$@"`).
   Where: `imgconverter.py:6917-6920, 10843, 6984-6987`. Fix: branch preview on `platform.system()`.

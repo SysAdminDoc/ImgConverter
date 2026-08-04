@@ -6496,12 +6496,13 @@ class PluginTrustDialog(QDialog):
             text = self.tr("No plugins are currently available for review.")
             summary_tone = "ready"
         elif needs_review:
+            review_phrase = self.tr("needs review") if needs_review == 1 else self.tr("need review")
             template = self.tr(
-                "{} plugin entry found; {} need review."
+                "{} plugin entry found; {} {}."
                 if total == 1
-                else "{} plugin entries found; {} need review."
+                else "{} plugin entries found; {} {}."
             )
-            text = template.format(total, needs_review)
+            text = template.format(total, needs_review, review_phrase)
             summary_tone = "warning"
         else:
             template = self.tr(
@@ -6652,11 +6653,12 @@ class BatchHistoryDialog(QDialog):
             text = self.tr("No completed batches have been recorded on this device.")
             tone = "ready"
         elif failed:
+            review_phrase = self.tr("needs review") if failed == 1 else self.tr("need review")
             text = self.tr(
-                "{} completed batch; {} need review."
+                "{} completed batch; {} {}."
                 if total == 1
-                else "{} completed batches; {} need review."
-            ).format(total, failed)
+                else "{} completed batches; {} {}."
+            ).format(total, failed, review_phrase)
             tone = "warning"
         else:
             text = self.tr(

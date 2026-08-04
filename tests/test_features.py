@@ -2599,6 +2599,41 @@ class TestWatchProfilePersistence:
             dialog.close()
             dialog.deleteLater()
 
+    def test_review_summaries_use_singular_agreement(self, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter, "get_plugin_trust_rows", lambda: [{
+            "name": "demo.py",
+            "path": "C:/plugins/demo.py",
+            "trust_ref": "demo.py",
+            "status": "untrusted",
+            "hash_prefix": "a" * 12,
+            "sha256": "a" * 64,
+            "reason": "review required",
+        }])
+        plugin_dialog = imgconverter.PluginTrustDialog()
+        try:
+            assert plugin_dialog.status_label.text() == "1 plugin entry found; 1 needs review."
+        finally:
+            plugin_dialog.close()
+            plugin_dialog.deleteLater()
+
+        monkeypatch.setattr(imgconverter, "_load_batch_history", lambda: [{
+            "timestamp": "2026-08-03T00:00:00Z",
+            "surface": "gui",
+            "preset": "Manual",
+            "counts": {"failed": 1},
+            "bytes": {},
+            "options": {},
+            "artifacts": {},
+        }])
+        history_dialog = imgconverter.BatchHistoryDialog()
+        try:
+            assert history_dialog.status_label.text() == "1 completed batch; 1 needs review."
+        finally:
+            history_dialog.close()
+            history_dialog.deleteLater()
+
 
 class TestQueuePersistence:
 
@@ -3545,7 +3580,7 @@ class TestQtAccessibility:
             assert "4.0 KB" in dialog.table.item(0, 5).text()
             assert "0 converted" in dialog.table.item(1, 4).text()
             assert "0.0 B" in dialog.table.item(1, 5).text()
-            assert "1 need review" in dialog.status_label.text()
+            assert "1 needs review" in dialog.status_label.text()
         finally:
             dialog.close()
             dialog.deleteLater()
