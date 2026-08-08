@@ -249,6 +249,10 @@ python imgconverter.py --history
 | `--avif-codec CODEC` | AVIF encoder: `auto`, `aom`, `rav1e`, `svt` (default: auto) |
 | `--png-lossy` | Run pngquant on PNG output for lossy size reduction |
 | `--max-file-size SIZE` | Skip files larger than SIZE (e.g. `500MB`, `2GB`) |
+| `--max-pixels N` | Reject decoded images above N pixels (default: 64,000,000) |
+| `--max-decoded-bytes SIZE` | Reject decoded pixel estimates above SIZE (default: `512MB`) |
+| `--max-frames N` | Reject animated or multi-page inputs above N frames (default: 256) |
+| `--max-decode-seconds SEC` | Reject a source when decoding exceeds SEC seconds; `0` disables the limit |
 | `--watermark SPEC` | Text or PNG watermark. Spec: `TEXT\|position\|opacity` |
 | `--canvas WxH` | Pad output to canvas size with `--canvas-bg` fill |
 | `--canvas-bg COLOR` | Canvas fill: `transparent`, hex color, or named color |
@@ -303,6 +307,8 @@ python imgconverter.py --history
 | `--version` | Print version and exit |
 
 Parser, GUI, and README parity is guarded by `build_cli_parity_matrix()` and the test suite: every long CLI flag must be classified as GUI-backed, CLI-only, admin-only, or internal-only, and every user-facing flag must remain documented here.
+
+Decode resource limits apply before and during source materialization across Pillow, HEIF, RAW, animated, and trusted-plugin decoders. The defaults are 64 million pixels, 512 MiB of estimated decoded pixels, and 256 frames. A limit failure is reported per file with stable error code `1001`; `--max-decode-seconds 0` leaves the time budget disabled.
 
 Trusted plugins may register decoder, encoder, and storage shapes from `PLUGINS.md`. File plugins are pinned by file SHA-256, and package entry-point plugins are pinned by a digest of their installed module and distribution metadata files. Registered decoders are included in scans, registered encoders can be selected with `--format <fmt>` or from the GUI format menu, and registered storage schemes appear in the startup support summary.
 

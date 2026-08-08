@@ -4,6 +4,11 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added a shared decode resource policy across Pillow, HEIF, RAW, animated, vips, plugin, thumbnail, and watermark decode paths, with CLI/GUI controls for pixel, decoded-byte, frame, and optional time budgets.
+- Added stable per-file resource-limit error code `1001`, structured report coverage, persisted GUI settings, and regression tests for oversized pixels/bytes, frame counts, and decode time.
+
 ## [v3.7.0] — 2026-08-03
 
 ### Fixed

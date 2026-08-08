@@ -52,6 +52,8 @@ from imgconverter import (
     build_backend_info,
     convert_file,
     ConvertOptions,
+    DecodeResourcePolicy,
+    ERROR_CODE_RESOURCE_LIMIT,
     count_frames,
     has_transparency,
     list_presets,
@@ -536,6 +538,96 @@ class TestConvertOptionsParity:
 
         assert result.success
         assert result.dst == out_dir / "photo.png"
+
+
+class TestDecodeResourcePolicy:
+
+    def test_cli_exposes_safe_defaults_and_custom_budget(self):
+        parser = _build_parser()
+        defaults = parser.parse_args(["--input", "photos"])
+        assert defaults.max_pixels == 64_000_000
+        assert defaults.max_decoded_bytes == "512MB"
+        assert defaults.max_frames == 256
+        assert defaults.max_decode_seconds == 0
+
+        args = parser.parse_args([
+            "--input", "photos",
+            "--max-pixels", "1234",
+            "--max-decoded-bytes", "2GB",
+            "--max-frames", "12",
+            "--max-decode-seconds", "4.5",
+        ])
+        assert _validate_cli_args(args) == []
+        opts = _build_convert_options(args)
+        assert opts.max_pixels == 1234
+        assert opts.max_decoded_bytes == 2 * 1024**3
+        assert opts.max_frames == 12
+        assert opts.max_decode_seconds == 4.5
+
+    def test_cli_rejects_invalid_budget_values(self):
+        args = _build_parser().parse_args([
+            "--input", "photos",
+            "--max-pixels", "0",
+            "--max-decoded-bytes", "0",
+            "--max-frames", "0",
+            "--max-decode-seconds", "-1",
+        ])
+        errors = _validate_cli_args(args)
+        assert "--max-pixels must be greater than 0" in errors
+        assert "--max-decoded-bytes must be a positive size like 512MB or 2GB" in errors
+        assert "--max-frames must be greater than 0" in errors
+        assert "--max-decode-seconds must be 0 or greater" in errors
+
+    def test_convert_rejects_oversized_decoded_pixels(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "source.bmp"
+        rgb_image.save(src)
+        result = convert_file(
+            src, tmp_workdir / "out",
+            opts=ConvertOptions(fmt="png", max_pixels=1),
+        )
+        assert not result.success
+        assert result.error_code == ERROR_CODE_RESOURCE_LIMIT
+        assert "max-pixels" in result.error
+
+    def test_convert_rejects_oversized_decoded_bytes(self, rgb_image, tmp_workdir):
+        src = tmp_workdir / "source.bmp"
+        rgb_image.save(src)
+        result = convert_file(
+            src, tmp_workdir / "out",
+            opts=ConvertOptions(fmt="png", max_decoded_bytes=1),
+        )
+        assert not result.success
+        assert result.error_code == ERROR_CODE_RESOURCE_LIMIT
+        assert "max-decoded-bytes" in result.error
+
+    def test_convert_rejects_multiframe_input(self, tmp_workdir):
+        first = Image.new("RGB", (8, 8), "red")
+        second = Image.new("RGB", (8, 8), "blue")
+        src = tmp_workdir / "animated.gif"
+        first.save(src, save_all=True, append_images=[second], duration=20, loop=0)
+
+        result = convert_file(
+            src, tmp_workdir / "out",
+            opts=ConvertOptions(fmt="png", max_frames=1),
+        )
+        assert not result.success
+        assert result.error_code == ERROR_CODE_RESOURCE_LIMIT
+        assert "max-frames" in result.error
+
+    def test_decode_time_budget_is_enforced(self, monkeypatch):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter.time, "perf_counter", lambda: 2.0)
+        image = Image.new("RGB", (2, 2), "red")
+        try:
+            with pytest.raises(imgconverter.DecodeResourceLimitError, match="max-decode-seconds"):
+                imgconverter._enforce_decode_resource_policy(
+                    image,
+                    DecodeResourcePolicy(max_decode_seconds=1.0),
+                    started_at=0.0,
+                )
+        finally:
+            image.close()
 
 
 def _relative_luminance(hex_color: str) -> float:

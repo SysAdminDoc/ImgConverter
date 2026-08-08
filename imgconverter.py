@@ -12,7 +12,7 @@ import multiprocessing
 multiprocessing.freeze_support()
 
 import errno
-import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil, tempfile, shlex
+import sys, os, subprocess, importlib, platform, ctypes, argparse, shutil, tempfile, shlex, math
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -44,6 +44,15 @@ EXIT_DEP_MISSING     = 3   # required Python module or optional codec missing
 EXIT_DISK_FULL       = 4   # output medium ran out of space mid-run
 EXIT_CANCELLED       = 5   # user pressed Ctrl-C / Cancel button
 EXIT_TOTAL_FAILURE   = 6   # every file in batch failed
+
+# Decode budgets protect every built-in decoder from hostile dimensions and
+# compressed inputs that expand far beyond their on-disk size.  The CLI/GUI
+# can raise or lower these values explicitly for trusted large-image work.
+DEFAULT_MAX_PIXELS = 64_000_000
+DEFAULT_MAX_DECODED_BYTES = 512 * 1024 * 1024
+DEFAULT_MAX_FRAMES = 256
+DEFAULT_MAX_DECODE_SECONDS = 0.0  # disabled unless explicitly requested
+ERROR_CODE_RESOURCE_LIMIT = 1001
 
 # Dependency floors — see requirements.txt / RESEARCH.md for CVE rationale.
 # Older versions of these expose users to known libheif / libjxl / Pillow RCEs.
@@ -217,11 +226,27 @@ try:
     _opts = pillow_heif.options
     if hasattr(_opts, "DECODE_THREADS"):
         _opts.DECODE_THREADS = max(1, os.cpu_count() or 1)
-    set_limits = getattr(pillow_heif, "set_security_limits", None)
-    if callable(set_limits):
-        set_limits(max_image_size_pixels=8000 * 8000)  # 64 MP guard; raise via env if needed
+    # Pillow's built-in DecompressionBomb checks are global and use a fixed
+    # warning/error threshold.  ImgConverter applies its own per-conversion
+    # policy instead, so a trusted caller can explicitly choose a larger
+    # budget without being stopped by Pillow's unrelated default.
+    Image.MAX_IMAGE_PIXELS = None
 except Exception as _heif_sec_err:
     print(f"[WARN] HEIF security limits could not be set: {_heif_sec_err}", file=sys.stderr)
+
+
+def _configure_heif_security_limit(max_pixels: int = DEFAULT_MAX_PIXELS) -> None:
+    """Apply the active pixel ceiling to libheif when that API is available."""
+    set_limits = getattr(pillow_heif, "set_security_limits", None)
+    if not callable(set_limits):
+        return
+    set_limits(max_image_size_pixels=int(max_pixels))
+
+
+try:
+    _configure_heif_security_limit()
+except Exception as _heif_limit_err:
+    print(f"[WARN] HEIF security limits could not be set: {_heif_limit_err}", file=sys.stderr)
 
 # Optional: JPEG XL plugin (registers into Pillow automatically on import)
 HAS_JXL = False
@@ -2210,6 +2235,22 @@ class ScanResult:
     elapsed: float = 0.0
 
 
+@dataclass(frozen=True)
+class DecodeResourcePolicy:
+    """Bounds applied before and during materializing decoded image pixels."""
+
+    max_pixels: int = DEFAULT_MAX_PIXELS
+    max_decoded_bytes: int = DEFAULT_MAX_DECODED_BYTES
+    max_frames: int = DEFAULT_MAX_FRAMES
+    max_decode_seconds: float = DEFAULT_MAX_DECODE_SECONDS
+
+
+class DecodeResourceLimitError(ValueError):
+    """Raised when an input exceeds the configured decode resource budget."""
+
+    error_code = ERROR_CODE_RESOURCE_LIMIT
+
+
 @dataclass
 class ConvertOptions:
     """Validated conversion-options boundary.
@@ -2252,6 +2293,10 @@ class ConvertOptions:
     png_lossy: bool = False
     backend: str = "pillow"
     cpu_priority: str = "normal"
+    max_pixels: int = DEFAULT_MAX_PIXELS
+    max_decoded_bytes: int = DEFAULT_MAX_DECODED_BYTES
+    max_frames: int = DEFAULT_MAX_FRAMES
+    max_decode_seconds: float = DEFAULT_MAX_DECODE_SECONDS
     strip_fields: frozenset[str] = field(default_factory=frozenset)
     # Editing layer (folded in from ImageForge) — per-image adjustments/effects.
     brightness: int = 0
@@ -2268,6 +2313,188 @@ class ConvertOptions:
     tint: str | None = None
     border_width: int = 0
     border_color: str = "#ffffff"
+
+
+def _validate_decode_resource_policy(policy: DecodeResourcePolicy) -> DecodeResourcePolicy:
+    """Validate and normalize a decode policy at the execution boundary."""
+    try:
+        max_pixels = int(policy.max_pixels)
+        max_decoded_bytes = int(policy.max_decoded_bytes)
+        max_frames = int(policy.max_frames)
+        max_decode_seconds = float(policy.max_decode_seconds)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"invalid decode resource policy: {exc}") from exc
+    if max_pixels <= 0:
+        raise ValueError("max_pixels must be greater than 0")
+    if max_decoded_bytes <= 0:
+        raise ValueError("max_decoded_bytes must be greater than 0")
+    if max_frames <= 0:
+        raise ValueError("max_frames must be greater than 0")
+    if not math.isfinite(max_decode_seconds) or max_decode_seconds < 0:
+        raise ValueError("max_decode_seconds must be 0 or greater")
+    return DecodeResourcePolicy(
+        max_pixels=max_pixels,
+        max_decoded_bytes=max_decoded_bytes,
+        max_frames=max_frames,
+        max_decode_seconds=max_decode_seconds,
+    )
+
+
+def _resource_policy_from_options(opts: ConvertOptions | None) -> DecodeResourcePolicy:
+    """Build the policy used by every source-decoding path."""
+    if opts is None:
+        return DecodeResourcePolicy()
+    return _validate_decode_resource_policy(DecodeResourcePolicy(
+        max_pixels=opts.max_pixels,
+        max_decoded_bytes=opts.max_decoded_bytes,
+        max_frames=opts.max_frames,
+        max_decode_seconds=opts.max_decode_seconds,
+    ))
+
+
+def _mode_bytes_per_pixel(mode: str, bands: int = 0) -> int:
+    """Return a conservative decoded byte estimate for a Pillow image mode."""
+    known = {
+        "1": 1,
+        "L": 1,
+        "P": 1,
+        "LA": 2,
+        "RGB": 3,
+        "RGBA": 4,
+        "CMYK": 4,
+        "YCbCr": 3,
+        "LAB": 3,
+        "HSV": 3,
+        "I;16": 2,
+        "I;16L": 2,
+        "I;16B": 2,
+        "I": 4,
+        "F": 4,
+    }
+    if mode in known:
+        return known[mode]
+    return max(1, int(bands or 0)) * 4
+
+
+def _estimated_decoded_bytes(
+    size: tuple[int, int], mode: str = "RGB", frames: int = 1, bands: int = 0,
+) -> int:
+    """Estimate materialized pixel bytes without decoding the source."""
+    width, height = (int(size[0]), int(size[1]))
+    return width * height * _mode_bytes_per_pixel(mode, bands) * max(1, int(frames))
+
+
+def _check_decode_resource_budget(
+    size: tuple[int, int],
+    mode: str,
+    frames: int,
+    policy: DecodeResourcePolicy,
+    started_at: float | None = None,
+    *,
+    include_all_frames: bool = False,
+    bands: int = 0,
+) -> None:
+    """Raise a stable error before an input can exceed its decode budget."""
+    width, height = (int(size[0]), int(size[1]))
+    pixels = width * height
+    if pixels > policy.max_pixels:
+        raise DecodeResourceLimitError(
+            f"max-pixels exceeded: {width}x{height} = {pixels:,} pixels "
+            f"(limit {policy.max_pixels:,})"
+        )
+    if frames > policy.max_frames:
+        raise DecodeResourceLimitError(
+            f"max-frames exceeded: {frames} frames (limit {policy.max_frames})"
+        )
+    estimated = _estimated_decoded_bytes(
+        (width, height), mode, frames if include_all_frames else 1, bands,
+    )
+    if estimated > policy.max_decoded_bytes:
+        scope = "all frames" if include_all_frames and frames > 1 else "one frame"
+        raise DecodeResourceLimitError(
+            f"max-decoded-bytes exceeded: estimated {estimated:,} bytes for {scope} "
+            f"(limit {policy.max_decoded_bytes:,})"
+        )
+    if (
+        started_at is not None
+        and policy.max_decode_seconds > 0
+        and time.perf_counter() - started_at > policy.max_decode_seconds
+    ):
+        elapsed = time.perf_counter() - started_at
+        raise DecodeResourceLimitError(
+            f"max-decode-seconds exceeded: {elapsed:.3f}s "
+            f"(limit {policy.max_decode_seconds:.3f}s)"
+        )
+
+
+def _enforce_decode_resource_policy(
+    img,
+    policy: DecodeResourcePolicy | None = None,
+    *,
+    started_at: float | None = None,
+    load: bool = False,
+    include_all_frames: bool = False,
+) -> None:
+    """Check a decoder result before and after materializing its pixels."""
+    policy = _validate_decode_resource_policy(policy or DecodeResourcePolicy())
+    size = getattr(img, "size", None)
+    if not size or len(size) < 2:
+        return
+    mode = str(getattr(img, "mode", "RGB") or "RGB")
+    try:
+        bands = len(img.getbands())
+    except (AttributeError, TypeError):
+        bands = 0
+    try:
+        frames = max(1, int(getattr(img, "n_frames", 1) or 1))
+    except (TypeError, ValueError, AttributeError):
+        frames = 1
+    _check_decode_resource_budget(
+        (int(size[0]), int(size[1])), mode, frames, policy, started_at,
+        include_all_frames=include_all_frames,
+        bands=bands,
+    )
+    if load:
+        loader = getattr(img, "load", None)
+        if callable(loader):
+            loader()
+        _check_decode_resource_budget(
+            (int(size[0]), int(size[1])), mode, frames, policy, started_at,
+            include_all_frames=include_all_frames,
+        )
+
+
+def _probe_input_resource_policy(src: Path, policy: DecodeResourcePolicy) -> None:
+    """Probe dimensions/frames for a backend that does not use Pillow pixels."""
+    started_at = time.perf_counter()
+    suffix = src.suffix.lower()
+    if suffix in RAW_EXTS and HAS_RAWPY:
+        raw = None
+        try:
+            raw = rawpy.imread(str(src))
+            width = height = None
+            sizes = getattr(raw, "sizes", None)
+            if sizes is not None:
+                width = getattr(sizes, "width", None)
+                height = getattr(sizes, "height", None)
+            if not width or not height:
+                raw_shape = getattr(getattr(raw, "raw_image", None), "shape", ())
+                if len(raw_shape) >= 2:
+                    height, width = raw_shape[:2]
+            if not width or not height:
+                raise ValueError("RAW decoder did not expose source dimensions")
+            _check_decode_resource_budget(
+                (int(width), int(height)), "RGB", 1, policy, started_at,
+            )
+        finally:
+            if raw is not None:
+                raw.close()
+        return
+
+    with Image.open(str(src)) as img:
+        _enforce_decode_resource_policy(
+            img, policy, started_at=started_at, include_all_frames=True,
+        )
 
 
 def _same_resolved_path(left: Path, right: Path) -> bool:
@@ -2517,7 +2744,10 @@ _WATERMARK_POSITIONS = {
 }
 
 
-def _apply_watermark(img: "Image.Image", spec: str) -> "Image.Image":
+def _apply_watermark(
+    img: "Image.Image", spec: str,
+    policy: DecodeResourcePolicy | None = None,
+) -> "Image.Image":
     """spec format: 'TEXT|position|opacity' or 'image.png|position|opacity'.
 
     position one of: top-left top top-right left center right
@@ -2544,6 +2774,9 @@ def _apply_watermark(img: "Image.Image", spec: str) -> "Image.Image":
     if payload_path and payload_path.is_file():
         from PIL import Image as _Image
         with _Image.open(payload_path) as _wm_src:
+            _enforce_decode_resource_policy(
+                _wm_src, policy or DecodeResourcePolicy(), load=True,
+            )
             mark = _wm_src.convert("RGBA")
     else:
         from PIL import ImageDraw, ImageFont
@@ -3146,12 +3379,16 @@ def _finalize_metadata_report(result: ConvertResult, after: dict[str, bool],
         result.warnings.append("metadata dropped: " + ", ".join(dropped))
 
 
-def _open_image(src: Path) -> tuple[Image.Image, dict]:
+def _open_image(
+    src: Path, policy: DecodeResourcePolicy | None = None,
+) -> tuple[Image.Image, dict]:
     """Open an image file, routing to the correct decoder.
 
     Returns (PIL Image, metadata_dict).
     metadata_dict contains 'exif', 'icc_profile', 'xmp' when available.
     """
+    policy = _validate_decode_resource_policy(policy or DecodeResourcePolicy())
+    started_at = time.perf_counter()
     suffix = src.suffix.lower()
     meta = {}
 
@@ -3159,51 +3396,91 @@ def _open_image(src: Path) -> tuple[Image.Image, dict]:
         opened = PLUGIN_DECODERS[suffix].open(src)
         if isinstance(opened, tuple):
             img, plugin_meta = opened
-            return img, dict(plugin_meta or {})
-        return opened, meta
+            meta = dict(plugin_meta or {})
+        else:
+            img = opened
+        try:
+            _enforce_decode_resource_policy(
+                img, policy, started_at=started_at, load=True,
+            )
+        except Exception:
+            close = getattr(img, "close", None)
+            if callable(close):
+                close()
+            raise
+        return img, meta
 
     if suffix in RAW_EXTS and HAS_RAWPY:
-        raw = rawpy.imread(str(src))
-        rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
-        raw.close()
+        raw = None
+        try:
+            raw = rawpy.imread(str(src))
+            width = height = None
+            sizes = getattr(raw, "sizes", None)
+            if sizes is not None:
+                width = getattr(sizes, "width", None)
+                height = getattr(sizes, "height", None)
+            if not width or not height:
+                raw_shape = getattr(getattr(raw, "raw_image", None), "shape", ())
+                if len(raw_shape) >= 2:
+                    height, width = raw_shape[:2]
+            if width and height:
+                _check_decode_resource_budget(
+                    (int(width), int(height)), "RGB", 1, policy, started_at,
+                )
+            rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
+        finally:
+            if raw is not None:
+                raw.close()
         img = Image.fromarray(rgb)
+        _enforce_decode_resource_policy(img, policy, started_at=started_at, load=True)
         # RAW files don't carry EXIF through rawpy — metadata not available
         return img, meta
 
     # Everything else goes through Pillow (+ plugins: pillow-heif, pillow-jxl)
     img = Image.open(str(src))
-
-    # Extract metadata from Pillow's info dict
-    if exif := img.info.get("exif"):
-        meta["exif"] = exif
-    if icc := img.info.get("icc_profile"):
-        meta["icc_profile"] = icc
-    if xmp := img.info.get("xmp"):
-        meta["xmp"] = xmp
-    if iptc := img.info.get("iptc") or img.info.get("photoshop"):
-        meta["iptc"] = iptc
     try:
-        maker = img.getexif().get(0x927C)
-        if maker:
-            meta["makernotes"] = maker
-    except Exception:
-        pass
-    meta["c2pa"] = _file_contains_marker(src, b"c2pa")
+        # Image.open() is lazy; load() makes the policy cover the actual
+        # decompression rather than only the container header.
+        _enforce_decode_resource_policy(img, policy, started_at=started_at, load=True)
 
-    if suffix in HEIC_EXTS:
+        # Extract metadata from Pillow's info dict
+        if exif := img.info.get("exif"):
+            meta["exif"] = exif
+        if icc := img.info.get("icc_profile"):
+            meta["icc_profile"] = icc
+        if xmp := img.info.get("xmp"):
+            meta["xmp"] = xmp
+        if iptc := img.info.get("iptc") or img.info.get("photoshop"):
+            meta["iptc"] = iptc
         try:
-            heif_file = pillow_heif.open_heif(str(src))
-            try:
-                bd = getattr(heif_file, "bit_depth", None)
-                if bd:
-                    meta["bit_depth"] = bd
-            finally:
-                if hasattr(heif_file, "close"):
-                    heif_file.close()
+            maker = img.getexif().get(0x927C)
+            if maker:
+                meta["makernotes"] = maker
         except Exception:
             pass
+        meta["c2pa"] = _file_contains_marker(src, b"c2pa")
 
-    return img, meta
+        if suffix in HEIC_EXTS:
+            try:
+                heif_file = pillow_heif.open_heif(str(src))
+                try:
+                    bd = getattr(heif_file, "bit_depth", None)
+                    if bd:
+                        meta["bit_depth"] = bd
+                finally:
+                    if hasattr(heif_file, "close"):
+                        heif_file.close()
+            except Exception:
+                pass
+
+        _check_decode_resource_budget(
+            img.size, img.mode, max(1, int(getattr(img, "n_frames", 1) or 1)),
+            policy, started_at,
+        )
+        return img, meta
+    except Exception:
+        img.close()
+        raise
 
 
 def _estimated_raw_bytes(img: Image.Image) -> int:
@@ -3297,7 +3574,11 @@ def _apply_multiframe_transforms(
 
     if opts.watermark:
         try:
-            frame = _apply_watermark(frame, opts.watermark)
+            frame = _apply_watermark(
+                frame, opts.watermark, _resource_policy_from_options(opts),
+            )
+        except DecodeResourceLimitError:
+            raise
         except Exception as e:
             result.warnings.append(f"watermark failed: {e}")
 
@@ -3443,6 +3724,7 @@ def _convert_animated_or_sequence(
     preserve_structure = opts.preserve_structure
     base_dir = opts.base_dir
     strip_metadata = not opts.preserve_metadata
+    policy = _resource_policy_from_options(opts)
 
     t0 = time.perf_counter()
     result = ConvertResult(src=src, size_before=src.stat().st_size)
@@ -3458,6 +3740,14 @@ def _convert_animated_or_sequence(
         ext = ext_map.get(fmt, ".jpg")
 
         with Image.open(str(src)) as img:
+            # Animated output keeps every frame in memory, so its header
+            # estimate includes the complete frame set. Extraction writes one
+            # frame at a time and is bounded by the per-frame estimate below.
+            preserve_all_frames = not extract_frames and fmt_pil in ("WEBP", "GIF", "PNG")
+            _enforce_decode_resource_policy(
+                img, policy, started_at=t0,
+                include_all_frames=preserve_all_frames,
+            )
             meta = {}
             if not strip_metadata:
                 if "exif" in img.info:
@@ -3490,6 +3780,9 @@ def _convert_animated_or_sequence(
                 pad_width = max(3, len(str(n)))
                 written = []
                 for i, frame in enumerate(ImageSequence.Iterator(img), start=1):
+                    _enforce_decode_resource_policy(
+                        frame, policy, started_at=t0, load=True,
+                    )
                     frame_meta = dict(meta)
                     frame_save = _apply_multiframe_transforms(frame, frame_meta, opts, result)
                     dst = _multiframe_output_path(src, dest_dir, ext, opts, i, frame_save.size)
@@ -3516,6 +3809,9 @@ def _convert_animated_or_sequence(
                 durations = []
                 default_duration = img.info.get("duration", 100)
                 for source_frame in ImageSequence.Iterator(img):
+                    _enforce_decode_resource_policy(
+                        source_frame, policy, started_at=t0, load=True,
+                    )
                     frame_info = getattr(source_frame, "info", {}) or {}
                     raw_duration = frame_info.get("duration", default_duration)
                     try:
@@ -3573,7 +3869,9 @@ def _convert_animated_or_sequence(
                 )
     except Exception as e:
         result.error = f"multi-frame: {e}"
-        if isinstance(e, OSError) and e.errno is not None:
+        if isinstance(e, DecodeResourceLimitError):
+            result.error_code = e.error_code
+        elif isinstance(e, OSError) and e.errno is not None:
             result.error_code = e.errno
     result.elapsed = time.perf_counter() - t0
     return result
@@ -3776,8 +4074,10 @@ def _convert_file_vips(
     skip_existing: bool,
     prefix: str,
     suffix: str,
+    policy: DecodeResourcePolicy | None = None,
 ) -> ConvertResult:
     """Quality-only libvips fast path. Feature validation happens before use."""
+    policy = _validate_decode_resource_policy(policy or DecodeResourcePolicy())
     t0 = time.perf_counter()
     try:
         size_before = src.stat().st_size
@@ -3792,6 +4092,9 @@ def _convert_file_vips(
             raise RuntimeError(f"vips backend requires an explicit format, got {fmt}")
         if not _vips_format_available(fmt_key):
             raise RuntimeError(f"vips backend cannot save {fmt_key} with this libvips build")
+
+        _probe_input_resource_policy(src, policy)
+        vips_decode_started = time.perf_counter()
 
         if in_place:
             dest_dir = src.parent
@@ -3826,6 +4129,9 @@ def _convert_file_vips(
         ok, msg = _vips_convert(src, write_path, fmt_key, jpeg_quality)
         if not ok:
             raise RuntimeError(msg)
+        _check_decode_resource_budget(
+            (1, 1), "L", 1, policy, vips_decode_started,
+        )
         if not write_path.exists() or write_path.stat().st_size == 0:
             raise RuntimeError(f"Output file missing or empty: {write_path.name}")
         try:
@@ -3860,7 +4166,9 @@ def _convert_file_vips(
         return result
     except Exception as e:
         result.error = str(e)
-        if isinstance(e, OSError) and e.errno is not None:
+        if isinstance(e, DecodeResourceLimitError):
+            result.error_code = e.error_code
+        elif isinstance(e, OSError) and e.errno is not None:
             import errno
             result.error_code = e.errno
         result.elapsed = time.perf_counter() - t0
@@ -3927,6 +4235,8 @@ def convert_file(
     png_lossy = opts.png_lossy
     backend = opts.backend
     strip_fields = opts.strip_fields
+    policy = _resource_policy_from_options(opts)
+    _configure_heif_security_limit(policy.max_pixels)
     if backend == "vips":
         return _convert_file_vips(
             src=src,
@@ -3939,6 +4249,7 @@ def convert_file(
             skip_existing=skip_existing,
             prefix=prefix,
             suffix=suffix,
+            policy=policy,
         )
 
     t0 = time.perf_counter()
@@ -3952,7 +4263,19 @@ def convert_file(
     temp_path = None
 
     try:
-        img, meta = _open_image(src)
+        decode_started = time.perf_counter()
+        try:
+            img, meta = _open_image(src, policy)
+        except TypeError as exc:
+            # Keep compatibility with callers/tests that replace the legacy
+            # one-argument opener while the built-in opener uses the policy.
+            message = str(exc)
+            if "positional argument" not in message and "given" not in message:
+                raise
+            img, meta = _open_image(src)
+        _enforce_decode_resource_policy(
+            img, policy, started_at=decode_started,
+        )
 
         if preserve_metadata:
             meta = _ingest_adjacent_sidecars(src, meta, result)
@@ -4086,8 +4409,10 @@ def convert_file(
         # Watermark — text or PNG overlay; applied after resize/canvas.
         if watermark:
             try:
-                img = _apply_watermark(img, watermark)
+                img = _apply_watermark(img, watermark, policy)
                 result.warnings.append(f"watermark: applied ({watermark.split('|')[0][:40]})")
+            except DecodeResourceLimitError:
+                raise
             except Exception as e:
                 result.warnings.append(f"watermark failed: {e}")
 
@@ -4551,7 +4876,10 @@ def convert_file(
 
     except Exception as e:
         result.error = str(e)
-        if isinstance(e, OSError) and e.errno is not None:
+        if isinstance(e, DecodeResourceLimitError):
+            result.error = f"resource-limit: {e}"
+            result.error_code = e.error_code
+        elif isinstance(e, OSError) and e.errno is not None:
             import errno
             result.error_code = e.errno
         # Clean up temp file on failure
@@ -4600,6 +4928,9 @@ class _ThumbnailLoader(QThread):
                 return
             try:
                 with Image.open(path) as img:
+                    _enforce_decode_resource_policy(
+                        img, DecodeResourcePolicy(), load=True,
+                    )
                     img.thumbnail((sz, sz), Image.Resampling.LANCZOS)
                     rgb = img.convert("RGBA") if img.mode == "RGBA" else img.convert("RGB")
                     from PyQt6.QtGui import QImage
@@ -5067,7 +5398,7 @@ BATCH_HISTORY_LIMIT = 200
 
 # QSettings shape version — bump when on-disk settings layout changes so the
 # migration in _maybe_migrate_settings() runs once on startup.
-SETTINGS_SCHEMA = 3
+SETTINGS_SCHEMA = 4
 PRESET_SCHEMA_VERSION = 2
 
 FORMAT_CHOICES = ("auto", "jpeg", "png", "webp", "avif", "tiff", "jxl")
@@ -5164,6 +5495,9 @@ def normalize_preset(preset: dict) -> dict:
         "canvas": str,
         "canvas_bg": str,
         "avif_speed": int,
+        "max_pixels": int,
+        "max_frames": int,
+        "max_decode_seconds": float,
         "target_kb": float,
         "target_psnr": float,
         "target_ssimulacra2": float,
@@ -5177,6 +5511,18 @@ def normalize_preset(preset: dict) -> dict:
                 norm[key] = caster(preset[key])
             except (TypeError, ValueError):
                 continue
+    if "max_decoded_bytes" in preset:
+        raw_max_bytes = preset.get("max_decoded_bytes")
+        try:
+            parsed_max_bytes = (
+                int(raw_max_bytes)
+                if isinstance(raw_max_bytes, (int, float))
+                else _parse_size_spec(str(raw_max_bytes))
+            )
+            if parsed_max_bytes is not None:
+                norm["max_decoded_bytes"] = parsed_max_bytes
+        except (TypeError, ValueError, OverflowError):
+            pass
     edit_ints = {
         "brightness": (-100, 100),
         "contrast": (-100, 100),
@@ -5350,6 +5696,10 @@ def _convert_options_from_preset(preset: dict | None, base_dir: Path | None = No
         png_lossy=bool(norm.get("png_lossy", False)),
         backend=str(norm.get("backend", "pillow")),
         cpu_priority=str(norm.get("cpu_priority", "normal")),
+        max_pixels=int(norm.get("max_pixels", DEFAULT_MAX_PIXELS)),
+        max_decoded_bytes=int(norm.get("max_decoded_bytes", DEFAULT_MAX_DECODED_BYTES)),
+        max_frames=int(norm.get("max_frames", DEFAULT_MAX_FRAMES)),
+        max_decode_seconds=float(norm.get("max_decode_seconds", DEFAULT_MAX_DECODE_SECONDS)),
         strip_fields=frozenset(strip_fields),
         brightness=_edit_num("brightness", -100, 100),
         contrast=_edit_num("contrast", -100, 100),
@@ -5683,6 +6033,14 @@ def _cli_history_options(args, resize_mode: str, resize_value: int) -> dict:
         "resize": resize,
         "frames": getattr(args, "frames", "first"),
         "backend": getattr(args, "backend", "pillow"),
+        "max_pixels": int(getattr(args, "max_pixels", DEFAULT_MAX_PIXELS)),
+        "max_decoded_bytes": _parse_size_spec(
+            getattr(args, "max_decoded_bytes", "512MB") or ""
+        ) or DEFAULT_MAX_DECODED_BYTES,
+        "max_frames": int(getattr(args, "max_frames", DEFAULT_MAX_FRAMES)),
+        "max_decode_seconds": float(
+            getattr(args, "max_decode_seconds", DEFAULT_MAX_DECODE_SECONDS)
+        ),
         "progressive": bool(args.progressive),
         "chroma_420": bool(args.chroma_420),
         "lossless": bool(args.lossless),
@@ -6277,15 +6635,24 @@ def _apply_preset_to_gui_controls(window, preset: dict):
         ("canvas", "canvas_edit"),
         ("canvas_bg", "canvas_bg_edit"),
         ("max_file_size", "max_file_size_edit"),
+        ("max_decoded_bytes", "max_decoded_bytes_edit"),
     ):
         if key in norm:
-            getattr(window, attr).setText(norm[key])
+            value = norm[key]
+            getattr(window, attr).setText(str(value) if key == "max_decoded_bytes" else value)
     if "exclude" in norm:
         window.exclude_edit.setText("; ".join(norm["exclude"]))
     if "dpi" in norm:
         window.dpi_spin.setValue(norm["dpi"])
     if "avif_speed" in norm:
         window.avif_speed_spin.setValue(norm["avif_speed"])
+    for key, attr in (
+        ("max_pixels", "max_pixels_spin"),
+        ("max_frames", "max_frames_spin"),
+        ("max_decode_seconds", "max_decode_seconds_spin"),
+    ):
+        if key in norm and hasattr(window, attr):
+            getattr(window, attr).setValue(norm[key])
     if "avif_codec" in norm:
         window.avif_codec_combo.setCurrentIndex(_choice_index(norm["avif_codec"], AVIF_CODEC_CHOICES))
     if "frames" in norm:
@@ -7779,6 +8146,10 @@ MAIN_WINDOW_ACCESSIBILITY_LABELS = (
     ("canvas_bg_edit",      "Canvas background",        "Canvas background color: transparent, hex, or named color"),
     ("exclude_edit",        "Exclude patterns",         "Semicolon-separated glob patterns to skip during scan"),
     ("max_file_size_edit",  "Maximum input file size",  "Skip files larger than this size, such as 500MB or 2GB"),
+    ("max_pixels_spin",     "Maximum decoded pixels",   "Reject source images larger than this decoded pixel budget"),
+    ("max_decoded_bytes_edit", "Maximum decoded bytes",  "Reject source images whose estimated pixels exceed this byte budget"),
+    ("max_frames_spin",     "Maximum decoded frames",   "Reject animated or multi-page sources above this frame budget"),
+    ("max_decode_seconds_spin", "Maximum decode time",   "Reject a source when decoding exceeds this time budget; zero disables it"),
     ("edit_preset_combo",   "Edit look preset",          "Named adjustment look applied before explicit edit controls"),
     ("social_combo",        "Social canvas preset",      "Pad output to a selected social-media canvas when Canvas is blank"),
     ("brightness_spin",     "Brightness adjustment",     "Adjust brightness from minus 100 to plus 100"),
@@ -8718,6 +9089,59 @@ class MainWindow(QMainWindow):
         self.max_file_size_edit.textChanged.connect(lambda _text: self._clear_line_error(self.max_file_size_edit))
         adv_grid.addWidget(self.max_file_size_edit, 9, 3)
 
+        max_pixels_label = QLabel(self.tr("Max pixels"))
+        max_pixels_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(max_pixels_label, 10, 0)
+        self.max_pixels_spin = QSpinBox()
+        self.max_pixels_spin.setRange(1, 2_147_483_647)
+        self.max_pixels_spin.setValue(DEFAULT_MAX_PIXELS)
+        self.max_pixels_spin.setSuffix(self.tr(" px"))
+        self.max_pixels_spin.setToolTip(
+            self.tr("Reject decoded images above this pixel count (default: 64 million)")
+        )
+        adv_grid.addWidget(self.max_pixels_spin, 10, 1)
+
+        max_frames_label = QLabel(self.tr("Max frames"))
+        max_frames_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(max_frames_label, 10, 2)
+        self.max_frames_spin = QSpinBox()
+        self.max_frames_spin.setRange(1, 100_000)
+        self.max_frames_spin.setValue(DEFAULT_MAX_FRAMES)
+        self.max_frames_spin.setToolTip(
+            self.tr("Reject animated or multi-page inputs above this frame count")
+        )
+        adv_grid.addWidget(self.max_frames_spin, 10, 3)
+
+        max_decoded_bytes_label = QLabel(self.tr("Max decoded bytes"))
+        max_decoded_bytes_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(max_decoded_bytes_label, 11, 0)
+        self.max_decoded_bytes_edit = QLineEdit("512MB")
+        self.max_decoded_bytes_edit.setPlaceholderText("512MB")
+        self.max_decoded_bytes_edit.setMinimumWidth(100)
+        self.max_decoded_bytes_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.max_decoded_bytes_edit.setToolTip(
+            self.tr("Reject decoded pixels above this estimate (B, KB, MB, GB, or TB)")
+        )
+        self.max_decoded_bytes_edit.textChanged.connect(
+            lambda _text: self._clear_line_error(self.max_decoded_bytes_edit)
+        )
+        adv_grid.addWidget(self.max_decoded_bytes_edit, 11, 1)
+
+        max_decode_seconds_label = QLabel(self.tr("Max decode time"))
+        max_decode_seconds_label.setObjectName("fieldLabel")
+        adv_grid.addWidget(max_decode_seconds_label, 11, 2)
+        self.max_decode_seconds_spin = QDoubleSpinBox()
+        self.max_decode_seconds_spin.setRange(0.0, 86_400.0)
+        self.max_decode_seconds_spin.setDecimals(1)
+        self.max_decode_seconds_spin.setSingleStep(0.5)
+        self.max_decode_seconds_spin.setValue(DEFAULT_MAX_DECODE_SECONDS)
+        self.max_decode_seconds_spin.setSuffix(self.tr(" s"))
+        self.max_decode_seconds_spin.setSpecialValueText(self.tr("(disabled)"))
+        self.max_decode_seconds_spin.setToolTip(
+            self.tr("Reject a source when decoding exceeds this time; 0 disables the limit")
+        )
+        adv_grid.addWidget(self.max_decode_seconds_spin, 11, 3)
+
         # ── Batch editing layer ──
         self.edit_group = QGroupBox(self.tr("Batch edits"))
         self.edit_group.setToolTip(
@@ -8821,7 +9245,7 @@ class MainWindow(QMainWindow):
         self.border_color_edit.setToolTip(self.tr("Border color as #RRGGBB or a named color"))
         edit_grid.addWidget(self.border_color_edit, 7, 1, 1, 3)
 
-        adv_grid.addWidget(self.edit_group, 10, 0, 1, 4)
+        adv_grid.addWidget(self.edit_group, 12, 0, 1, 4)
 
         scroll_layout.addWidget(adv_group)
 
@@ -10183,6 +10607,11 @@ class MainWindow(QMainWindow):
             "tone_map": ["none", "reinhard", "hable", "clip"][self.tone_map_combo.currentIndex()],
             "avif_codec": ["auto", "aom", "rav1e", "svt"][self.avif_codec_combo.currentIndex()],
             "avif_speed": self.avif_speed_spin.value(),
+            "max_pixels": self.max_pixels_spin.value(),
+            "max_decoded_bytes": _parse_size_spec(self.max_decoded_bytes_edit.text())
+            or DEFAULT_MAX_DECODED_BYTES,
+            "max_frames": self.max_frames_spin.value(),
+            "max_decode_seconds": self.max_decode_seconds_spin.value(),
             "png_level": self.png_level_spin.value(),
             "tiff_compression": ["none", "lzw", "deflate"][self.tiff_comp_combo.currentIndex()],
             "xmp_sidecar": self.xmp_sidecar_chk.isChecked(),
@@ -10487,6 +10916,20 @@ class MainWindow(QMainWindow):
 
         fmt = self._fmt_values[self.fmt_combo.currentIndex()] if hasattr(self, "_fmt_values") else "auto"
 
+        max_decoded_bytes_text = self.max_decoded_bytes_edit.text().strip()
+        max_decoded_bytes = _parse_size_spec(max_decoded_bytes_text)
+        if max_decoded_bytes is None or max_decoded_bytes <= 0:
+            self._log(f"[ERROR] Invalid decoded byte budget: {max_decoded_bytes_text}")
+            self._set_line_error(
+                self.max_decoded_bytes_edit,
+                self.tr("Use a positive size like 512MB, 2GB, or leave it at the default."),
+            )
+            return
+        try:
+            _configure_heif_security_limit(self.max_pixels_spin.value())
+        except Exception as exc:
+            self._log(f"[WARN] Could not configure HEIF pixel limit: {exc}")
+
         # Disk space pre-check
         try:
             estimated = _estimate_output_size(self._scan_result.total_size, fmt)
@@ -10584,6 +11027,10 @@ class MainWindow(QMainWindow):
             avif_speed=self.avif_speed_spin.value(),
             avif_codec=["auto", "aom", "rav1e", "svt"][self.avif_codec_combo.currentIndex()],
             png_lossy=self.png_lossy_chk.isChecked(),
+            max_pixels=self.max_pixels_spin.value(),
+            max_decoded_bytes=max_decoded_bytes,
+            max_frames=self.max_frames_spin.value(),
+            max_decode_seconds=self.max_decode_seconds_spin.value(),
             strip_fields=self._gui_strip_fields(),
             brightness=edit_values["brightness"],
             contrast=edit_values["contrast"],
@@ -10953,6 +11400,10 @@ class MainWindow(QMainWindow):
         self.settings.setValue("canvas_bg", self.canvas_bg_edit.text())
         self.settings.setValue("exclude", self.exclude_edit.text())
         self.settings.setValue("max_file_size", self.max_file_size_edit.text())
+        self.settings.setValue("max_pixels", self.max_pixels_spin.value())
+        self.settings.setValue("max_decoded_bytes", self.max_decoded_bytes_edit.text())
+        self.settings.setValue("max_frames", self.max_frames_spin.value())
+        self.settings.setValue("max_decode_seconds", self.max_decode_seconds_spin.value())
         self.settings.setValue("xmp_sidecar", self.xmp_sidecar_chk.isChecked())
         self.settings.setValue("recompress", self.recompress_chk.isChecked())
         self.settings.setValue("only_if_smaller_enabled", self.only_if_smaller_chk.isChecked())
@@ -11109,6 +11560,18 @@ class MainWindow(QMainWindow):
             self.exclude_edit.setText(v)
         if v := self.settings.value("max_file_size"):
             self.max_file_size_edit.setText(v)
+        if (n := self._safe_int(self.settings.value("max_pixels"))) is not None:
+            self.max_pixels_spin.setValue(n)
+        if v := self.settings.value("max_decoded_bytes"):
+            self.max_decoded_bytes_edit.setText(v)
+        if (n := self._safe_int(self.settings.value("max_frames"))) is not None:
+            self.max_frames_spin.setValue(n)
+        try:
+            stored_decode_seconds = float(self.settings.value("max_decode_seconds"))
+        except (TypeError, ValueError):
+            stored_decode_seconds = None
+        if stored_decode_seconds is not None and math.isfinite(stored_decode_seconds):
+            self.max_decode_seconds_spin.setValue(max(0.0, stored_decode_seconds))
         if (v := self.settings.value("xmp_sidecar")) is not None:
             self.xmp_sidecar_chk.setChecked(v == "true" or v is True)
         if (v := self.settings.value("recompress")) is not None:
@@ -11408,6 +11871,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-file-size", type=str, default=None, metavar="SIZE",
                    help="Skip files larger than SIZE. Accepts: '500MB', '2GB', '100KB'. "
                         "Prevents OOM on multi-gigapixel images.")
+    p.add_argument("--max-pixels", type=int, default=DEFAULT_MAX_PIXELS, metavar="N",
+                   help=f"Reject decoded images above N pixels (default: {DEFAULT_MAX_PIXELS:,}).")
+    p.add_argument("--max-decoded-bytes", type=str, default="512MB", metavar="SIZE",
+                   help="Reject decoded pixels above SIZE (default: 512MB; accepts B, KB, MB, GB, TB).")
+    p.add_argument("--max-frames", type=int, default=DEFAULT_MAX_FRAMES, metavar="N",
+                   help=f"Reject animated/multi-page inputs above N frames (default: {DEFAULT_MAX_FRAMES}).")
+    p.add_argument("--max-decode-seconds", type=float, default=DEFAULT_MAX_DECODE_SECONDS, metavar="SEC",
+                   help="Reject a source when decoding exceeds SEC seconds (0 disables; default: disabled).")
     p.add_argument("--register-shell", action="store_true",
                    help="Install OS shell integration: Windows Explorer right-click menu "
                         "or Linux .desktop file. macOS prints Automator recipe. Then exit.")
@@ -11553,6 +12024,10 @@ CLI_FLAG_PARITY = {
     "--avif-speed": {"surface": "gui", "gui": ("avif_speed_spin",), "readme": True, "note": "AVIF speed"},
     "--avif-codec": {"surface": "gui", "gui": ("avif_codec_combo",), "readme": True, "note": "AVIF codec"},
     "--max-file-size": {"surface": "gui", "gui": ("max_file_size_edit",), "readme": True, "note": "Large input guard"},
+    "--max-pixels": {"surface": "gui", "gui": ("max_pixels_spin",), "readme": True, "note": "Decoded pixel budget"},
+    "--max-decoded-bytes": {"surface": "gui", "gui": ("max_decoded_bytes_edit",), "readme": True, "note": "Decoded byte budget"},
+    "--max-frames": {"surface": "gui", "gui": ("max_frames_spin",), "readme": True, "note": "Decoded frame budget"},
+    "--max-decode-seconds": {"surface": "gui", "gui": ("max_decode_seconds_spin",), "readme": True, "note": "Decode time budget"},
     "--register-shell": {"surface": "admin-only", "gui": (), "readme": True, "note": "Install shell integration"},
     "--unregister-shell": {"surface": "admin-only", "gui": (), "readme": True, "note": "Remove shell integration"},
     "--use-cache": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless repeat-run cache"},
@@ -11642,7 +12117,8 @@ _PRESET_ARG_KEYS = (
     "no_structure", "workers", "no_exiftool", "exclude", "report",
     "only_if_smaller", "dpi", "icc", "xmp_sidecar", "recompress",
     "target_kb", "target_psnr", "target_ssimulacra2", "watermark", "canvas", "canvas_bg",
-    "avif_speed", "avif_codec", "max_file_size", "recursive", "dry_run",
+    "avif_speed", "avif_codec", "max_file_size", "max_pixels", "max_decoded_bytes",
+    "max_frames", "max_decode_seconds", "recursive", "dry_run",
     "use_cache", "clear_cache", "resume", "frames", "watch",
     "watch_interval", "tone_map", "cpu_priority", "use_processes", "sidecar_history",
     "backend", "verify_quality", "png_lossy",
@@ -12212,8 +12688,17 @@ def _build_convert_options(args, *, resize_mode: str = "none",
         avif_speed=getattr(args, "avif_speed", 6),
         avif_codec=getattr(args, "avif_codec", "auto"),
         png_lossy=getattr(args, "png_lossy", False),
-        backend=getattr(args, "backend", "pillow"),
+            backend=getattr(args, "backend", "pillow"),
         cpu_priority=getattr(args, "cpu_priority", "normal"),
+        max_pixels=int(getattr(args, "max_pixels", DEFAULT_MAX_PIXELS)),
+        max_decoded_bytes=(
+            _parse_size_spec(getattr(args, "max_decoded_bytes", "512MB"))
+            or DEFAULT_MAX_DECODED_BYTES
+        ),
+        max_frames=int(getattr(args, "max_frames", DEFAULT_MAX_FRAMES)),
+        max_decode_seconds=float(
+            getattr(args, "max_decode_seconds", DEFAULT_MAX_DECODE_SECONDS)
+        ),
         strip_fields=frozenset(_sf),
         brightness=_edit_num("brightness", -100, 100),
         contrast=_edit_num("contrast", -100, 100),
@@ -12336,6 +12821,22 @@ def _validate_cli_args(args) -> list[str]:
     if getattr(args, "max_file_size", None):
         if _parse_size_spec(args.max_file_size) is None:
             errors.append("--max-file-size must be a size like 500MB, 2GB, or 100KB")
+    max_pixels = getattr(args, "max_pixels", DEFAULT_MAX_PIXELS)
+    if max_pixels <= 0:
+        errors.append("--max-pixels must be greater than 0")
+    max_decoded_bytes = _parse_size_spec(
+        getattr(args, "max_decoded_bytes", "512MB") or ""
+    )
+    if max_decoded_bytes is None or max_decoded_bytes <= 0:
+        errors.append("--max-decoded-bytes must be a positive size like 512MB or 2GB")
+    max_frames = getattr(args, "max_frames", DEFAULT_MAX_FRAMES)
+    if max_frames <= 0:
+        errors.append("--max-frames must be greater than 0")
+    max_decode_seconds = getattr(
+        args, "max_decode_seconds", DEFAULT_MAX_DECODE_SECONDS,
+    )
+    if not math.isfinite(max_decode_seconds) or max_decode_seconds < 0:
+        errors.append("--max-decode-seconds must be 0 or greater")
     if getattr(args, "backend", "pillow") == "vips":
         if getattr(args, "format", "auto") == "auto":
             errors.append("--backend vips requires an explicit --format")
@@ -12735,6 +13236,11 @@ def _run_cli(args):
         for error in validation_errors:
             print(f"[ERROR] {error}", file=sys.stderr)
         sys.exit(EXIT_INPUT_ERROR)
+
+    try:
+        _configure_heif_security_limit(int(args.max_pixels))
+    except Exception as exc:
+        print(f"[WARN] Could not configure HEIF pixel limit: {exc}", file=sys.stderr)
 
     input_dir, input_dirs, input_files = _collect_cli_input_refs(args)
 
@@ -13304,6 +13810,7 @@ def _run_cli(args):
                     "src_deleted": r.src_deleted,
                     "metadata": r.metadata_report,
                     "error": r.error or None,
+                    "error_code": r.error_code,
                     "warnings": list(r.warnings),
                 }
                 for r in all_results
