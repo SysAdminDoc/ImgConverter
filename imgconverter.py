@@ -203,7 +203,7 @@ import zipfile
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from PIL import Image, ImageCms, ImageOps
 import pillow_heif
@@ -2297,6 +2297,9 @@ class ConvertOptions:
     max_decoded_bytes: int = DEFAULT_MAX_DECODED_BYTES
     max_frames: int = DEFAULT_MAX_FRAMES
     max_decode_seconds: float = DEFAULT_MAX_DECODE_SECONDS
+    journal_path: Path | None = field(default=None, repr=False, compare=False)
+    journal_batch_id: str | None = field(default=None, repr=False, compare=False)
+    journal_output_root: Path | None = field(default=None, repr=False, compare=False)
     strip_fields: frozenset[str] = field(default_factory=frozenset)
     # Editing layer (folded in from ImageForge) — per-image adjustments/effects.
     brightness: int = 0
@@ -3728,6 +3731,7 @@ def _convert_animated_or_sequence(
 
     t0 = time.perf_counter()
     result = ConvertResult(src=src, size_before=src.stat().st_size)
+    _journal_transition(opts, src, "converting", result=result)
     try:
         dest_dir = _structured_output_dir(src, output_dir, preserve_structure, base_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -3791,6 +3795,8 @@ def _convert_animated_or_sequence(
                     if opts.skip_existing and dst.exists():
                         written.append(dst)
                         continue
+                    if i == 1:
+                        _journal_transition(opts, src, "prepared", output=dst, result=result)
                     if fmt_pil == "JPEG" and frame_save.mode in ("RGBA", "LA", "PA", "P", "CMYK"):
                         frame_save = frame_save.convert("RGB")
                     save_kwargs = _multiframe_save_kwargs(
@@ -3804,6 +3810,11 @@ def _convert_animated_or_sequence(
                 result.warnings.append(
                     f"multi-frame: exported {len(written)} frames as {pad_width}-digit sequence"
                 )
+                if result.dst:
+                    _journal_transition(
+                        opts, src, "validated", output=result.dst,
+                        outputs=written, result=result,
+                    )
             else:
                 frames = []
                 durations = []
@@ -3832,7 +3843,9 @@ def _convert_animated_or_sequence(
                     result.dst = dst
                     result.size_after = dst.stat().st_size
                     result.elapsed = time.perf_counter() - t0
+                    _journal_transition(opts, src, "skipped", output=dst, result=result)
                     return result
+                _journal_transition(opts, src, "prepared", output=dst, result=result)
                 save_kwargs = {"save_all": True,
                                 "append_images": frames[1:] if len(frames) > 1 else [],
                                 "duration": durations or [100],
@@ -3845,6 +3858,10 @@ def _convert_animated_or_sequence(
                 result.size_after = dst.stat().st_size
                 result.success = True
                 result.warnings.append(f"multi-frame: animated {fmt_pil} with {len(frames)} frames")
+                _journal_transition(
+                    opts, src, "validated", output=dst,
+                    outputs=[dst], result=result,
+                )
             if opts.only_if_smaller_pct is not None and opts.only_if_smaller_pct > 0:
                 threshold_ratio = (100.0 - opts.only_if_smaller_pct) / 100.0
                 if result.size_before > 0 and (result.size_after / result.size_before) > threshold_ratio:
@@ -3874,6 +3891,13 @@ def _convert_animated_or_sequence(
         elif isinstance(e, OSError) and e.errno is not None:
             result.error_code = e.errno
     result.elapsed = time.perf_counter() - t0
+    if result.success or result.skipped:
+        _journal_record_result(opts, result)
+    elif result.error:
+        _journal_transition(
+            opts, src, "failed", result=result,
+            error=result.error, error_code=result.error_code,
+        )
     return result
 
 
@@ -4075,6 +4099,7 @@ def _convert_file_vips(
     prefix: str,
     suffix: str,
     policy: DecodeResourcePolicy | None = None,
+    journal_opts: ConvertOptions | None = None,
 ) -> ConvertResult:
     """Quality-only libvips fast path. Feature validation happens before use."""
     policy = _validate_decode_resource_policy(policy or DecodeResourcePolicy())
@@ -4084,6 +4109,7 @@ def _convert_file_vips(
     except OSError:
         size_before = 0
     result = ConvertResult(src=src, size_before=size_before)
+    _journal_transition(journal_opts, src, "converting", result=result)
     temp_path: Path | None = None
     try:
         fmt_key = str(fmt).lower()
@@ -4110,6 +4136,7 @@ def _convert_file_vips(
             result.dst = out_path
             result.size_after = out_path.stat().st_size
             result.elapsed = time.perf_counter() - t0
+            _journal_transition(journal_opts, src, "skipped", output=out_path, result=result)
             return result
 
         counter = 1
@@ -4126,6 +4153,10 @@ def _convert_file_vips(
             temp_path = Path(tmp_str)
             write_path = temp_path
 
+        _journal_transition(
+            journal_opts, src, "prepared", output=out_path,
+            temp=temp_path, result=result,
+        )
         ok, msg = _vips_convert(src, write_path, fmt_key, jpeg_quality)
         if not ok:
             raise RuntimeError(msg)
@@ -4142,15 +4173,14 @@ def _convert_file_vips(
         except Exception as e:
             raise RuntimeError(f"Output validation failed: {e}")
 
+        _journal_transition(
+            journal_opts, src, "validated", output=out_path,
+            temp=temp_path, result=result,
+        )
+
         if in_place and temp_path is not None:
             os.replace(str(temp_path), str(out_path))
             temp_path = None
-            if not _same_resolved_path(out_path, src) and src.exists():
-                try:
-                    src.unlink()
-                    result.src_deleted = True
-                except OSError as e:
-                    result.warnings.append(f"source delete failed after vips conversion: {e}")
 
         result.dst = out_path
         result.success = True
@@ -4163,6 +4193,30 @@ def _convert_file_vips(
             "preserve_requested": False,
         }
         result.warnings.append("backend: vips quality-only conversion; metadata and advanced transforms not applied")
+        result.elapsed = time.perf_counter() - t0
+        source_delete_state = "not_requested"
+        if in_place:
+            source_delete_state = (
+                "not_needed" if _same_resolved_path(out_path, src) else "pending"
+            )
+        _journal_transition(
+            journal_opts, src, "committed", output=out_path,
+            result=result, source_delete=source_delete_state, clear_temp=True,
+        )
+        if in_place and source_delete_state == "pending" and src.exists():
+            try:
+                src.unlink()
+                result.src_deleted = True
+                _journal_transition(
+                    journal_opts, src, "source_deleted", output=out_path,
+                    result=result, source_delete="deleted",
+                )
+            except OSError as e:
+                result.warnings.append(f"source delete failed after vips conversion: {e}")
+                _journal_transition(
+                    journal_opts, src, "committed", output=out_path,
+                    result=result, source_delete="failed",
+                )
         return result
     except Exception as e:
         result.error = str(e)
@@ -4172,6 +4226,13 @@ def _convert_file_vips(
             import errno
             result.error_code = e.errno
         result.elapsed = time.perf_counter() - t0
+        if result.success:
+            _journal_record_result(journal_opts, result)
+        else:
+            _journal_transition(
+                journal_opts, src, "failed", temp=temp_path,
+                result=result, error=result.error, error_code=result.error_code,
+            )
         return result
     finally:
         if temp_path is not None:
@@ -4250,6 +4311,7 @@ def convert_file(
             prefix=prefix,
             suffix=suffix,
             policy=policy,
+            journal_opts=opts,
         )
 
     t0 = time.perf_counter()
@@ -4258,6 +4320,7 @@ def convert_file(
     except OSError:
         size_before = 0
     result = ConvertResult(src=src, size_before=size_before)
+    _journal_transition(opts, src, "converting", result=result)
     img = None
     out_path = None
     temp_path = None
@@ -4484,6 +4547,7 @@ def convert_file(
             result.skipped = True
             result.warnings.append(f"Skipped: already {out_fmt} and no processing requested")
             result.elapsed = time.perf_counter() - t0
+            _journal_transition(opts, src, "skipped", result=result)
             return result
 
         # Lossless recompress fast-path: JPEG -> JPEG via jpegoptim / jpegtran,
@@ -4504,7 +4568,9 @@ def convert_file(
                 result.dst = out_path
                 result.size_after = out_path.stat().st_size
                 result.elapsed = time.perf_counter() - t0
+                _journal_transition(opts, src, "skipped", output=out_path, result=result)
                 return result
+            _journal_transition(opts, src, "prepared", output=out_path, result=result)
             if same_output_as_source:
                 ok, tool = False, "same-path in-place recompress uses standard re-encode"
             else:
@@ -4514,10 +4580,30 @@ def convert_file(
                 result.size_after = out_path.stat().st_size
                 result.success = True
                 result.warnings.append(f"recompress: pixel-lossless via {tool}")
-                if in_place and result.success and not _same_resolved_path(out_path, src):
-                    src.unlink()
-                    result.src_deleted = True
                 result.elapsed = time.perf_counter() - t0
+                source_delete_state = "not_requested"
+                if in_place:
+                    source_delete_state = (
+                        "not_needed" if _same_resolved_path(out_path, src) else "pending"
+                    )
+                _journal_transition(
+                    opts, src, "committed", output=out_path,
+                    result=result, source_delete=source_delete_state,
+                )
+                if in_place and source_delete_state == "pending" and src.exists():
+                    try:
+                        src.unlink()
+                        result.src_deleted = True
+                        _journal_transition(
+                            opts, src, "source_deleted", output=out_path,
+                            result=result, source_delete="deleted",
+                        )
+                    except OSError as e:
+                        result.warnings.append(f"source delete failed after recompress: {e}")
+                        _journal_transition(
+                            opts, src, "committed", output=out_path,
+                            result=result, source_delete="failed",
+                        )
                 return result
             else:
                 result.warnings.append(
@@ -4565,6 +4651,7 @@ def convert_file(
             result.dst = out_path
             result.size_after = out_path.stat().st_size
             result.elapsed = time.perf_counter() - t0
+            _journal_transition(opts, src, "skipped", output=out_path, result=result)
             return result
 
         # Handle name collisions
@@ -4723,12 +4810,17 @@ def convert_file(
             )
             os.close(fd)
             temp_path = Path(tmp_str)
+            _journal_transition(
+                opts, src, "prepared", output=out_path,
+                temp=temp_path, result=result,
+            )
             if plugin_encoder is not None:
                 plugin_encoder.save(img, temp_path, dict(plugin_save_options or {}))
                 result.warnings.append(f"plugin encoder: {out_fmt}")
             else:
                 img.save(str(temp_path), out_fmt, **save_kwargs)
         else:
+            _journal_transition(opts, src, "prepared", output=out_path, result=result)
             if plugin_encoder is not None:
                 plugin_encoder.save(img, out_path, dict(plugin_save_options or {}))
                 result.warnings.append(f"plugin encoder: {out_fmt}")
@@ -4771,6 +4863,11 @@ def convert_file(
                         )
         except Exception as ve:
             raise RuntimeError(f"Output validation failed: {ve}")
+
+        _journal_transition(
+            opts, src, "validated", output=out_path,
+            temp=temp_path, result=result,
+        )
 
         # Cross-decoder check via ffprobe when available — second opinion that
         # the file is parseable by something other than libpillow / libheif.
@@ -4839,6 +4936,7 @@ def convert_file(
                     f"discarded, keeping original"
                 )
                 result.elapsed = time.perf_counter() - t0
+                _journal_transition(opts, src, "deferred", result=result)
                 return result
 
         # Atomic rename for in-place mode
@@ -4869,10 +4967,32 @@ def convert_file(
         if preserve_metadata and meta.get("google_photos_sidecar"):
             _apply_sidecar_metadata_via_exiftool(src, out_path, meta, result)
 
+        result.elapsed = time.perf_counter() - t0
+        source_delete_state = "not_requested"
+        if in_place:
+            source_delete_state = (
+                "not_needed" if _same_resolved_path(out_path, src) else "pending"
+            )
+        _journal_transition(
+            opts, src, "committed", output=out_path,
+            result=result, source_delete=source_delete_state, clear_temp=True,
+        )
+
         # In-place mode: delete the original after successful conversion
-        if in_place and result.success and not _same_resolved_path(out_path, src):
-            src.unlink()
-            result.src_deleted = True
+        if in_place and result.success and source_delete_state == "pending" and src.exists():
+            try:
+                src.unlink()
+                result.src_deleted = True
+                _journal_transition(
+                    opts, src, "source_deleted", output=out_path,
+                    result=result, source_delete="deleted",
+                )
+            except OSError as e:
+                result.warnings.append(f"source delete failed after conversion: {e}")
+                _journal_transition(
+                    opts, src, "committed", output=out_path,
+                    result=result, source_delete="failed",
+                )
 
     except Exception as e:
         result.error = str(e)
@@ -4882,6 +5002,14 @@ def convert_file(
         elif isinstance(e, OSError) and e.errno is not None:
             import errno
             result.error_code = e.errno
+        result.elapsed = time.perf_counter() - t0
+        if result.success:
+            _journal_record_result(opts, result)
+        else:
+            _journal_transition(
+                opts, src, "failed", output=out_path, temp=temp_path,
+                result=result, error=result.error, error_code=result.error_code,
+            )
         # Clean up temp file on failure
         if temp_path and temp_path.exists():
             try:
@@ -6313,6 +6441,7 @@ def _build_support_bundle_payload(settings_snapshot: dict | None = None) -> dict
             "settings": SETTINGS_SCHEMA,
             "presets": PRESET_SCHEMA_VERSION,
             "plugin_trust": PLUGIN_TRUST_SCHEMA,
+            "batch_journal": BATCH_JOURNAL_SCHEMA,
         },
         "dependencies": _dependency_versions(),
         "native_codecs": _native_codec_versions(),
@@ -11891,7 +12020,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--clear-cache", action="store_true",
                    help="Delete ~/.cache/imgconverter/seen.sqlite and exit")
     p.add_argument("--resume", action="store_true",
-                   help="Resume a previously interrupted batch from ~/.cache/imgconverter/queue.json")
+                   help="Resume a previously interrupted batch from the durable per-file journal "
+                        "(legacy queue fallback supported)")
     p.add_argument("--frames", type=str, default="first", choices=["first", "all", "animate"],
                    help="Multi-frame source handling: 'first' (default - first frame only), "
                         "'all' (export every frame as {stem}.NNN.{ext}), "
@@ -12032,7 +12162,7 @@ CLI_FLAG_PARITY = {
     "--unregister-shell": {"surface": "admin-only", "gui": (), "readme": True, "note": "Remove shell integration"},
     "--use-cache": {"surface": "cli-only", "gui": (), "readme": True, "note": "Headless repeat-run cache"},
     "--clear-cache": {"surface": "admin-only", "gui": (), "readme": True, "note": "Cache maintenance"},
-    "--resume": {"surface": "cli-only", "gui": (), "readme": True, "note": "Interrupted CLI queue resume"},
+    "--resume": {"surface": "cli-only", "gui": (), "readme": True, "note": "Interrupted CLI journal resume"},
     "--frames": {"surface": "gui", "gui": ("frames_combo",), "readme": True, "note": "Multi-frame handling"},
     "--watch": {"surface": "cli-only", "gui": (), "readme": True, "note": "Directory watch mode"},
     "--watch-interval": {"surface": "cli-only", "gui": (), "readme": True, "note": "Directory watch cadence"},
@@ -12175,6 +12305,404 @@ def _preset_hash(*parts) -> str:
 
 
 QUEUE_STATE_PATH = USER_CACHE_DIR / "queue.json"
+BATCH_JOURNAL_SCHEMA = 1
+BATCH_JOURNAL_PATH = USER_CACHE_DIR / "batch-journal.json"
+_BATCH_JOURNAL_TERMINAL_STATES = frozenset({"committed", "source_deleted", "skipped"})
+_BATCH_JOURNAL_LOCK = threading.RLock()
+
+
+def _journal_path_key(path: Path) -> str:
+    """Hash a path for local journal correlation without storing the path."""
+    normalized = str(Path(path).resolve(strict=False)).casefold()
+    return _preset_hash(normalized)
+
+
+def _journal_source_identity(src: Path, *, include_hash: bool = False) -> dict:
+    """Return a privacy-preserving source identity for the local journal."""
+    identity = {"key": _journal_path_key(src)}
+    try:
+        stat = src.stat()
+        identity.update({"size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)})
+    except OSError:
+        identity.update({"size": None, "mtime_ns": None})
+    if include_hash:
+        try:
+            identity["sha256"] = _file_sha256(src)
+        except OSError:
+            identity["sha256"] = None
+    return identity
+
+
+def _journal_output_ref(opts: ConvertOptions, path: Path | None) -> str | None:
+    """Store output/temp paths relative to the batch root, never absolute paths."""
+    if path is None:
+        return None
+    root = opts.journal_output_root
+    if root is None:
+        return None
+    try:
+        relative = Path(path).resolve(strict=False).relative_to(
+            Path(root).resolve(strict=False)
+        )
+    except (OSError, ValueError):
+        return None
+    return relative.as_posix()
+
+
+def _journal_ref_path(root: Path | None, reference: str | None) -> Path | None:
+    """Resolve a journal-relative path while rejecting corrupted traversal refs."""
+    if root is None or not reference:
+        return None
+    candidate = Path(reference)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return None
+    try:
+        resolved_root = Path(root).resolve(strict=False)
+        resolved = (resolved_root / candidate).resolve(strict=False)
+        if not resolved.is_relative_to(resolved_root):
+            return None
+        return resolved
+    except (OSError, ValueError):
+        return None
+
+
+def _load_batch_journal(path: Path | None = None) -> dict | None:
+    """Load and minimally validate the durable per-file batch journal."""
+    journal_path = Path(path or BATCH_JOURNAL_PATH)
+    if not journal_path.is_file():
+        return None
+    try:
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        if not isinstance(journal, dict):
+            raise ValueError("journal root must be an object")
+        if int(journal.get("schema_version", 0)) != BATCH_JOURNAL_SCHEMA:
+            raise ValueError("unsupported batch journal schema")
+        if not isinstance(journal.get("files", {}), dict):
+            raise ValueError("journal files must be an object")
+        return journal
+    except Exception as exc:
+        _diag_log(f"batch journal load failed: {exc}", level="WARNING")
+        return None
+
+
+def _write_batch_journal(journal: dict, path: Path | None = None) -> None:
+    journal_path = Path(path or BATCH_JOURNAL_PATH)
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_text_atomic(
+        journal_path, json.dumps(journal, indent=2, sort_keys=True, default=str) + "\n",
+    )
+
+
+def _start_batch_journal(
+    input_dir: Path,
+    output_dir: Path,
+    args,
+    preset_hash: str,
+    files: list[Path],
+) -> dict:
+    """Create a new privacy-preserving journal before any worker starts."""
+    import uuid
+    batch_id = f"{int(time.time())}-{uuid.uuid4().hex[:12]}"
+    journal = {
+        "schema_version": BATCH_JOURNAL_SCHEMA,
+        "batch_id": batch_id,
+        "app_version": APP_VERSION,
+        "created": int(time.time()),
+        "updated": int(time.time()),
+        "status": "running",
+        "input_key": _journal_path_key(input_dir),
+        "output_key": _journal_path_key(output_dir),
+        "preset_hash": preset_hash,
+        "in_place": bool(getattr(args, "in_place", False)),
+        "files": {
+            _journal_path_key(path): {
+                "source": _journal_source_identity(path),
+                "state": "queued",
+                "output_ref": None,
+                "temp_ref": None,
+                "validated_ref": None,
+                "validated_sha256": None,
+                "validated_size": None,
+                "output_sha256": None,
+                "output_size": None,
+                "source_delete": "pending" if getattr(args, "in_place", False) else "not_requested",
+                "error": None,
+                "error_code": None,
+                "updated": int(time.time()),
+            }
+            for path in files
+        },
+    }
+    with _BATCH_JOURNAL_LOCK:
+        _write_batch_journal(journal)
+    return journal
+
+
+def _journal_transition(
+    opts: ConvertOptions | None,
+    src: Path,
+    state: str,
+    *,
+    output: Path | None = None,
+    outputs: list[Path] | None = None,
+    temp: Path | None = None,
+    result: ConvertResult | None = None,
+    error: str | None = None,
+    error_code: int | None = None,
+    source_delete: str | None = None,
+    clear_temp: bool = False,
+) -> None:
+    """Atomically persist one conversion transaction state."""
+    if not opts or not opts.journal_path or not opts.journal_batch_id:
+        return
+    journal_path = Path(opts.journal_path)
+    try:
+        with _BATCH_JOURNAL_LOCK:
+            journal = _load_batch_journal(journal_path)
+            if not journal or journal.get("batch_id") != opts.journal_batch_id:
+                return
+            key = _journal_path_key(src)
+            record = journal.setdefault("files", {}).setdefault(
+                key,
+                {
+                    "source": _journal_source_identity(src, include_hash=True),
+                    "state": "queued",
+                },
+            )
+            source = record.setdefault("source", _journal_source_identity(src))
+            if state not in {"queued", "converting"} and "sha256" not in source:
+                source.update(_journal_source_identity(src, include_hash=True))
+            if output is not None:
+                record["output_ref"] = _journal_output_ref(opts, output)
+            if outputs is not None:
+                record["output_refs"] = [
+                    reference for path in outputs
+                    if (reference := _journal_output_ref(opts, path)) is not None
+                ]
+            if temp is not None:
+                record["temp_ref"] = _journal_output_ref(opts, temp)
+            elif clear_temp:
+                record["temp_ref"] = None
+            record["state"] = state
+            if source_delete is not None:
+                record["source_delete"] = source_delete
+            if error is not None:
+                record["error"] = str(error)[:1000]
+            if error_code is not None:
+                record["error_code"] = int(error_code)
+            if result is not None:
+                record["error"] = str(result.error)[:1000] if result.error else None
+                record["error_code"] = result.error_code
+                record["elapsed"] = round(float(result.elapsed or 0.0), 3)
+                record["size_in"] = int(result.size_before or 0)
+                record["size_out"] = int(result.size_after or 0)
+                if result.dst:
+                    record["output_ref"] = _journal_output_ref(opts, result.dst)
+                if result.src_deleted:
+                    record["source_delete"] = "deleted"
+                elif source_delete is None and record.get("source_delete") == "pending":
+                    record["source_delete"] = "retained"
+            artifact = temp if temp is not None and temp.exists() else output
+            if artifact is None:
+                artifact = _journal_ref_path(opts.journal_output_root, record.get("output_ref"))
+            if outputs is not None and state in {
+                "validated", "committed", "source_deleted", "skipped",
+            }:
+                artifacts = []
+                for output_path in outputs:
+                    if not output_path.is_file():
+                        continue
+                    try:
+                        artifacts.append({
+                            "ref": _journal_output_ref(opts, output_path),
+                            "sha256": _file_sha256(output_path),
+                            "size": int(output_path.stat().st_size),
+                        })
+                    except OSError:
+                        continue
+                record["artifacts"] = artifacts
+                if artifacts:
+                    record["validated_ref"] = artifacts[0]["ref"]
+                    record["validated_sha256"] = artifacts[0]["sha256"]
+                    record["validated_size"] = artifacts[0]["size"]
+                    record["output_sha256"] = artifacts[0]["sha256"]
+                    record["output_size"] = artifacts[0]["size"]
+            elif artifact is not None and artifact.is_file() and state in {
+                "validated", "committed", "source_deleted", "skipped",
+            }:
+                try:
+                    record["validated_ref"] = _journal_output_ref(opts, artifact)
+                    record["validated_sha256"] = _file_sha256(artifact)
+                    record["validated_size"] = int(artifact.stat().st_size)
+                    record["output_sha256"] = record["validated_sha256"]
+                    record["output_size"] = record["validated_size"]
+                except OSError:
+                    pass
+            record["updated"] = int(time.time())
+            journal["updated"] = int(time.time())
+            _write_batch_journal(journal, journal_path)
+    except Exception as exc:
+        _diag_log(f"batch journal transition failed for {src.name}: {exc}", level="WARNING")
+
+
+def _journal_result_state(result: ConvertResult) -> str:
+    if result.skipped and any(
+        warning.startswith("only-if-smaller:") for warning in result.warnings
+    ):
+        return "deferred"
+    if result.skipped:
+        return "skipped"
+    if result.success:
+        return "source_deleted" if result.src_deleted else "committed"
+    return "failed"
+
+
+def _journal_record_result(opts: ConvertOptions | None, result: ConvertResult) -> None:
+    """Persist a parent-process result, including process-pool conversions."""
+    source_delete = None
+    if result.success and opts and opts.in_place:
+        if result.src_deleted:
+            source_delete = "deleted"
+        elif any("source delete failed" in warning for warning in result.warnings):
+            source_delete = "failed"
+        else:
+            source_delete = "retained"
+    _journal_transition(
+        opts, result.src, _journal_result_state(result),
+        result=result, source_delete=source_delete,
+    )
+
+
+def _set_batch_journal_status(opts: ConvertOptions | None, status: str) -> None:
+    """Persist the batch lifecycle status without removing its recovery evidence."""
+    if not opts or not opts.journal_path or not opts.journal_batch_id:
+        return
+    try:
+        with _BATCH_JOURNAL_LOCK:
+            journal = _load_batch_journal(Path(opts.journal_path))
+            if not journal or journal.get("batch_id") != opts.journal_batch_id:
+                return
+            journal["status"] = str(status)
+            journal["updated"] = int(time.time())
+            _write_batch_journal(journal, Path(opts.journal_path))
+    except Exception as exc:
+        _diag_log(f"batch journal status update failed: {exc}", level="WARNING")
+
+
+def _journal_entry_is_terminal_and_valid(
+    entry: dict, src: Path, output_root: Path,
+) -> bool:
+    """Verify a terminal journal record before removing a source from resume."""
+    state = entry.get("state")
+    if state not in _BATCH_JOURNAL_TERMINAL_STATES:
+        return False
+    source = entry.get("source") or {}
+    source_deleted = state == "source_deleted" and entry.get("source_delete") == "deleted"
+    try:
+        stat = src.stat()
+    except OSError:
+        stat = None
+    if stat is None and not source_deleted:
+        return False
+    if stat is not None:
+        if source.get("size") is not None and int(source["size"]) != int(stat.st_size):
+            return False
+        if source.get("mtime_ns") is not None and int(source["mtime_ns"]) != int(stat.st_mtime_ns):
+            return False
+        if source.get("sha256"):
+            try:
+                if _file_sha256(src) != source["sha256"]:
+                    return False
+            except OSError:
+                return False
+    output_refs = entry.get("output_refs")
+    if output_refs is not None:
+        if not output_refs:
+            return state == "skipped"
+        artifacts = entry.get("artifacts") or []
+        if len(artifacts) != len(output_refs):
+            return False
+        for artifact in artifacts:
+            output_path = _journal_ref_path(output_root, artifact.get("ref"))
+            if output_path is None or not output_path.is_file():
+                return False
+            try:
+                if int(output_path.stat().st_size) != int(artifact.get("size")):
+                    return False
+                if _file_sha256(output_path) != artifact.get("sha256"):
+                    return False
+            except (OSError, TypeError, ValueError):
+                return False
+        return True
+    if state == "skipped":
+        output_ref = entry.get("output_ref")
+        if output_ref is None:
+            return True
+        output_path = _journal_ref_path(output_root, output_ref)
+        return output_path is not None and output_path.exists()
+    output_path = _journal_ref_path(output_root, entry.get("output_ref"))
+    if output_path is None or not output_path.is_file():
+        return False
+    expected_size = entry.get("output_size")
+    expected_hash = entry.get("output_sha256")
+    try:
+        if expected_size is not None and int(output_path.stat().st_size) != int(expected_size):
+            return False
+        return not expected_hash or _file_sha256(output_path) == expected_hash
+    except OSError:
+        return False
+
+
+def _journal_resume_matches(
+    journal: dict | None,
+    input_dir: Path,
+    output_dir: Path,
+    preset_hash: str,
+) -> bool:
+    return bool(
+        journal
+        and journal.get("schema_version") == BATCH_JOURNAL_SCHEMA
+        and journal.get("input_key") == _journal_path_key(input_dir)
+        and journal.get("output_key") == _journal_path_key(output_dir)
+        and journal.get("preset_hash") == preset_hash
+    )
+
+
+def _journal_resume_filter(
+    journal: dict,
+    files: list[Path],
+    output_dir: Path,
+) -> tuple[list[Path], list[Path]]:
+    """Return resumable pending files and incomplete files needing repair/retry."""
+    records = journal.get("files", {})
+    pending: list[Path] = []
+    ambiguous: list[Path] = []
+    for path in files:
+        entry = records.get(_journal_path_key(path))
+        if entry and _journal_entry_is_terminal_and_valid(entry, path, output_dir):
+            continue
+        if entry and entry.get("state") in {"converting", "prepared", "validated"}:
+            ambiguous.append(path)
+        pending.append(path)
+    return pending, ambiguous
+
+
+def _cli_recipe_hash(args, output_dir: Path, resize_mode: str, resize_value: int) -> str:
+    """Hash every CLI setting that can change a conversion result."""
+    control_only = {
+        "clear_cache", "dry_run", "install_deps", "max_memory", "progress",
+        "proof", "report", "resume", "watch", "watch_interval", "when_done",
+    }
+    recipe = {
+        key: value for key, value in vars(args).items()
+        if key not in control_only and not key.startswith("_journal_")
+    }
+    recipe.update({
+        "resolved_output": str(output_dir),
+        "resize_mode": resize_mode,
+        "resize_value": resize_value,
+    })
+    return _preset_hash(recipe)
 
 
 def _save_queue_state(input_dir: Path, output_dir: Path, args, pending: list[Path],
@@ -12189,6 +12717,9 @@ def _save_queue_state(input_dir: Path, output_dir: Path, args, pending: list[Pat
             "output": str(output_dir),
             "format": getattr(args, "format", None),
             "quality": getattr(args, "quality", None),
+            "journal_schema": BATCH_JOURNAL_SCHEMA,
+            "journal_batch_id": getattr(args, "_journal_batch_id", None),
+            "preset_hash": getattr(args, "_journal_preset_hash", None),
             "pending": [str(p) for p in pending],
             "done": sorted(done),
             "failed": sorted(failed),
@@ -13353,36 +13884,60 @@ def _run_cli(args):
     _emit_progress("scan_done", {"count": len(scan.files), "total_bytes": scan.total_size,
                                   "elapsed": round(scan.elapsed, 3)}, enabled=_progress_on)
 
+    recipe_hash = _cli_recipe_hash(args, output_dir, resize_mode, resize_value)
+    resume_journal = None
     # --resume: drop files that the previous run already converted.
     if getattr(args, "resume", False):
-        state = _load_queue_state()
-        if state and state.get("version") not in (None, APP_VERSION):
-            print(
-                f"[resume] WARNING: queue was written by ImgConverter v{state.get('version')}; "
-                f"current version is v{APP_VERSION}"
-            )
-        resume_matches = bool(
-            state
-            and state.get("input") == str(input_dir)
-            and state.get("output") == str(output_dir)
-            and state.get("format") == args.format
-            and state.get("quality") == args.quality
-        )
-        if resume_matches:
-            done_set = set(state.get("done", []))
+        resume_journal = _load_batch_journal()
+        if _journal_resume_matches(resume_journal, input_dir, output_dir, recipe_hash):
             pre = len(scan.files)
-            scan.files = [f for f in scan.files if str(f) not in done_set]
-            scan.total_size = sum(_size_or_zero(f) for f in scan.files)
-            print(f"[resume] {pre - len(scan.files)} files already done in previous run; "
-                  f"continuing with {len(scan.files)}")
-        else:
-            print(
-                "[resume] no compatible previous queue found (input, output, format, "
-                "or quality differs); ignoring --resume"
+            scan.files, ambiguous = _journal_resume_filter(
+                resume_journal, scan.files, output_dir,
             )
+            scan.total_size = sum(_size_or_zero(f) for f in scan.files)
+            print(
+                f"[resume] journal validated {pre - len(scan.files)} completed file(s); "
+                f"continuing with {len(scan.files)}"
+            )
+            if ambiguous:
+                print(
+                    f"[resume] retrying {len(ambiguous)} file(s) left in an incomplete "
+                    "conversion state"
+                )
+        else:
+            state = _load_queue_state()
+            if state and state.get("version") not in (None, APP_VERSION):
+                print(
+                    f"[resume] WARNING: queue was written by ImgConverter v{state.get('version')}; "
+                    f"current version is v{APP_VERSION}"
+                )
+            resume_matches = bool(
+                state
+                and state.get("input") == str(input_dir)
+                and state.get("output") == str(output_dir)
+                and state.get("format") == args.format
+                and state.get("quality") == args.quality
+            )
+            if resume_matches:
+                done_set = set(state.get("done", []))
+                pre = len(scan.files)
+                scan.files = [f for f in scan.files if str(f) not in done_set]
+                scan.total_size = sum(_size_or_zero(f) for f in scan.files)
+                print(f"[resume] {pre - len(scan.files)} files already done in previous run; "
+                      f"continuing with {len(scan.files)}")
+            else:
+                print(
+                    "[resume] no compatible previous queue or journal found (input, output, "
+                    "format, quality, or other settings differ); ignoring --resume"
+                )
 
     if not scan.files:
-        print("No supported files found.")
+        if resume_journal and _journal_resume_matches(
+            resume_journal, input_dir, output_dir, recipe_hash,
+        ):
+            print("Nothing left to resume; all matching journal entries are complete.")
+        else:
+            print("No supported files found.")
         sys.exit(EXIT_OK)
 
     if getattr(args, "dedup_warn", False) or getattr(args, "dedup_skip", False):
@@ -13475,10 +14030,29 @@ def _run_cli(args):
     except (OSError, ValueError):
         pass
 
-    # Convert
+    # Convert. The journal is created before any worker starts so every source
+    # has a durable queued record, including files that a later cache lookup
+    # can skip without invoking the decoder.
     cli_opts = _build_convert_options(args, resize_mode=resize_mode,
                                       resize_value=resize_value,
                                       input_dir=input_dir)
+    if resume_journal and _journal_resume_matches(
+        resume_journal, input_dir, output_dir, recipe_hash,
+    ):
+        batch_journal = resume_journal
+    else:
+        batch_journal = _start_batch_journal(
+            input_dir, output_dir, args, recipe_hash, scan.files,
+        )
+    batch_id = batch_journal.get("batch_id")
+    setattr(args, "_journal_batch_id", batch_id)
+    setattr(args, "_journal_preset_hash", recipe_hash)
+    cli_opts = replace(
+        cli_opts,
+        journal_path=BATCH_JOURNAL_PATH,
+        journal_batch_id=batch_id,
+        journal_output_root=output_dir,
+    )
     ok_count = 0
     fail_count = 0
     skip_count = 0
@@ -13548,14 +14122,19 @@ def _run_cli(args):
     elif _gil_status() == "no-gil":
         print(f"[pool] free-threaded interpreter detected; thread-pool will scale linearly")
 
+    worker_opts = cli_opts
+    if getattr(args, "use_processes", False):
+        # Child processes return their result to the parent; keeping the
+        # journal handle out of the pickle avoids competing writers.
+        worker_opts = replace(
+            cli_opts,
+            journal_path=None,
+            journal_batch_id=None,
+            journal_output_root=None,
+        )
+
     cache_conn = _open_hash_cache() if getattr(args, "use_cache", False) else None
-    cache_options = dict(vars(args))
-    cache_options.update({
-        "resolved_output": str(output_dir),
-        "resize_mode": resize_mode,
-        "resize_value": resize_value,
-    })
-    cache_preset_key = _preset_hash(cache_options) if cache_conn else None
+    cache_preset_key = recipe_hash if cache_conn else None
     cache_skipped: list[Path] = []
     if cache_conn:
         pruned = []
@@ -13579,6 +14158,14 @@ def _run_cli(args):
             print()
         if cache_skipped:
             print(f"[cache] skipping {len(cache_skipped)} files seen with this preset")
+            for cached_file in cache_skipped:
+                cached_result = ConvertResult(
+                    src=cached_file,
+                    skipped=True,
+                    size_before=_size_or_zero(cached_file),
+                )
+                cached_result.warnings.append("cache: source already converted with this preset")
+                _journal_record_result(cli_opts, cached_result)
         scan.files = pruned
         total = len(scan.files)
     done_paths: set[str] = set()
@@ -13604,9 +14191,10 @@ def _run_cli(args):
                     "file": str(f),
                     "total": total,
                 }, enabled=_progress_on)
+                _journal_transition(cli_opts, f, "converting")
                 fut = pool.submit(
                     convert_file, f, output_dir, seq=seq_i,
-                    opts=cli_opts,
+                    opts=worker_opts,
                 )
                 futures[fut] = f
 
@@ -13626,6 +14214,7 @@ def _run_cli(args):
                     result = ConvertResult(src=f, size_before=0)
                     result.error = str(exc)
                 del futures[fut]
+                _journal_record_result(cli_opts, result)
                 all_results.append(result)
                 done_count += 1
                 if result.skipped:
@@ -13766,6 +14355,12 @@ def _run_cli(args):
             done=done_paths,
             failed=failed_paths,
         )
+
+    journal_status = (
+        "interrupted" if interrupted
+        else ("completed_with_errors" if fail_count else "completed")
+    )
+    _set_batch_journal_status(cli_opts, journal_status)
 
     wall_time = time.perf_counter() - t0
     speed = ok_count / wall_time if wall_time > 0 else 0

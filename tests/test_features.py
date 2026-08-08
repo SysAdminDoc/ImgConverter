@@ -2968,6 +2968,162 @@ class TestWatchProfilePersistence:
 
 class TestQueuePersistence:
 
+    def test_batch_journal_records_atomic_state_without_raw_paths(self, tmp_workdir, monkeypatch):
+        import imgconverter
+
+        input_dir = tmp_workdir / "input"
+        output_dir = tmp_workdir / "output"
+        input_dir.mkdir()
+        source = input_dir / "source.bin"
+        source.write_bytes(b"source-payload")
+        output_dir.mkdir()
+        output = output_dir / "source.png"
+        journal_path = tmp_workdir / "batch-journal.json"
+        monkeypatch.setattr(imgconverter, "BATCH_JOURNAL_PATH", journal_path)
+
+        args = types.SimpleNamespace(in_place=False)
+        journal = imgconverter._start_batch_journal(
+            input_dir, output_dir, args, "recipe-1", [source],
+        )
+        opts = ConvertOptions(
+            fmt="png",
+            journal_path=journal_path,
+            journal_batch_id=journal["batch_id"],
+            journal_output_root=output_dir,
+        )
+        result = ConvertResult(src=source, size_before=source.stat().st_size)
+        imgconverter._journal_transition(opts, source, "converting", result=result)
+        imgconverter._journal_transition(opts, source, "prepared", output=output, result=result)
+        output.write_bytes(b"encoded-output")
+        result.dst = output
+        result.success = True
+        result.size_after = output.stat().st_size
+        imgconverter._journal_transition(
+            opts, source, "validated", output=output, result=result,
+        )
+        imgconverter._journal_transition(
+            opts, source, "committed", output=output, result=result,
+        )
+
+        payload = journal_path.read_text(encoding="utf-8")
+        loaded = imgconverter._load_batch_journal(journal_path)
+        entry = loaded["files"][imgconverter._journal_path_key(source)]
+        assert str(input_dir) not in payload
+        assert str(output_dir) not in payload
+        assert entry["state"] == "committed"
+        assert entry["output_ref"] == "source.png"
+        assert entry["output_size"] == len(b"encoded-output")
+        assert entry["output_sha256"]
+
+    def test_batch_journal_resume_validates_artifact_and_retries_ambiguous_state(
+        self, tmp_workdir, monkeypatch
+    ):
+        import imgconverter
+
+        input_dir = tmp_workdir / "input"
+        output_dir = tmp_workdir / "output"
+        input_dir.mkdir()
+        output_dir.mkdir()
+        source = input_dir / "source.bin"
+        source.write_bytes(b"source-payload")
+        output = output_dir / "source.png"
+        journal_path = tmp_workdir / "batch-journal.json"
+        monkeypatch.setattr(imgconverter, "BATCH_JOURNAL_PATH", journal_path)
+        args = types.SimpleNamespace(in_place=False)
+        journal = imgconverter._start_batch_journal(
+            input_dir, output_dir, args, "recipe-1", [source],
+        )
+        opts = ConvertOptions(
+            fmt="png",
+            journal_path=journal_path,
+            journal_batch_id=journal["batch_id"],
+            journal_output_root=output_dir,
+        )
+        output.write_bytes(b"encoded-output")
+        result = ConvertResult(
+            src=source, dst=output, success=True,
+            size_before=source.stat().st_size, size_after=output.stat().st_size,
+        )
+        imgconverter._journal_transition(
+            opts, source, "committed", output=output, result=result,
+        )
+        loaded = imgconverter._load_batch_journal(journal_path)
+        pending, ambiguous = imgconverter._journal_resume_filter(
+            loaded, [source], output_dir,
+        )
+        assert pending == []
+        assert ambiguous == []
+
+        output.write_bytes(b"tampered-output")
+        pending, ambiguous = imgconverter._journal_resume_filter(
+            loaded, [source], output_dir,
+        )
+        assert pending == [source]
+        assert ambiguous == []
+
+        imgconverter._journal_transition(opts, source, "prepared", output=output)
+        loaded = imgconverter._load_batch_journal(journal_path)
+        pending, ambiguous = imgconverter._journal_resume_filter(
+            loaded, [source], output_dir,
+        )
+        assert pending == [source]
+        assert ambiguous == [source]
+
+    def test_batch_journal_rejects_corrupted_skipped_output_reference(
+        self, tmp_workdir
+    ):
+        import imgconverter
+
+        source = tmp_workdir / "source.bin"
+        source.write_bytes(b"source-payload")
+        entry = {
+            "state": "skipped",
+            "source": imgconverter._journal_source_identity(source, include_hash=True),
+            "output_ref": "../outside.bin",
+        }
+        assert not imgconverter._journal_entry_is_terminal_and_valid(
+            entry, source, tmp_workdir,
+        )
+
+    def test_batch_journal_accepts_committed_in_place_source_deletion(
+        self, tmp_workdir, monkeypatch
+    ):
+        import imgconverter
+
+        source = tmp_workdir / "source.bin"
+        source.write_bytes(b"source-payload")
+        output = tmp_workdir / "source.png"
+        output.write_bytes(b"encoded-output")
+        journal_path = tmp_workdir / "batch-journal.json"
+        monkeypatch.setattr(imgconverter, "BATCH_JOURNAL_PATH", journal_path)
+        args = types.SimpleNamespace(in_place=True)
+        journal = imgconverter._start_batch_journal(
+            tmp_workdir, tmp_workdir, args, "recipe-1", [source],
+        )
+        opts = ConvertOptions(
+            fmt="png",
+            in_place=True,
+            journal_path=journal_path,
+            journal_batch_id=journal["batch_id"],
+            journal_output_root=tmp_workdir,
+        )
+        imgconverter._journal_transition(opts, source, "prepared", output=output)
+        source.unlink()
+        result = ConvertResult(
+            src=source, dst=output, success=True, src_deleted=True,
+            size_before=14, size_after=output.stat().st_size,
+        )
+        imgconverter._journal_transition(
+            opts, source, "source_deleted", output=output,
+            result=result, source_delete="deleted",
+        )
+        loaded = imgconverter._load_batch_journal(journal_path)
+        pending, ambiguous = imgconverter._journal_resume_filter(
+            loaded, [source], tmp_workdir,
+        )
+        assert pending == []
+        assert ambiguous == []
+
     def test_save_and_load_roundtrip(self, tmp_workdir, monkeypatch):
         monkeypatch.setattr("imgconverter.USER_CACHE_DIR", tmp_workdir)
         monkeypatch.setattr("imgconverter.QUEUE_STATE_PATH", tmp_workdir / "queue.json")

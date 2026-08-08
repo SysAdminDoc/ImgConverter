@@ -67,6 +67,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **JPEG XL output** — next-gen JPEG replacement via pillow-jxl-plugin (quality + effort tuning). Browser support: Safari 17+ (default), Chrome 145+ (flag, expected default H2 2026), Firefox 152+ (Labs)
 - **CSV export** — structured conversion report with per-file status, sizes, timing, and warnings
 - **Persistent batch history** — completed GUI and CLI batches append a redacted local summary with counts, byte deltas, options, and report/support-bundle pointers
+- **Crash-recoverable batch journal** — CLI batches atomically persist per-file conversion states and hashed source/output evidence, so `--resume` retries incomplete work and validates committed artifacts without storing absolute source paths
 - **CLI mode** — headless conversion via `--input` flag with full feature parity (all GUI options exposed as flags)
 - **Plugin trust manager** — GUI inventory for trusted, changed, missing, and untrusted file or package entry-point plugins without executing them
 - **In-place conversion** — convert next to the original and delete the source file
@@ -286,7 +287,7 @@ python imgconverter.py --history
 | `--unregister-shell` | Remove shell integration |
 | `--use-cache` | Skip source/preset pairs that already converted successfully |
 | `--clear-cache` | Delete the conversion hash cache and exit |
-| `--resume` | Resume an interrupted CLI batch from the saved queue |
+| `--resume` | Resume an interrupted CLI batch from the per-file journal; validates committed output hashes and falls back to the legacy queue when no matching journal exists |
 | `--watch` | Watch the input directory and convert new files as they arrive; uses watchdog events when installed, otherwise polling |
 | `--watch-interval SEC` | Polling/debounce interval for `--watch` mode |
 | `--cpu-priority {normal,low}` | Process priority: `low` keeps the system responsive during large batches |
