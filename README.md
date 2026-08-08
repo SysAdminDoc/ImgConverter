@@ -132,6 +132,8 @@ Dependencies are explicit and are not installed silently at startup. Run `python
 
 GitHub release binaries are unsigned until platform signing infrastructure is available. Each release includes `SHA256SUMS`, per-binary `.sha256`, `.dependencies.txt`, `.sbom.json`, and `.provenance.json` files so downloads can be verified before use.
 
+Before publishing a local release candidate, run `python packaging/release_gate.py`. The gate uses a temporary virtual environment with the runtime, all optional, and development floors, runs the full suite, builds the unsigned PyInstaller artifact, smoke-tests `--version`, `--format-matrix`, `--backend-info`, and a representative conversion, then writes `dist/release-gate/release-manifest.json`, `SHA256SUMS`, dependency/SBOM/provenance evidence, and step logs. Its temporary environment and build directories are removed automatically.
+
 ## Usage
 
 1. In **Source**, choose or drag in a folder (or individual images) and confirm the output folder
