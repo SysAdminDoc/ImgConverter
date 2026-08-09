@@ -4,6 +4,8 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [Unreleased]
 
+## [v3.8.0] — 2026-08-08
+
 ### Added
 
 - Added a shared decode resource policy across Pillow, HEIF, RAW, animated, vips, plugin, thumbnail, and watermark decode paths, with CLI/GUI controls for pixel, decoded-byte, frame, and optional time budgets.
