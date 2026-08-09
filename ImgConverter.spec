@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all, Tree
+from PyInstaller.utils.hooks import collect_all
+from PyInstaller.building.datastruct import Tree
 import importlib
 from pathlib import Path
 
