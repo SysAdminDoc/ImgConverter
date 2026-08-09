@@ -816,6 +816,48 @@ class TestPyInstallerGuards:
         assert "packaged executable" in capsys.readouterr().err
 
 
+class TestBrandingAssets:
+
+    def test_icon_master_is_transparent_and_windows_icon_is_multiresolution(self):
+        root = Path(__file__).resolve().parents[1]
+        with Image.open(root / "icon.png") as master:
+            assert master.size == (1024, 1024)
+            assert master.mode == "RGBA"
+            alpha = master.getchannel("A")
+            assert alpha.getpixel((0, 0)) == 0
+            assert alpha.getpixel((1023, 1023)) == 0
+            left, top, right, bottom = alpha.getbbox()
+            margins = (left, top, master.width - right, master.height - bottom)
+            assert all(80 <= margin <= 150 for margin in margins)
+            opaque_colors = {
+                pixel[:3] for pixel in master.get_flattened_data() if pixel[3] == 255
+            }
+            assert (108, 124, 255) in opaque_colors
+            assert (8, 16, 30) in opaque_colors
+
+        with Image.open(root / "icon.ico") as windows_icon:
+            sizes = windows_icon.ico.sizes()
+            assert {(16, 16), (32, 32), (48, 48), (256, 256)} <= sizes
+
+    def test_runtime_icon_loads_packaged_brand_asset(self, qapp):
+        import imgconverter
+
+        icon = imgconverter._create_app_icon()
+
+        assert not icon.isNull()
+        assert not icon.pixmap(32, 32).isNull()
+
+    def test_runtime_icon_has_matching_vector_fallback(self, qapp, monkeypatch, tmp_path):
+        import imgconverter
+
+        monkeypatch.setattr(imgconverter, "_branding_icon_path", lambda: tmp_path / "missing.png")
+
+        icon = imgconverter._create_app_icon(64)
+
+        assert not icon.isNull()
+        assert not icon.pixmap(16, 16).isNull()
+
+
 class TestSelectedFileCLI:
     """Verify shell-integration style selected files are valid CLI inputs."""
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.9.0 - Universal image batch converter
+ImgConverter v3.9.1 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -33,7 +33,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.9.0"
+APP_VERSION = "3.9.1"
 REPORT_SCHEMA_VERSION = 1
 SUPPORT_BUNDLE_SCHEMA = 1
 PERFORMANCE_EVIDENCE_SCHEMA = 1
@@ -1630,7 +1630,7 @@ try:
         QTranslator,
     )
     from PyQt6.QtGui import (
-        QFont, QColor, QPalette, QIcon, QPixmap, QPainter, QPen, QAction,
+        QFont, QColor, QPalette, QIcon, QPixmap, QPainter, QPainterPath, QPen, QAction,
         QDragEnterEvent, QDropEvent, QShortcut, QKeySequence,
     )
     from PyQt6.QtWidgets import (
@@ -1661,7 +1661,7 @@ except ImportError:
     QThread = QMainWindow = QWidget = _Stub
     pyqtSignal = _signal_stub
     Qt = QSettings = QSize = QUrl = QLocale = QTranslator = _Stub
-    QFont = QColor = QPalette = QIcon = QPixmap = QPainter = QPen = QAction = _Stub
+    QFont = QColor = QPalette = QIcon = QPixmap = QPainter = QPainterPath = QPen = QAction = _Stub
     QDragEnterEvent = QDropEvent = QShortcut = QKeySequence = _Stub
     QApplication = QVBoxLayout = QHBoxLayout = QStackedWidget = _Stub
     QLabel = QPushButton = QFileDialog = QComboBox = QSpinBox = QDoubleSpinBox = QSlider = _Stub
@@ -5990,7 +5990,11 @@ def _open_path(path: str):
 
 
 def _create_app_icon(pixel_size: int = 64) -> QIcon:
-    """Create the ImgConverter stacked-image mark at any packaging size."""
+    """Load the packaged ImgConverter mark, with a vector fallback."""
+    asset_icon = QIcon(str(_branding_icon_path()))
+    if not asset_icon.isNull():
+        return asset_icon
+
     pixel_size = max(16, int(pixel_size))
     scale = pixel_size / 64.0
     q = lambda value: int(round(value * scale))
@@ -5999,23 +6003,33 @@ def _create_app_icon(pixel_size: int = 64) -> QIcon:
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setBrush(QColor(CAT["blue"]))
-    outer_pen = QPen(QColor(CAT["lavender"]))
-    outer_pen.setWidthF(max(1.0, 1.5 * scale))
-    p.setPen(outer_pen)
+    p.setPen(Qt.PenStyle.NoPen)
     p.drawRoundedRect(q(2), q(2), q(60), q(60), q(14), q(14))
 
-    mark_pen = QPen(QColor(CAT["crust"]))
-    mark_pen.setWidthF(max(1.8, 3.2 * scale))
-    mark_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    mark_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    p.setPen(mark_pen)
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    p.drawRoundedRect(q(17), q(14), q(32), q(29), q(5), q(5))
-    p.drawRoundedRect(q(12), q(20), q(34), q(30), q(5), q(5))
-    p.drawEllipse(q(35), q(25), q(5), q(5))
-    p.drawLine(q(16), q(43), q(25), q(33))
-    p.drawLine(q(25), q(33), q(31), q(39))
-    p.drawLine(q(31), q(39), q(39), q(31))
+    mark = QPainterPath()
+    mark.moveTo(q(16), q(43))
+    mark.lineTo(q(16), q(22))
+    mark.quadTo(q(16), q(18), q(20), q(18))
+    mark.lineTo(q(39), q(18))
+    mark.quadTo(q(43), q(18), q(43), q(22))
+    mark.lineTo(q(43), q(29))
+    mark.lineTo(q(37), q(29))
+    mark.lineTo(q(37), q(24))
+    mark.lineTo(q(22), q(24))
+    mark.lineTo(q(22), q(37))
+    mark.lineTo(q(28), q(31))
+    mark.lineTo(q(34), q(38))
+    mark.lineTo(q(38), q(34))
+    mark.lineTo(q(43), q(39))
+    mark.lineTo(q(43), q(31))
+    mark.lineTo(q(54), q(40))
+    mark.lineTo(q(43), q(50))
+    mark.lineTo(q(43), q(46))
+    mark.lineTo(q(20), q(46))
+    mark.quadTo(q(16), q(46), q(16), q(43))
+    mark.closeSubpath()
+    p.setBrush(QColor(CAT["crust"]))
+    p.drawPath(mark)
     p.end()
     return QIcon(pm)
 

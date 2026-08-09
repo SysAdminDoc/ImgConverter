@@ -4,6 +4,13 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [Unreleased]
 
+## [v3.9.1] — 2026-08-08
+
+### Changed
+
+- Replaced the generic stacked-image mark with an original, professional image-to-arrow identity across the runtime window, navigation rail, taskbar, tray, PNG master, multi-resolution Windows icon, README screenshot, and packaged executable.
+- Added a deterministic icon build tool and regression coverage for transparent padding, exact brand colors, runtime asset loading, and required Windows icon sizes.
+
 ## [v3.9.0] — 2026-08-08
 
 ### Added

@@ -2,7 +2,7 @@
 
 Universal image batch converter with a modern, local-first GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
 
-![Version](https://img.shields.io/badge/Version-3.9.0-blue)
+![Version](https://img.shields.io/badge/Version-3.9.1-blue)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
@@ -86,7 +86,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **Premium workflow workspace** — a clear Source → Output recipe → Activity and Batch summary layout keeps the next action visible and the activity log supporting, not dominant
 - **Responsive composition** — two-pane layout on wide screens, stacked source/summary flow on compact windows, and reachable expert controls from 760×560 through 4K+
 - **Contextual batch summary** — purposeful empty, scanning, ready, converting, stopped, partial-failure, failed, and complete states with dynamic “Convert N images” copy
-- **Unified line-icon system** — consistent theme-aware actions and an ImgConverter-specific app/package mark replace platform-dependent glyphs and legacy branding
+- **Professional product identity** — a distinctive image-to-arrow app mark stays legible from the 16px taskbar glyph through the packaged executable, alongside consistent theme-aware action icons
 - **Focused management surfaces** — history, watch automation, plugin trust, tools, duplicate review, commands, and file-manager integration share clear hierarchy, status feedback, and actionable empty states
 - **True collapsed advanced controls** — input-family filters and advanced output controls stay out of the primary Source → Recipe path until expanded
 - **Smart option visibility** — format-specific controls auto-show/hide based on output format
