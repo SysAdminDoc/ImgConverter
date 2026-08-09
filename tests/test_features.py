@@ -2723,9 +2723,12 @@ class TestWatchProfilePersistence:
         ])
 
         saved = json.loads(path.read_text(encoding="utf-8"))
-        assert len(saved) == 1
-        assert saved[0]["enabled"] is True
-        assert sorted(saved[0]) == ["enabled", "last_error", "last_run", "output", "preset", "source"]
+        assert saved["schema_version"] == 1
+        assert len(saved["profiles"]) == 1
+        assert saved["profiles"][0]["enabled"] is True
+        assert sorted(saved["profiles"][0]) == [
+            "enabled", "last_error", "last_run", "output", "preset", "source",
+        ]
 
     def test_watch_folder_dialog_is_explicitly_on_demand(self, tmp_workdir, monkeypatch):
         import imgconverter
@@ -4204,7 +4207,8 @@ class TestWatchModeIntegration:
             assert worker.stop_called
             assert dialog._profiles[0]["last_error"] == "cancelled"
             saved = json.loads(path.read_text(encoding="utf-8"))
-            assert saved[0]["last_error"] == "cancelled"
+            assert saved["schema_version"] == imgconverter.WATCH_PROFILES_SCHEMA
+            assert saved["profiles"][0]["last_error"] == "cancelled"
         finally:
             dialog.close()
             dialog.deleteLater()

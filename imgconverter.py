@@ -744,27 +744,37 @@ def _plugin_trust_path() -> Path:
 
 def _load_plugin_trust() -> dict[str, dict]:
     path = _plugin_trust_path()
-    if not path.is_file():
+    data, status, _schema = _read_persisted_json(
+        path,
+        "plugin trust",
+        PLUGIN_TRUST_SCHEMA,
+        schema_keys=("schema_version", "schema"),
+    )
+    if status in {"missing", "unsupported", "corrupt"}:
         return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"[plugins] ignoring unreadable trust manifest: {e}", file=sys.stderr)
+    if not isinstance(data, dict):
         return {}
     records = data.get("plugins", {}) if isinstance(data, dict) else {}
     if not isinstance(records, dict):
+        _quarantine_persisted_state(path, "plugin trust")
         return {}
-    return {
+    cleaned = {
         str(name): record
         for name, record in records.items()
         if isinstance(record, dict)
     }
+    if status == "legacy":
+        try:
+            _write_plugin_trust(cleaned)
+        except OSError:
+            _diag_log("plugin trust migration write failed", level="WARNING")
+    return cleaned
 
 
 def _write_plugin_trust(records: dict[str, dict]) -> None:
     path = _plugin_trust_path()
     payload = {
-        "schema": PLUGIN_TRUST_SCHEMA,
+        "schema_version": PLUGIN_TRUST_SCHEMA,
         "plugins": dict(sorted(records.items())),
     }
     _write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -5635,6 +5645,9 @@ BATCH_HISTORY_LIMIT = 200
 # migration in _maybe_migrate_settings() runs once on startup.
 SETTINGS_SCHEMA = 4
 PRESET_SCHEMA_VERSION = 2
+WATCH_PROFILES_SCHEMA = 1
+QUEUE_SCHEMA = 1
+HASH_CACHE_SCHEMA = 1
 
 FORMAT_CHOICES = ("auto", "jpeg", "png", "webp", "avif", "tiff", "jxl")
 TIFF_COMPRESSION_CHOICES = ("none", "lzw", "deflate")
@@ -6027,6 +6040,93 @@ def _redact_history_path(value: str | Path | None) -> str | None:
         return _redact_text(str(value))
 
 
+def _next_state_quarantine_path(path: Path) -> Path:
+    """Return a collision-safe recovery name beside an app-owned state file."""
+    path = Path(path)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    candidate = path.with_name(f"{path.name}.corrupt-{stamp}")
+    suffix = 1
+    while candidate.exists():
+        candidate = path.with_name(f"{path.name}.corrupt-{stamp}-{suffix}")
+        suffix += 1
+    return candidate
+
+
+def _quarantine_persisted_state(path: Path, kind: str) -> Path | None:
+    """Move corrupt app-owned state aside without putting its path in logs."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    candidate = _next_state_quarantine_path(path)
+    try:
+        os.replace(path, candidate)
+    except OSError:
+        _diag_log(f"{kind} state quarantine failed", level="WARNING")
+        return None
+    _diag_log(f"{kind} state quarantined", level="WARNING")
+    return candidate
+
+
+def _read_persisted_json(
+    path: Path,
+    kind: str,
+    current_schema: int,
+    *,
+    schema_keys: tuple[str, ...] = ("schema_version",),
+    allow_legacy_list: bool = False,
+) -> tuple[object | None, str, int | None]:
+    """Read a versioned JSON state document with safe upgrade outcomes.
+
+    The status is one of ``missing``, ``legacy``, ``current``, ``unsupported``,
+    or ``corrupt``.  Unsupported documents remain at their original path;
+    corrupt documents are moved to a timestamped quarantine file.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return None, "missing", None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        _quarantine_persisted_state(path, kind)
+        return None, "corrupt", None
+
+    schema_key = None
+    if isinstance(data, dict):
+        present = [key for key in schema_keys if key in data]
+        if len(present) > 1 and any(data[key] != data[present[0]] for key in present[1:]):
+            _quarantine_persisted_state(path, kind)
+            return None, "corrupt", None
+        schema_key = present[0] if present else None
+        raw_schema = data[schema_key] if schema_key else 0
+    elif isinstance(data, list) and allow_legacy_list:
+        raw_schema = 0
+    else:
+        _quarantine_persisted_state(path, kind)
+        return None, "corrupt", None
+
+    if isinstance(raw_schema, bool):
+        _quarantine_persisted_state(path, kind)
+        return None, "corrupt", None
+    try:
+        schema = int(raw_schema)
+    except (TypeError, ValueError, OverflowError):
+        _quarantine_persisted_state(path, kind)
+        return None, "corrupt", None
+    if schema < 0:
+        _quarantine_persisted_state(path, kind)
+        return None, "corrupt", None
+    if schema > current_schema:
+        _diag_log(
+            f"{kind} schema v{schema} is newer than supported v{current_schema}; preserved",
+            level="WARNING",
+        )
+        return None, "unsupported", schema
+
+    canonical_key = schema_keys[0] if schema_keys else None
+    status = "current" if schema == current_schema and schema_key == canonical_key else "legacy"
+    return data, status, schema
+
+
 @contextmanager
 def _batch_history_lock():
     """Serialize batch-history read-modify-write operations across processes."""
@@ -6054,33 +6154,33 @@ def _batch_history_lock():
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
-def _read_batch_history_unlocked() -> tuple[list[dict], bool]:
-    """Read history and report whether the on-disk document should be quarantined."""
-    try:
-        if not BATCH_HISTORY_PATH.is_file():
-            return [], False
-        data = json.loads(BATCH_HISTORY_PATH.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            records = data.get("records", [])
-        elif isinstance(data, list):
-            records = data
-        else:
-            _diag_log("batch history has an invalid top-level shape", level="WARNING")
-            return [], True
-        if not isinstance(records, list):
-            _diag_log("batch history records have an invalid shape", level="WARNING")
-            return [], True
-        return [r for r in records if isinstance(r, dict)], False
-    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
-        _diag_log(f"batch history load failed: {e}", level="WARNING")
-        return [], True
-    except OSError as e:
-        _diag_log(f"batch history load failed: {e}", level="WARNING")
-        return [], False
+def _read_batch_history_unlocked() -> tuple[list[dict], str]:
+    """Read history and return its migration status."""
+    data, status, _schema = _read_persisted_json(
+        BATCH_HISTORY_PATH,
+        "batch history",
+        BATCH_HISTORY_SCHEMA,
+        allow_legacy_list=True,
+    )
+    if status in {"missing", "unsupported", "corrupt"}:
+        return [], status
+    if isinstance(data, dict):
+        records = data.get("records", [])
+    else:
+        records = data
+    if not isinstance(records, list):
+        _quarantine_persisted_state(BATCH_HISTORY_PATH, "batch history")
+        return [], "corrupt"
+    return [r for r in records if isinstance(r, dict)], status
 
 
 def _load_batch_history() -> list[dict]:
-    records, _corrupt = _read_batch_history_unlocked()
+    records, status = _read_batch_history_unlocked()
+    if status == "legacy":
+        try:
+            _write_batch_history(records)
+        except OSError:
+            _diag_log("batch history migration write failed", level="WARNING")
     return records
 
 
@@ -6097,18 +6197,6 @@ def _write_batch_history(records: list[dict]) -> None:
     )
 
 
-def _next_corrupt_history_path() -> Path:
-    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-    candidate = BATCH_HISTORY_PATH.with_name(f"{BATCH_HISTORY_PATH.name}.corrupt-{stamp}")
-    suffix = 1
-    while candidate.exists():
-        candidate = BATCH_HISTORY_PATH.with_name(
-            f"{BATCH_HISTORY_PATH.name}.corrupt-{stamp}-{suffix}"
-        )
-        suffix += 1
-    return candidate
-
-
 def _batch_history_payload() -> dict[str, object]:
     return {
         "schema_version": BATCH_HISTORY_SCHEMA,
@@ -6120,15 +6208,15 @@ def _batch_history_payload() -> dict[str, object]:
 def _append_batch_history(record: dict) -> tuple[bool, str | None]:
     try:
         with _batch_history_lock():
-            records, corrupt = _read_batch_history_unlocked()
-            if corrupt:
-                backup = _next_corrupt_history_path()
-                try:
-                    os.replace(BATCH_HISTORY_PATH, backup)
-                except OSError as e:
-                    _diag_log(f"batch history quarantine failed: {e}", level="WARNING")
-                    return False, str(e)
-                _diag_log(f"quarantined corrupt batch history as {backup.name}", level="WARNING")
+            records, status = _read_batch_history_unlocked()
+            if status == "unsupported":
+                return False, "batch history schema is newer than supported"
+            if status == "corrupt" and BATCH_HISTORY_PATH.is_file():
+                backup = _quarantine_persisted_state(BATCH_HISTORY_PATH, "batch history")
+                if BATCH_HISTORY_PATH.exists():
+                    return False, "could not quarantine corrupt batch history"
+                if backup is None:
+                    return False, "could not quarantine corrupt batch history"
             records.append(record)
             _write_batch_history(records)
         return True, None
@@ -6142,8 +6230,8 @@ def _update_batch_history_artifact(record_id: str | None, artifact: str, path: s
         return False
     try:
         with _batch_history_lock():
-            records, corrupt = _read_batch_history_unlocked()
-            if corrupt:
+            records, status = _read_batch_history_unlocked()
+            if status in {"unsupported", "corrupt"}:
                 _diag_log("batch history artifact update skipped for corrupt history", level="WARNING")
                 return False
             for record in reversed(records):
@@ -6545,11 +6633,10 @@ def _build_support_bundle_payload(settings_snapshot: dict | None = None) -> dict
             "log_path": _redact_text(str(USER_LOG_PATH)),
         },
         "schemas": {
-            "settings": SETTINGS_SCHEMA,
-            "presets": PRESET_SCHEMA_VERSION,
-            "plugin_trust": PLUGIN_TRUST_SCHEMA,
-            "batch_journal": BATCH_JOURNAL_SCHEMA,
+            name: contract["schema_version"]
+            for name, contract in PERSISTED_STATE_SCHEMAS.items()
         },
+        "schema_policies": PERSISTED_STATE_SCHEMAS,
         "dependencies": _dependency_versions(),
         "native_codecs": _native_codec_versions(),
         "optional_tools": _optional_tool_status(),
@@ -6693,12 +6780,29 @@ def list_presets() -> dict[str, dict]:
     merged = {k: dict(v) for k, v in PRESETS.items()}
     if USER_PRESET_DIR.is_dir():
         for path in sorted(USER_PRESET_DIR.glob("*.json")):
-            try:
-                data = json.loads(path.read_text())
-            except (OSError, json.JSONDecodeError):
+            data, status, _schema = _read_persisted_json(
+                path,
+                "preset",
+                PRESET_SCHEMA_VERSION,
+            )
+            if status in {"missing", "unsupported", "corrupt"} or not isinstance(data, dict):
                 continue
             display = data.get("name") or path.stem
-            merged[display] = {k: v for k, v in data.items() if k != "name"}
+            payload = {k: v for k, v in data.items() if k != "name"}
+            if status == "legacy":
+                migrated = normalize_preset(payload)
+                migrated["schema_version"] = PRESET_SCHEMA_VERSION
+                if display:
+                    migrated["name"] = str(display)
+                try:
+                    _write_text_atomic(
+                        path,
+                        json.dumps(migrated, indent=2, sort_keys=True, default=str) + "\n",
+                    )
+                    payload = {k: v for k, v in migrated.items() if k != "name"}
+                except OSError:
+                    _diag_log("preset migration write failed", level="WARNING")
+            merged[str(display)] = payload
     return merged
 
 
@@ -6743,14 +6847,23 @@ def import_preset_bundle(path: Path) -> tuple[bool, str]:
         return False, f"failed to read bundle: {e}"
     if not isinstance(data, dict) or not data.get("imgconverter_preset_bundle"):
         return False, "not a valid ImgConverter preset bundle"
-    sv = data.get("schema_version", 0)
+    raw_schema = data.get("schema_version", 0)
+    if isinstance(raw_schema, bool):
+        return False, "bundle has an invalid schema version"
+    try:
+        sv = int(raw_schema)
+    except (TypeError, ValueError, OverflowError):
+        return False, "bundle has an invalid schema version"
+    if sv < 0:
+        return False, "bundle has an invalid schema version"
     if sv > PRESET_SCHEMA_VERSION:
         return False, f"bundle schema version {sv} is newer than supported ({PRESET_SCHEMA_VERSION})"
     name = data.get("name", Path(path).stem)
     preset = data.get("preset", {})
-    if not preset:
+    if not isinstance(preset, dict) or not preset:
         return False, "bundle contains no preset data"
-    preset["name"] = name
+    preset = normalize_preset(preset)
+    preset["name"] = str(name)
     preset["schema_version"] = PRESET_SCHEMA_VERSION
     slug = name.lower().replace(" ", "-").replace("/", "-")
     target = USER_PRESET_DIR / f"{slug}.json"
@@ -7447,22 +7560,46 @@ def _watch_profile_path_error(source: str, output: str) -> str | None:
 
 
 def _load_watch_profiles() -> list[dict]:
-    try:
-        if WATCH_PROFILES_FILE.is_file():
-            data = json.loads(WATCH_PROFILES_FILE.read_text(encoding="utf-8"))
-            if not isinstance(data, list):
-                raise ValueError("watch profiles root must be a list")
-            return _loadable_watch_profiles(data)
-    except (OSError, json.JSONDecodeError, ValueError) as e:
-        _diag_log(f"watch profile load failed: {e}", level="WARNING")
-    return []
+    data, status, _schema = _read_persisted_json(
+        WATCH_PROFILES_FILE,
+        "watch profiles",
+        WATCH_PROFILES_SCHEMA,
+        allow_legacy_list=True,
+    )
+    if status in {"missing", "unsupported", "corrupt"}:
+        return []
+    profiles = data.get("profiles", []) if isinstance(data, dict) else data
+    if not isinstance(profiles, list):
+        _quarantine_persisted_state(WATCH_PROFILES_FILE, "watch profiles")
+        return []
+    cleaned = _loadable_watch_profiles(profiles)
+    if status == "legacy":
+        try:
+            _write_text_atomic(
+                WATCH_PROFILES_FILE,
+                json.dumps(
+                    {"schema_version": WATCH_PROFILES_SCHEMA, "profiles": cleaned},
+                    indent=2,
+                    sort_keys=True,
+                ) + "\n",
+            )
+        except OSError:
+            _diag_log("watch profile migration write failed", level="WARNING")
+    return cleaned
 
 
 def _save_watch_profiles(profiles: list[dict]):
     try:
         _write_text_atomic(
             WATCH_PROFILES_FILE,
-            json.dumps(_loadable_watch_profiles(profiles), indent=2, sort_keys=True) + "\n",
+            json.dumps(
+                {
+                    "schema_version": WATCH_PROFILES_SCHEMA,
+                    "profiles": _loadable_watch_profiles(profiles),
+                },
+                indent=2,
+                sort_keys=True,
+            ) + "\n",
         )
     except OSError as e:
         _diag_log(f"watch profile save failed: {e}", level="WARNING")
@@ -8455,6 +8592,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(self._icon)
 
         self.settings = _app_settings()
+        self._settings_schema_supported = True
         self._scan_result: ScanResult | None = None
         self._worker: ConvertWorker | None = None
         self._update_worker: _UpdateCheckWorker | None = None
@@ -11631,6 +11769,9 @@ class MainWindow(QMainWindow):
 
     # ── State persistence ──
     def _save_state(self):
+        if not self._settings_schema_supported:
+            return
+        self.settings.setValue("settings_version", SETTINGS_SCHEMA)
         self.settings.setValue("src", self.src_edit.text())
         self.settings.setValue("dst", self.dst_edit.text())
         self.settings.setValue("fmt", self.fmt_combo.currentIndex())
@@ -11708,8 +11849,16 @@ class MainWindow(QMainWindow):
             stored = int(self.settings.value("settings_version", 0))
         except (TypeError, ValueError):
             stored = 0
+        if stored > SETTINGS_SCHEMA:
+            self._settings_schema_supported = False
+            _diag_log(
+                f"QSettings schema v{stored} is newer than supported v{SETTINGS_SCHEMA}; using defaults",
+                level="WARNING",
+            )
+            return False
         if stored == SETTINGS_SCHEMA:
-            return
+            self._settings_schema_supported = True
+            return True
 
         # Migration v0/v1 -> v2: format index 6 used to be disabled in some
         # builds when pillow-jxl wasn't present; coerce out-of-range stored
@@ -11725,7 +11874,9 @@ class MainWindow(QMainWindow):
                 self.settings.setValue("fmt", 0)
 
         self.settings.setValue("settings_version", SETTINGS_SCHEMA)
+        self._settings_schema_supported = True
         _diag_log(f"QSettings migrated from v{stored} to v{SETTINGS_SCHEMA}")
+        return True
 
     @staticmethod
     def _safe_int(v, default=0):
@@ -11737,7 +11888,8 @@ class MainWindow(QMainWindow):
             return default
 
     def _restore_state(self):
-        self._maybe_migrate_settings()
+        if not self._maybe_migrate_settings():
+            return
         if v := self.settings.value("src"):
             self.src_edit.setText(v)
         if v := self.settings.value("dst"):
@@ -12414,18 +12566,63 @@ HASH_CACHE_PATH = USER_CACHE_DIR / "seen.sqlite"
 
 def _open_hash_cache():
     """Open (and lazily create) the conversion cache SQLite db. Returns None on failure."""
+    conn = None
     try:
         import sqlite3
         USER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(HASH_CACHE_PATH), timeout=2.0,
                                 isolation_level=None, check_same_thread=False)
         conn.execute(
+            "CREATE TABLE IF NOT EXISTS imgconverter_meta ("
+            " key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        row = conn.execute(
+            "SELECT value FROM imgconverter_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO imgconverter_meta(key, value) VALUES ('schema_version', ?)",
+                (str(HASH_CACHE_SCHEMA),),
+            )
+        else:
+            try:
+                stored_schema = int(row[0])
+            except (TypeError, ValueError, OverflowError):
+                raise sqlite3.DatabaseError("invalid cache schema metadata")
+            if stored_schema > HASH_CACHE_SCHEMA:
+                conn.close()
+                _diag_log(
+                    f"hash cache schema v{stored_schema} is newer than supported "
+                    f"v{HASH_CACHE_SCHEMA}; preserved",
+                    level="WARNING",
+                )
+                return None
+            if stored_schema < HASH_CACHE_SCHEMA:
+                conn.execute(
+                    "UPDATE imgconverter_meta SET value = ? WHERE key = 'schema_version'",
+                    (str(HASH_CACHE_SCHEMA),),
+                )
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS seen ("
             " src_hash TEXT, preset_hash TEXT, dst_hash TEXT, dst_size INTEGER, "
             " ts INTEGER, PRIMARY KEY (src_hash, preset_hash))"
         )
         return conn
+    except sqlite3.DatabaseError:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _quarantine_persisted_state(HASH_CACHE_PATH, "hash cache")
+        _diag_log("hash cache open failed: corrupt database", level="WARNING")
+        return None
     except Exception as e:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
         _diag_log(f"hash cache open failed: {e}", level="WARNING")
         return None
 
@@ -12452,6 +12649,85 @@ BATCH_JOURNAL_SCHEMA = 1
 BATCH_JOURNAL_PATH = USER_CACHE_DIR / "batch-journal.json"
 _BATCH_JOURNAL_TERMINAL_STATES = frozenset({"committed", "source_deleted", "skipped"})
 _BATCH_JOURNAL_LOCK = threading.RLock()
+
+
+# One machine-readable contract covers every app-owned persisted format.  The
+# policy text is intentionally short because it is also exported in support
+# bundles for upgrade diagnostics.
+PERSISTED_STATE_SCHEMAS = {
+    "settings": {
+        "schema_version": SETTINGS_SCHEMA,
+        "storage": "QSettings",
+        "legacy_versions": [0, 1, 2, 3],
+        "migration": "coerce legacy format indexes and stamp the current version",
+        "newer": "use defaults and preserve the newer QSettings document",
+        "corrupt": "use defaults; QSettings keeps unrelated keys",
+    },
+    "presets": {
+        "schema_version": PRESET_SCHEMA_VERSION,
+        "storage": "JSON",
+        "legacy_versions": [0, 1],
+        "migration": "normalize legacy GUI/CLI fields and write schema_version",
+        "newer": "ignore the file and preserve it for a newer application",
+        "corrupt": "quarantine the file and continue with other presets",
+    },
+    "preset_bundle": {
+        "schema_version": PRESET_SCHEMA_VERSION,
+        "storage": "external JSON",
+        "legacy_versions": [0, 1],
+        "migration": "normalize on import and write a current user preset",
+        "newer": "reject the import without modifying the source bundle",
+        "corrupt": "reject the external input without quarantining it",
+    },
+    "batch_history": {
+        "schema_version": BATCH_HISTORY_SCHEMA,
+        "storage": "JSON",
+        "legacy_versions": [0],
+        "migration": "wrap legacy record lists in a schema-tagged document",
+        "newer": "read as empty and preserve the newer history",
+        "corrupt": "quarantine before accepting a replacement history",
+    },
+    "watch_profiles": {
+        "schema_version": WATCH_PROFILES_SCHEMA,
+        "storage": "JSON",
+        "legacy_versions": [0],
+        "migration": "wrap legacy profile lists in a schema-tagged document",
+        "newer": "ignore the file and preserve it",
+        "corrupt": "quarantine and return no profiles",
+    },
+    "plugin_trust": {
+        "schema_version": PLUGIN_TRUST_SCHEMA,
+        "storage": "JSON",
+        "legacy_versions": [0, 1],
+        "migration": "accept schema and rewrite the canonical schema_version key",
+        "newer": "ignore the manifest and preserve it",
+        "corrupt": "quarantine and require trust decisions again",
+    },
+    "queue": {
+        "schema_version": QUEUE_SCHEMA,
+        "storage": "JSON",
+        "legacy_versions": [0],
+        "migration": "stamp the queue snapshot with schema_version",
+        "newer": "do not resume it and preserve the newer snapshot",
+        "corrupt": "quarantine and require a fresh queue or journal",
+    },
+    "batch_journal": {
+        "schema_version": BATCH_JOURNAL_SCHEMA,
+        "storage": "JSON",
+        "legacy_versions": [0],
+        "migration": "stamp a structurally valid legacy journal",
+        "newer": "do not resume it and preserve the newer journal",
+        "corrupt": "quarantine and require a fresh batch",
+    },
+    "hash_cache": {
+        "schema_version": HASH_CACHE_SCHEMA,
+        "storage": "SQLite",
+        "legacy_versions": [0],
+        "migration": "create metadata for legacy databases and retain seen rows",
+        "newer": "do not open the cache and preserve it",
+        "corrupt": "quarantine and continue without cache acceleration",
+    },
+}
 
 
 def _journal_path_key(path: Path) -> str:
@@ -12512,20 +12788,25 @@ def _journal_ref_path(root: Path | None, reference: str | None) -> Path | None:
 def _load_batch_journal(path: Path | None = None) -> dict | None:
     """Load and minimally validate the durable per-file batch journal."""
     journal_path = Path(path or BATCH_JOURNAL_PATH)
-    if not journal_path.is_file():
+    data, status, _schema = _read_persisted_json(
+        journal_path,
+        "batch journal",
+        BATCH_JOURNAL_SCHEMA,
+    )
+    if status in {"missing", "unsupported", "corrupt"}:
         return None
-    try:
-        journal = json.loads(journal_path.read_text(encoding="utf-8"))
-        if not isinstance(journal, dict):
-            raise ValueError("journal root must be an object")
-        if int(journal.get("schema_version", 0)) != BATCH_JOURNAL_SCHEMA:
-            raise ValueError("unsupported batch journal schema")
-        if not isinstance(journal.get("files", {}), dict):
-            raise ValueError("journal files must be an object")
-        return journal
-    except Exception as exc:
-        _diag_log(f"batch journal load failed: {exc}", level="WARNING")
+    if not isinstance(data, dict) or not isinstance(data.get("files", {}), dict):
+        _quarantine_persisted_state(journal_path, "batch journal")
+        _diag_log("batch journal load failed: invalid files shape", level="WARNING")
         return None
+    journal = dict(data)
+    if status == "legacy":
+        journal["schema_version"] = BATCH_JOURNAL_SCHEMA
+        try:
+            _write_batch_journal(journal, journal_path)
+        except OSError:
+            _diag_log("batch journal migration write failed", level="WARNING")
+    return journal
 
 
 def _write_batch_journal(journal: dict, path: Path | None = None) -> None:
@@ -12856,6 +13137,7 @@ def _save_queue_state(input_dir: Path, output_dir: Path, args, pending: list[Pat
         state = {
             "ts": int(time.time()),
             "version": APP_VERSION,
+            "schema_version": QUEUE_SCHEMA,
             "input": str(input_dir),
             "output": str(output_dir),
             "format": getattr(args, "format", None),
@@ -12873,19 +13155,31 @@ def _save_queue_state(input_dir: Path, output_dir: Path, args, pending: list[Pat
 
 
 def _load_queue_state() -> dict | None:
-    if not QUEUE_STATE_PATH.is_file():
+    data, status, _schema = _read_persisted_json(
+        QUEUE_STATE_PATH,
+        "queue",
+        QUEUE_SCHEMA,
+    )
+    if status in {"missing", "unsupported", "corrupt"} or not isinstance(data, dict):
         return None
-    try:
-        state = json.loads(QUEUE_STATE_PATH.read_text())
-        if not isinstance(state, dict):
-            raise ValueError("queue root must be an object")
-        for key in ("pending", "done", "failed"):
-            if not isinstance(state.get(key, []), list):
-                state[key] = []
-        return state
-    except Exception as e:
-        _diag_log(f"queue load failed: {e}", level="WARNING")
-        return None
+    state = dict(data)
+    changed = False
+    for key in ("pending", "done", "failed"):
+        if not isinstance(state.get(key, []), list):
+            state[key] = []
+            changed = True
+    if status == "legacy":
+        state["schema_version"] = QUEUE_SCHEMA
+        changed = True
+    if changed:
+        try:
+            _write_text_atomic(
+                QUEUE_STATE_PATH,
+                json.dumps(state, indent=2, sort_keys=True, default=str) + "\n",
+            )
+        except OSError:
+            _diag_log("queue migration write failed", level="WARNING")
+    return state
 
 
 def _clear_queue_state():

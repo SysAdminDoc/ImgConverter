@@ -12,6 +12,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Added a crash-recoverable CLI batch journal with atomic per-file states, source/output hashes, incomplete-state retries, in-place source-delete evidence, and privacy-preserving path references for `--resume`.
 - Added deterministic malformed-input, metadata/profile, animated-frame, auxiliary-container, mutation-fuzz, and decode-budget conformance coverage with bounded subprocess execution.
 - Added a Qt runtime localization pipeline with OS/explicit GUI locale selection, persisted restart-safe language preferences, Spanish `.ts`/`.qm` catalogs, accessibility coverage, and reproducible Linguist extraction/compile tooling.
+- Added unified persisted-state schema contracts and migrations for settings, presets, history, watch profiles, plugin trust, queues, journals, and the conversion cache, including safe newer-schema handling and corrupt-state quarantine.
 
 ## [v3.7.0] — 2026-08-03
 
