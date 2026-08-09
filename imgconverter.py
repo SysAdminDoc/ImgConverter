@@ -35,6 +35,14 @@ def _branding_icon_path() -> Path:
 
 APP_VERSION = "3.7.0"
 
+GUI_LOCALE_OPTIONS = (
+    ("system", "System default"),
+    ("en", "English"),
+    ("es", "Español"),
+)
+GUI_LOCALE_NAMES = {code: label for code, label in GUI_LOCALE_OPTIONS}
+GUI_LOCALE_SETTING = "gui_locale"
+
 # Structured exit-code matrix — documented in README + man-page-style.
 # CI / cron / Ansible scripts can branch on these without parsing log output.
 EXIT_OK              = 0   # all files converted
@@ -1309,7 +1317,8 @@ def _run_exiftool_copy(src: Path, dst: Path,
 
 try:
     from PyQt6.QtCore import (
-        Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QUrl,
+        Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QUrl, QLocale,
+        QTranslator,
     )
     from PyQt6.QtGui import (
         QFont, QColor, QPalette, QIcon, QPixmap, QPainter, QPen, QAction,
@@ -1342,7 +1351,7 @@ except ImportError:
 
     QThread = QMainWindow = QWidget = _Stub
     pyqtSignal = _signal_stub
-    Qt = QSettings = QSize = QUrl = _Stub
+    Qt = QSettings = QSize = QUrl = QLocale = QTranslator = _Stub
     QFont = QColor = QPalette = QIcon = QPixmap = QPainter = QPen = QAction = _Stub
     QDragEnterEvent = QDropEvent = QShortcut = QKeySequence = _Stub
     QApplication = QVBoxLayout = QHBoxLayout = _Stub
@@ -1353,6 +1362,90 @@ except ImportError:
     QDialog = QTableWidget = QTableWidgetItem = QHeaderView = _Stub
     QAbstractItemView = QInputDialog = _Stub
     QTimer = _Stub
+
+
+def _normalize_gui_locale(value: object) -> str | None:
+    """Return a supported language code, ignoring regional variants."""
+    if value is None:
+        return None
+    raw = str(value).strip().replace("_", "-").lower()
+    if not raw:
+        return None
+    language = raw.split("-", 1)[0]
+    return language if language in GUI_LOCALE_NAMES and language != "system" else None
+
+
+def _gui_locale_preference() -> str:
+    """Read the persisted GUI language preference without trusting its shape."""
+    try:
+        raw = _app_settings().value(GUI_LOCALE_SETTING, "system")
+    except Exception:
+        return "system"
+    normalized = _normalize_gui_locale(raw)
+    if normalized:
+        return normalized
+    return "system"
+
+
+def _system_gui_locale() -> str:
+    try:
+        return _normalize_gui_locale(QLocale.system().name()) or "en"
+    except Exception:
+        return "en"
+
+
+def _resolve_gui_locale(explicit: str | None = None) -> str:
+    """Resolve an explicit override, persisted choice, or OS language."""
+    if explicit is not None:
+        raw = str(explicit).strip().lower()
+        if raw in ("", "system", "auto", "default"):
+            return _system_gui_locale()
+        return _normalize_gui_locale(raw) or "en"
+    preference = _gui_locale_preference()
+    return preference if preference != "system" else _system_gui_locale()
+
+
+def _translation_catalog_path(locale: str) -> Path | None:
+    """Locate a compiled catalog in source, wheel, or PyInstaller layouts."""
+    if locale == "en":
+        return None
+    roots: list[Path] = []
+    if meipass := getattr(sys, "_MEIPASS", None):
+        roots.append(Path(meipass))
+    if getattr(sys, "frozen", False):
+        roots.append(Path(sys.executable).resolve().parent)
+    roots.append(Path(__file__).resolve().parent)
+    roots.extend((Path(sys.prefix), Path(sys.prefix) / "share" / "imgconverter"))
+    seen: set[Path] = set()
+    for root in roots:
+        catalog = root / "translations" / f"imgconverter_{locale}.qm"
+        if catalog in seen:
+            continue
+        seen.add(catalog)
+        if catalog.is_file():
+            return catalog
+    return None
+
+
+def _install_gui_translator(app, explicit: str | None = None) -> tuple[str, Path | None]:
+    """Install the selected Qt catalog before any translatable widget exists."""
+    locale = _resolve_gui_locale(explicit)
+    app.setProperty("imgconverterLocale", locale)
+    catalog = _translation_catalog_path(locale)
+    if locale == "en" or catalog is None:
+        if locale != "en":
+            _diag_log(f"GUI locale {locale!r} has no compiled catalog; using English")
+            app.setProperty("imgconverterLocale", "en")
+            locale = "en"
+        return locale, None
+    translator = QTranslator(app)
+    if not translator.load(str(catalog)) or not app.installTranslator(translator):
+        _diag_log(f"GUI locale catalog failed to load: {catalog}")
+        app.setProperty("imgconverterLocale", "en")
+        return "en", None
+    # Keep an explicit Python reference as well as the Qt parent ownership.
+    app._imgconverter_translator = translator
+    return locale, catalog
 
 # ── Catppuccin Mocha Palette ──────────────────────────────────────────────────
 CAT = {
@@ -8453,6 +8546,26 @@ class MainWindow(QMainWindow):
         if handler:
             handler()
 
+    def _select_gui_locale(self, preference: str):
+        if preference not in GUI_LOCALE_NAMES and preference != "system":
+            return
+        self.settings.setValue(GUI_LOCALE_SETTING, preference)
+        self.settings.sync()
+        for code, action in getattr(self, "_locale_actions", {}).items():
+            action.setChecked(code == preference)
+        label = self._gui_locale_label(preference)
+        self.status_bar.showMessage(
+            self.tr("Language preference saved: {}. Restart ImgConverter to apply.").format(label),
+            8000,
+        )
+
+    def _gui_locale_label(self, code: str) -> str:
+        return {
+            "system": self.tr("System default"),
+            "en": self.tr("English"),
+            "es": self.tr("Español"),
+        }.get(code, self.tr("System default"))
+
     def _apply_accessibility_labels(self):
         """Attach screen-reader-friendly accessible names + status tips.
 
@@ -9552,6 +9665,19 @@ class MainWindow(QMainWindow):
         self._dedup_action.setEnabled(False)
         more_menu.addSeparator()
         more_menu.addAction(self.tr("Command palette"), self._open_command_palette)
+        more_menu.addSeparator()
+        self._locale_menu = more_menu.addMenu(self.tr("Language"))
+        self._locale_actions = {}
+        locale_preference = _gui_locale_preference()
+        for code, label in GUI_LOCALE_OPTIONS:
+            action = self._locale_menu.addAction(self._gui_locale_label(code))
+            action.setCheckable(True)
+            action.setChecked(code == locale_preference)
+            action.setStatusTip(self.tr("Choose the GUI language; restart to apply a change."))
+            action.triggered.connect(
+                lambda _checked=False, selected=code: self._select_gui_locale(selected)
+            )
+            self._locale_actions[code] = action
         self.more_btn.setMenu(more_menu)
         self._header_tools.addWidget(self.more_btn)
 
@@ -11842,6 +11968,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description=f"ImgConverter v{APP_VERSION} - High-performance image batch converter",
     )
     p.add_argument("--version", action="version", version=f"ImgConverter v{APP_VERSION}")
+    p.add_argument("--locale", type=str, default=None, metavar="LOCALE",
+                   help="GUI language override (system, en, or es); restart after changing the saved choice")
     p.add_argument("--install-deps", action="store_true",
                    help="Install/upgrade required + optional Python dependencies, then exit")
     p.add_argument("-i", "--input", type=str, help="Source file or directory to scan")
@@ -12096,6 +12224,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 CLI_FLAG_PARITY = {
     "--version": {"surface": "cli-only", "gui": (), "readme": True, "note": "Version command"},
+    "--locale": {"surface": "internal-only", "gui": (), "readme": True, "note": "GUI language override"},
     "--install-deps": {"surface": "admin-only", "gui": (), "readme": True, "note": "Dependency installer"},
     "--input": {"surface": "gui", "gui": ("src_edit", "src_btn"), "readme": True, "note": "Source picker"},
     "--files": {"surface": "cli-only", "gui": (), "readme": True, "note": "Shell integration and direct file selection"},
@@ -14574,6 +14703,7 @@ def main():
     app = QApplication(sys.argv)
     app.setOrganizationName("ImgConverter")
     app.setApplicationName("ImgConverter")
+    _install_gui_translator(app, getattr(args, "locale", None))
 
     branding_icon = _create_app_icon()
 

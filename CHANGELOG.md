@@ -11,6 +11,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Added `packaging/release_gate.py` for isolated dependency installation, full-suite verification, unsigned PyInstaller builds, packaged CLI smoke tests, and machine-readable hash, dependency, SBOM, and provenance evidence.
 - Added a crash-recoverable CLI batch journal with atomic per-file states, source/output hashes, incomplete-state retries, in-place source-delete evidence, and privacy-preserving path references for `--resume`.
 - Added deterministic malformed-input, metadata/profile, animated-frame, auxiliary-container, mutation-fuzz, and decode-budget conformance coverage with bounded subprocess execution.
+- Added a Qt runtime localization pipeline with OS/explicit GUI locale selection, persisted restart-safe language preferences, Spanish `.ts`/`.qm` catalogs, accessibility coverage, and reproducible Linguist extraction/compile tooling.
 
 ## [v3.7.0] — 2026-08-03
 

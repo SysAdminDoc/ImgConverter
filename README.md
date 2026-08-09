@@ -144,6 +144,18 @@ Before publishing a local release candidate, run `python packaging/release_gate.
 
 Toggle **"Convert in place after verified output"** to save output next to each source file and delete the original after validation succeeds.
 
+### GUI localization
+
+ImgConverter ships an English catalog plus Spanish (`es`). The GUI follows the
+operating-system language when a catalog is available and otherwise falls back
+to English. Choose **More → Language** to save a preference for the next
+launch, or start directly with `python imgconverter.py --locale es`.
+
+Translation sources live in `translations/`. Run
+`python tools/localize.py --extract --compile` after changing translatable
+`self.tr()` strings; the command updates the `.ts` source and compiles the
+`.qm` catalog used by the GUI and packaged builds.
+
 Enable **"Skip files that already have output"** to resume interrupted batches without re-converting.
 
 The collapsible Activity panel shows per-file results with size before/after and conversion time. Activity can be exported to text, CSV, or a redacted diagnostics bundle. Completed batches are also recorded in Batch History without source images or full private paths. CSV and JSON reports include metadata/provenance presence checks for EXIF, ICC, XMP, IPTC, MakerNotes, and C2PA; warnings call out fields that were detected before conversion but missing afterward. Diagnostics bundles include app/platform/dependency/tool details and recent redacted activity, but never include source images.
@@ -308,6 +320,7 @@ python imgconverter.py --history
 | `--dedup-warn` | Log near-duplicate image pairs using perceptual hashing (requires `imagehash`) |
 | `--dedup-skip` | Skip near-duplicates, keeping only the largest in each group (requires `imagehash`) |
 | `--version` | Print version and exit |
+| `--locale LOCALE` | GUI language override: `system`, `en`, or `es`; restart after changing the saved choice |
 
 Parser, GUI, and README parity is guarded by `build_cli_parity_matrix()` and the test suite: every long CLI flag must be classified as GUI-backed, CLI-only, admin-only, or internal-only, and every user-facing flag must remain documented here.
 

@@ -62,6 +62,9 @@ include-package-data = true
 [tool.setuptools.package-data]
 "*" = ["icon.png", "icon.ico"]
 
+[tool.setuptools.data-files]
+"translations" = ["translations/*.qm"]
+
 [tool.pytest.ini_options]
 # pytest-qt eagerly loads PySide6, which collides with PyQt6 DLLs on Windows.
 # Disable the plugin globally; ImgConverter's tests never touch a live Qt event loop.

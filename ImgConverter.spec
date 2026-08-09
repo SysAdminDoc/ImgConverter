@@ -1,9 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, Tree
 import importlib
 from pathlib import Path
 
 datas = [('icon.png', '.'), ('icon.ico', '.')]
+datas.extend(Tree('translations', prefix='translations'))
 binaries = []
 hiddenimports = []
 
