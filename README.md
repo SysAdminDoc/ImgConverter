@@ -66,6 +66,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **AVIF output** — next-gen AV1 codec via Pillow's native encoder, best compression ratio
 - **JPEG XL output** — next-gen JPEG replacement via pillow-jxl-plugin (quality + effort tuning). Browser support: Safari 17+ (default), Chrome 145+ (flag, expected default H2 2026), Firefox 152+ (Labs)
 - **CSV export** — structured conversion report with per-file status, sizes, timing, and warnings
+- **Versioned performance evidence** — JSON reports and support bundles carry a stable evidence schema with format/backend, dimensions, byte counts, elapsed time, warnings, native-codec inventory, and an explicitly optional Python allocation sample
 - **Persistent batch history** — completed GUI and CLI batches append a redacted local summary with counts, byte deltas, options, and report/support-bundle pointers
 - **Crash-recoverable batch journal** — CLI batches atomically persist per-file conversion states and hashed source/output evidence, so `--resume` retries incomplete work and validates committed artifacts without storing absolute source paths
 - **CLI mode** — headless conversion via `--input` flag with full feature parity (all GUI options exposed as flags)
@@ -158,7 +159,7 @@ Translation sources live in `translations/`. Run
 
 Enable **"Skip files that already have output"** to resume interrupted batches without re-converting.
 
-The collapsible Activity panel shows per-file results with size before/after and conversion time. Activity can be exported to text, CSV, or a redacted diagnostics bundle. Completed batches are also recorded in Batch History without source images or full private paths. CSV and JSON reports include metadata/provenance presence checks for EXIF, ICC, XMP, IPTC, MakerNotes, and C2PA; warnings call out fields that were detected before conversion but missing afterward. Diagnostics bundles include app/platform/dependency/tool details and recent redacted activity, but never include source images.
+The collapsible Activity panel shows per-file results with size before/after and conversion time. Activity can be exported to text, CSV, or a redacted diagnostics bundle. Completed batches are also recorded in Batch History without source images or full private paths. CSV and JSON reports include metadata/provenance presence checks for EXIF, ICC, XMP, IPTC, MakerNotes, and C2PA; warnings call out fields that were detected before conversion but missing afterward. Versioned JSON evidence records use redacted paths and can include dimensions, byte counts, backend/format, elapsed time, warnings, and an opt-in Python allocation peak; native codec versions are included without telemetry. Diagnostics bundles include app/platform/dependency/tool details and recent redacted activity, but never include source images.
 
 ## CLI Usage
 
@@ -244,7 +245,7 @@ python imgconverter.py --history
 | `--prefix` | Prepend text to output filenames |
 | `--suffix` | Append text to output filenames |
 | `--template STR` | Output filename template with tokens (overrides prefix/suffix). Tokens: `{stem}` `{ext}` `{fmt}` `{src_dir}` `{rel_dir}` `{width}` `{height}` `{date[:FMT]}` `{seq[:###]}`. Example: `--template '{rel_dir}/{stem}_{width}x{height}'` |
-| `--report PATH` | Write structured per-file JSON report after conversion, including metadata/provenance before/after flags |
+| `--report PATH` | Write a versioned, redacted per-file JSON report after conversion, including metadata/provenance and performance evidence |
 | `--support-bundle PATH` | Write a redacted diagnostic zip, then exit |
 | `--history` | Print redacted local batch-session history as JSON, then exit |
 | `--preset NAME` | Load a built-in or `~/.imgconverter/presets/NAME.json` preset before applying other flags |
@@ -329,6 +330,17 @@ Decode resource limits apply before and during source materialization across Pil
 Trusted plugins may register decoder, encoder, and storage shapes from `PLUGINS.md`. File plugins are pinned by file SHA-256, and package entry-point plugins are pinned by a digest of their installed module and distribution metadata files. Registered decoders are included in scans, registered encoders can be selected with `--format <fmt>` or from the GUI format menu, and registered storage schemes appear in the startup support summary.
 
 `--backend pillow` is the default fidelity path. `--backend vips` is an experimental quality-only fast path for huge images; it requires explicit `--format` and `--strip-metadata`, and rejects Pillow-only transforms such as resize, watermark, canvas, tone-map, ICC override, quality targets, and XMP sidecars. Run `python imgconverter.py --backend-info` for the current capability matrix, or add `--backend-benchmark ./image.jpg` for an opt-in single-image timing report.
+
+**Reports and evidence:**
+
+`--report` writes a JSON document with `schema_version: 1` and a nested
+`performance` record. Per-file `evidence` records carry the output format and
+backend, input/output dimensions when available, byte counts, elapsed seconds,
+warnings, and an explicit memory sample object. The sample is disabled unless a
+report is requested and uses Python `tracemalloc` allocations only; native
+codec memory is reported as unmeasured. Source and output paths are redacted to
+names/placeholders so reports can be shared safely. Support bundles expose the
+same evidence schema and native-codec inventory without uploading telemetry.
 
 **Preset JSON:**
 

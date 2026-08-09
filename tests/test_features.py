@@ -297,6 +297,9 @@ class TestSupportBundle:
         assert support["app"]["version"] == imgconverter.APP_VERSION
         assert support["privacy"]["source_images_included"] is False
         assert support["settings"] == {"format": "webp", "quality": 82}
+        assert support["schema_version"] == imgconverter.SUPPORT_BUNDLE_SCHEMA
+        assert support["evidence_schema_version"] == imgconverter.PERFORMANCE_EVIDENCE_SCHEMA
+        assert support["performance"]["memory"]["sampled"] is False
         assert "dependencies" in support
         assert "native_codecs" in support
         assert isinstance(support["native_codecs"], dict)
@@ -335,11 +338,26 @@ class TestBackendInfo:
 
     def test_backend_info_includes_native_codec_inventory(self):
         report = build_backend_info()
+        assert report["schema_version"] == 1
+        assert report["memory"]["sampled"] is False
         assert "native_codecs" in report
         codecs = report["native_codecs"]
         assert isinstance(codecs, dict)
         assert "libheif" in codecs
         assert "pillow" in codecs
+
+    def test_backend_benchmark_exposes_versioned_evidence(self, rgb_image, tmp_workdir):
+        source = tmp_workdir / "benchmark.bmp"
+        rgb_image.save(source)
+
+        report = build_backend_info(source)
+
+        assert report["benchmark"]["schema_version"] == 1
+        pillow = report["benchmark"]["backends"]["pillow"]
+        assert pillow["evidence"]["format"] == "jpeg"
+        assert pillow["evidence"]["backend"] == "pillow"
+        assert pillow["evidence"]["dimensions"]["input"] == [200, 150]
+        assert pillow["evidence"]["bytes"]["output"] > 0
 
     def test_vips_backend_rejects_unacknowledged_or_unsupported_options(self):
         args = _build_parser().parse_args(["--input", "photos", "--backend", "vips", "--format", "jpeg"])
@@ -835,6 +853,8 @@ class TestSelectedFileCLI:
         assert (out / "second.png").exists()
 
     def test_output_and_report_expanduser(self, rgb_image, tmp_workdir, monkeypatch):
+        import imgconverter
+
         home = tmp_workdir / "fake-home"
         home.mkdir()
         monkeypatch.setenv("USERPROFILE", str(home))
@@ -854,6 +874,12 @@ class TestSelectedFileCLI:
         assert exc.value.code == EXIT_OK
         assert (home / "converted" / "photo.png").exists()
         assert (home / "batch.json").exists()
+        report = json.loads((home / "batch.json").read_text(encoding="utf-8"))
+        assert report["schema_version"] == imgconverter.REPORT_SCHEMA_VERSION
+        assert report["evidence_schema_version"] == imgconverter.PERFORMANCE_EVIDENCE_SCHEMA
+        assert report["performance"]["memory"]["sampled"] is True
+        assert report["files"][0]["evidence"]["dimensions"]["input"] == [200, 150]
+        assert str(source) not in json.dumps(report)
 
     def test_progress_events_cover_static_and_animated_inputs(self, tmp_workdir, capsys):
         import imgconverter

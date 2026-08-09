@@ -237,9 +237,10 @@ def test_bounded_mutation_fuzz_and_decode_memory_boundary(tmp_workdir):
     assert report["summary"]["cancelled"] is False
     assert len(report["files"]) == 12
     assert all(
-        (not record["ok"]) or (record["dst"] and Path(record["dst"]).is_file())
+        (not record["ok"]) or (record["dst"] and record["dst"].endswith(".png"))
         for record in report["files"]
     )
+    assert str(tmp_workdir) not in json.dumps(report)
 
     large = Image.new("RGB", (2048, 2048), (0, 0, 0))
     large_path = source_dir / "decode-budget.png"

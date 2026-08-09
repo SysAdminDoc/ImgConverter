@@ -34,6 +34,9 @@ def _branding_icon_path() -> Path:
 
 
 APP_VERSION = "3.7.0"
+REPORT_SCHEMA_VERSION = 1
+SUPPORT_BUNDLE_SCHEMA = 1
+PERFORMANCE_EVIDENCE_SCHEMA = 1
 
 GUI_LOCALE_OPTIONS = (
     ("system", "System default"),
@@ -584,9 +587,11 @@ def build_backend_info(benchmark_path: Path | None = None) -> dict[str, object]:
         },
     }
     report: dict[str, object] = {
+        "schema_version": PERFORMANCE_EVIDENCE_SCHEMA,
         "version": APP_VERSION,
         "backends": backends,
         "native_codecs": _native_codec_versions(),
+        "memory": _empty_memory_sample(),
         "benchmark": None,
     }
     if benchmark_path is not None:
@@ -638,11 +643,20 @@ def _benchmark_backends(src: Path) -> dict[str, object]:
                 "status": "ok" if result.success else ("skipped" if result.skipped else "failed"),
                 "elapsed_seconds": round(elapsed, 4),
                 "output_bytes": result.size_after,
-                "error": result.error,
-                "warnings": result.warnings,
+                "error": _redact_report_message(result.error, (src, result.dst)),
+                "warnings": [
+                    _redact_report_message(warning, (src, result.dst))
+                    for warning in result.warnings
+                ],
+                "evidence": _result_performance_evidence(
+                    result,
+                    default_format="jpeg",
+                    default_backend=backend,
+                ),
             }
     return {
-        "input": _redact_text(str(src)),
+        "schema_version": PERFORMANCE_EVIDENCE_SCHEMA,
+        "input": _redact_history_path(src),
         "format": "jpeg",
         "quality": 90,
         "backends": results,
@@ -2327,6 +2341,10 @@ class ConvertResult:
     size_before: int = 0
     size_after: int = 0
     elapsed: float = 0.0
+    format: str | None = None
+    backend: str | None = None
+    dimensions_in: tuple[int, int] | None = None
+    dimensions_out: tuple[int, int] | None = None
     src_deleted: bool = False
     warnings: list[str] = field(default_factory=list)
     metadata_report: dict = field(default_factory=dict)
@@ -3833,7 +3851,12 @@ def _convert_animated_or_sequence(
     policy = _resource_policy_from_options(opts)
 
     t0 = time.perf_counter()
-    result = ConvertResult(src=src, size_before=src.stat().st_size)
+    result = ConvertResult(
+        src=src,
+        size_before=src.stat().st_size,
+        format=str(fmt).lower(),
+        backend=str(opts.backend).lower(),
+    )
     _journal_transition(opts, src, "converting", result=result)
     try:
         dest_dir = _structured_output_dir(src, output_dir, preserve_structure, base_dir)
@@ -3844,6 +3867,7 @@ def _convert_animated_or_sequence(
                    "avif": ".avif", "tiff": ".tiff", "jxl": ".jxl"}
         fmt_pil = {"jpeg": "JPEG", "png": "PNG", "webp": "WEBP",
                    "avif": "AVIF", "tiff": "TIFF", "jxl": "JXL"}.get(fmt, "JPEG")
+        result.format = fmt_pil.lower()
         ext = ext_map.get(fmt, ".jpg")
 
         with Image.open(str(src)) as img:
@@ -3855,6 +3879,7 @@ def _convert_animated_or_sequence(
                 img, policy, started_at=t0,
                 include_all_frames=preserve_all_frames,
             )
+            result.dimensions_in = tuple(map(int, img.size))
             meta = {}
             if not strip_metadata:
                 if "exif" in img.info:
@@ -3910,6 +3935,8 @@ def _convert_animated_or_sequence(
                 result.dst = written[0] if written else None
                 result.size_after = sum(p.stat().st_size for p in written) if written else 0
                 result.success = bool(written)
+                if written:
+                    result.dimensions_out = _report_dimensions_from_path(written[0])
                 result.warnings.append(
                     f"multi-frame: exported {len(written)} frames as {pad_width}-digit sequence"
                 )
@@ -3974,6 +4001,7 @@ def _convert_animated_or_sequence(
                 result.dst = dst
                 result.size_after = dst.stat().st_size
                 result.success = True
+                result.dimensions_out = tuple(map(int, frames[0].size))
                 result.warnings.append(f"multi-frame: animated {fmt_pil} with {len(frames)} frames")
                 _journal_transition(
                     opts, src, "validated", output=dst,
@@ -4225,7 +4253,12 @@ def _convert_file_vips(
         size_before = src.stat().st_size
     except OSError:
         size_before = 0
-    result = ConvertResult(src=src, size_before=size_before)
+    result = ConvertResult(
+        src=src,
+        size_before=size_before,
+        format=str(fmt).lower(),
+        backend="vips",
+    )
     _journal_transition(journal_opts, src, "converting", result=result)
     temp_path: Path | None = None
     try:
@@ -4287,6 +4320,7 @@ def _convert_file_vips(
                 verify_img.verify()
             with Image.open(str(write_path)) as verify_img:
                 verify_img.load()
+                result.dimensions_out = tuple(map(int, verify_img.size))
         except Exception as e:
             raise RuntimeError(f"Output validation failed: {e}")
 
@@ -4436,7 +4470,12 @@ def convert_file(
         size_before = src.stat().st_size
     except OSError:
         size_before = 0
-    result = ConvertResult(src=src, size_before=size_before)
+    result = ConvertResult(
+        src=src,
+        size_before=size_before,
+        format=str(fmt).lower(),
+        backend=str(backend).lower(),
+    )
     _journal_transition(opts, src, "converting", result=result)
     img = None
     out_path = None
@@ -4456,6 +4495,7 @@ def convert_file(
         _enforce_decode_resource_policy(
             img, policy, started_at=decode_started,
         )
+        result.dimensions_in = tuple(map(int, img.size))
 
         if preserve_metadata:
             meta = _ingest_adjacent_sidecars(src, meta, result)
@@ -4631,6 +4671,7 @@ def convert_file(
             out_fmt = "JXL"
         else:
             raise RuntimeError(f"Unsupported output format: {fmt}")
+        result.format = str(out_fmt).lower()
 
         # Same-format guard — skip if input is already the output format
         # and no processing (resize, sRGB, strip metadata) is requested
@@ -4973,6 +5014,7 @@ def convert_file(
                     verify_img.verify()
                 with Image.open(str(check_path)) as decoded:
                     dw, dh = decoded.size
+                    result.dimensions_out = (int(dw), int(dh))
                     sw, sh = img.size
                     if abs(dw - sw) > 1 or abs(dh - sh) > 1:
                         raise RuntimeError(
@@ -6127,6 +6169,119 @@ def _read_persisted_json(
     return data, status, schema
 
 
+def _empty_memory_sample() -> dict[str, object]:
+    """Return the explicit no-sample shape used by evidence payloads."""
+    return {
+        "sampled": False,
+        "available": False,
+        "method": None,
+        "current_bytes": None,
+        "peak_bytes": None,
+        "note": "Optional Python allocation sample; native codec memory is not measured.",
+    }
+
+
+def _start_optional_memory_sample(enabled: bool):
+    """Start low-overhead Python allocation sampling only for report requests."""
+    if not enabled:
+        return None
+    try:
+        import tracemalloc
+
+        started_here = not tracemalloc.is_tracing()
+        if started_here:
+            tracemalloc.start()
+        return tracemalloc, started_here
+    except Exception:
+        return None
+
+
+def _finish_optional_memory_sample(sampler) -> dict[str, object]:
+    if sampler is None:
+        return _empty_memory_sample()
+    tracemalloc, started_here = sampler
+    try:
+        current, peak = tracemalloc.get_traced_memory()
+        sample = {
+            "sampled": True,
+            "available": True,
+            "method": "tracemalloc",
+            "current_bytes": int(current),
+            "peak_bytes": int(peak),
+            "note": "Python allocation sample; native codec memory is not measured.",
+        }
+    except Exception:
+        sample = _empty_memory_sample()
+    if started_here:
+        try:
+            tracemalloc.stop()
+        except Exception:
+            pass
+    return sample
+
+
+def _evidence_dimensions(value) -> list[int] | None:
+    if not value:
+        return None
+    try:
+        width, height = int(value[0]), int(value[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    return [width, height] if width > 0 and height > 0 else None
+
+
+def _report_dimensions_from_path(path: Path | None) -> tuple[int, int] | None:
+    if path is None:
+        return None
+    try:
+        with Image.open(str(path)) as image:
+            width, height = image.size
+            return int(width), int(height)
+    except Exception:
+        return None
+
+
+def _redact_report_message(value, paths: tuple[Path, ...] = ()) -> str:
+    text = _redact_text(str(value))
+    for path in paths:
+        redacted = _redact_history_path(path)
+        if redacted:
+            text = text.replace(str(path), redacted)
+            try:
+                text = text.replace(str(Path(path).resolve(strict=False)), redacted)
+            except (OSError, RuntimeError, ValueError):
+                pass
+    return text[:1000]
+
+
+def _result_performance_evidence(
+    result: ConvertResult,
+    *,
+    default_format: str | None = None,
+    default_backend: str | None = None,
+    memory: dict[str, object] | None = None,
+) -> dict[str, object]:
+    paths = tuple(path for path in (result.src, result.dst) if path is not None)
+    dimensions_in = result.dimensions_in or _report_dimensions_from_path(result.src)
+    dimensions_out = result.dimensions_out or _report_dimensions_from_path(result.dst)
+    return {
+        "schema_version": PERFORMANCE_EVIDENCE_SCHEMA,
+        "format": result.format or default_format,
+        "backend": result.backend or default_backend,
+        "dimensions": {
+            "input": _evidence_dimensions(dimensions_in),
+            "output": _evidence_dimensions(dimensions_out),
+        },
+        "bytes": {
+            "input": int(result.size_before or 0),
+            "output": int(result.size_after or 0),
+        },
+        "elapsed_seconds": round(float(result.elapsed or 0.0), 6),
+        "warnings": [_redact_report_message(warning, paths) for warning in result.warnings],
+        "memory": memory if memory is not None else _empty_memory_sample(),
+    }
+
+
 @contextmanager
 def _batch_history_lock():
     """Serialize batch-history read-modify-write operations across processes."""
@@ -6602,7 +6757,11 @@ def _plugin_trust_payload() -> list[dict[str, object]]:
 def _build_support_bundle_payload(settings_snapshot: dict | None = None) -> dict:
     from datetime import datetime, timezone
 
+    native_codecs = _native_codec_versions()
+    backend_report = build_backend_info()
     return {
+        "schema_version": SUPPORT_BUNDLE_SCHEMA,
+        "evidence_schema_version": PERFORMANCE_EVIDENCE_SCHEMA,
         "app": {
             "name": "ImgConverter",
             "version": APP_VERSION,
@@ -6638,9 +6797,15 @@ def _build_support_bundle_payload(settings_snapshot: dict | None = None) -> dict
         },
         "schema_policies": PERSISTED_STATE_SCHEMAS,
         "dependencies": _dependency_versions(),
-        "native_codecs": _native_codec_versions(),
+        "native_codecs": native_codecs,
         "optional_tools": _optional_tool_status(),
-        "backends": build_backend_info(),
+        "backends": backend_report,
+        "performance": {
+            "schema_version": PERFORMANCE_EVIDENCE_SCHEMA,
+            "native_codecs": native_codecs,
+            "memory": _empty_memory_sample(),
+            "benchmarks": backend_report.get("benchmark"),
+        },
         "formats": _format_support_payload(),
         "format_capability_matrix": build_format_capability_matrix(),
         "plugins": {
@@ -12189,7 +12354,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         "Overrides --prefix/--suffix.")
     p.add_argument("--report", type=str, default=None, metavar="PATH",
                    help="Write structured per-file JSON report to PATH after conversion. "
-                        "Top-level object: {summary: {...}, files: [...]}")
+                        "Top-level object includes schema_version, summary, performance, and files; "
+                        "paths are redacted.")
     p.add_argument("--support-bundle", type=str, default=None, metavar="PATH",
                    help="Write a redacted diagnostic zip with app, platform, dependency, "
                         "optional-tool, plugin trust, settings schema, and recent log data, then exit")
@@ -14303,6 +14469,8 @@ def _run_cli(args):
             sys.exit(EXIT_INPUT_ERROR)
         sys.exit(_watch_directory(args, input_dir, output_dir, resize_mode, resize_value))
 
+    memory_sampler = _start_optional_memory_sample(bool(getattr(args, "report", None)))
+
     # Memory pressure threshold
     _mem_threshold = getattr(args, "max_memory", None)
     if _mem_threshold is not None:
@@ -14600,6 +14768,8 @@ def _run_cli(args):
                     src=cached_file,
                     skipped=True,
                     size_before=_size_or_zero(cached_file),
+                    format=args.format,
+                    backend=args.backend,
                 )
                 cached_result.warnings.append("cache: source already converted with this preset")
                 _journal_record_result(cli_opts, cached_result)
@@ -14648,7 +14818,12 @@ def _run_cli(args):
                     result = fut.result()
                 except Exception as exc:
                     f = futures[fut]
-                    result = ConvertResult(src=f, size_before=0)
+                    result = ConvertResult(
+                        src=f,
+                        size_before=0,
+                        format=args.format,
+                        backend=args.backend,
+                    )
                     result.error = str(exc)
                 del futures[fut]
                 _journal_record_result(cli_opts, result)
@@ -14814,12 +14989,34 @@ def _run_cli(args):
     report_path = None
     if getattr(args, "report", None):
         report_target = Path(args.report).expanduser()
+        memory_sample = _finish_optional_memory_sample(memory_sampler)
+        report_warnings = [
+            _redact_report_message(warning, (result.src, result.dst))
+            for result in all_results
+            for warning in result.warnings
+        ]
         report = {
+            "schema_version": REPORT_SCHEMA_VERSION,
+            "evidence_schema_version": PERFORMANCE_EVIDENCE_SCHEMA,
+            "native_codecs": _native_codec_versions(),
+            "performance": {
+                "schema_version": PERFORMANCE_EVIDENCE_SCHEMA,
+                "format": args.format,
+                "backend": args.backend,
+                "bytes": {
+                    "input": sum(int(result.size_before or 0) for result in all_results),
+                    "output": sum(int(result.size_after or 0) for result in all_results),
+                },
+                "elapsed_seconds": round(wall_time, 6),
+                "warnings": report_warnings,
+                "memory": memory_sample,
+            },
             "summary": {
                 "version": APP_VERSION,
-                "input": str(input_dir),
-                "output": str(output_dir),
+                "input": _redact_history_path(input_dir),
+                "output": _redact_history_path(output_dir),
                 "format": args.format,
+                "backend": args.backend,
                 "quality": args.quality,
                 "workers": args.workers,
                 "total": total,
@@ -14829,21 +15026,32 @@ def _run_cli(args):
                 "cancelled": interrupted,
                 "elapsed_seconds": wall_time,
                 "files_per_second": speed,
+                "warnings": report_warnings,
             },
             "files": [
                 {
-                    "src": str(r.src),
-                    "dst": str(r.dst) if r.dst else None,
+                    "src": _redact_history_path(r.src),
+                    "dst": _redact_history_path(r.dst),
                     "ok": r.success,
                     "skipped": r.skipped,
+                    "format": r.format or args.format,
+                    "backend": r.backend or args.backend,
                     "size_in": r.size_before,
                     "size_out": r.size_after,
                     "elapsed": r.elapsed,
                     "src_deleted": r.src_deleted,
                     "metadata": r.metadata_report,
-                    "error": r.error or None,
+                    "error": _redact_report_message(r.error, (r.src, r.dst)) or None,
                     "error_code": r.error_code,
-                    "warnings": list(r.warnings),
+                    "warnings": [
+                        _redact_report_message(warning, (r.src, r.dst))
+                        for warning in r.warnings
+                    ],
+                    "evidence": _result_performance_evidence(
+                        r,
+                        default_format=args.format,
+                        default_backend=args.backend,
+                    ),
                 }
                 for r in all_results
             ],
