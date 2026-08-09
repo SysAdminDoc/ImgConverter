@@ -2,7 +2,7 @@
 
 Universal image batch converter with a modern, local-first GUI. Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP, JPEG XL, Camera RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG, WebP, AVIF, TIFF, or JPEG XL with full metadata preservation.
 
-![Version](https://img.shields.io/badge/Version-3.8.0-blue)
+![Version](https://img.shields.io/badge/Version-3.9.0-blue)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
@@ -58,6 +58,9 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 
 ## Features
 
+- **Persistent five-page workspace** — Convert, History, Watch folders, Plugins, and Tools are always one click away from the local-only navigation rail
+- **First-class operations pages** — inspect redacted batch history, run watch profiles, review exact-hash plugin trust, and manage local utilities without leaving the main window
+- **Command search and sticky actions** — `Ctrl+K` searches every action with disabled-state explanations while scan, convert, and output actions remain anchored at the bottom of the workspace
 - **Batch editing layer** — per-image adjustments (brightness, contrast, saturation, sharpness, blur, hue), tonal toggles (grayscale, sepia, invert), effects (vignette, film grain, color tint), a solid border, one-shot look presets (`--adjust-preset vivid|muted|bw|vintage|cold|warm`), and social-media size presets (`--social instagram-post`, …). Applied across the whole batch, alpha-preserving, and stackable with resize/canvas/watermark
 - **GUI editing controls** — the Advanced options > Batch edits group exposes the same 16 adjustment, effect, border, look-preset, and social-canvas controls as the CLI, with the recipe persisted between launches
 - **Auto format detection** — JPEG for photos, PNG when alpha channel is present
@@ -80,11 +83,11 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **File count in title bar** — shows file count after scan, progress during conversion, summary when done
 - **Resize upscaling guard** — warns when image is already smaller than the resize target
 - **Conversion presets** — Web Optimized, Archive Quality, Mobile Friendly, Print/TIFF one-click presets
-- **Premium workflow workspace** — a clear Source → Output recipe → Batch summary layout keeps the next action visible and the activity log supporting, not dominant
+- **Premium workflow workspace** — a clear Source → Output recipe → Activity and Batch summary layout keeps the next action visible and the activity log supporting, not dominant
 - **Responsive composition** — two-pane layout on wide screens, stacked source/summary flow on compact windows, and reachable expert controls from 760×560 through 4K+
 - **Contextual batch summary** — purposeful empty, scanning, ready, converting, stopped, partial-failure, failed, and complete states with dynamic “Convert N images” copy
 - **Unified line-icon system** — consistent theme-aware actions and an ImgConverter-specific app/package mark replace platform-dependent glyphs and legacy branding
-- **Polished management dialogs** — plugin trust, batch history, automation, duplicate review, commands, and file-manager integration share clear hierarchy, status feedback, and actionable empty states
+- **Focused management surfaces** — history, watch automation, plugin trust, tools, duplicate review, commands, and file-manager integration share clear hierarchy, status feedback, and actionable empty states
 - **True collapsed advanced controls** — input-family filters and advanced output controls stay out of the primary Source → Recipe path until expanded
 - **Smart option visibility** — format-specific controls auto-show/hide based on output format
 - **Dark title bar** — native dark title bar on Windows 10/11 matching Catppuccin theme
@@ -140,7 +143,7 @@ Before publishing a local release candidate, run `python packaging/release_gate.
 1. In **Source**, choose or drag in a folder (or individual images) and confirm the output folder
 2. In **Output recipe**, choose the format, quality, metadata policy, and optional preset
 3. Select **Scan source** to review matching files and estimated output details
-4. Select the contextual **Convert N images** action in **Batch summary**
+4. Select the contextual **Convert N images** action in the anchored action dock
 5. Expand **Advanced options** or **Input format filters** only when the workflow needs them; output defaults to `source/converted/`
 
 Toggle **"Convert in place after verified output"** to save output next to each source file and delete the original after validation succeeds.
@@ -149,8 +152,9 @@ Toggle **"Convert in place after verified output"** to save output next to each 
 
 ImgConverter ships an English catalog plus Spanish (`es`). The GUI follows the
 operating-system language when a catalog is available and otherwise falls back
-to English. Choose **More → Language** to save a preference for the next
-launch, or start directly with `python imgconverter.py --locale es`.
+to English. Use the language selector at the bottom of the navigation rail or
+**Tools → Preferences** to save a preference for the next launch, or start
+directly with `python imgconverter.py --locale es`.
 
 Translation sources live in `translations/`. Run
 `python tools/localize.py --extract --compile` after changing translatable

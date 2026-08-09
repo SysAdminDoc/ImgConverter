@@ -41,7 +41,19 @@ def rgba_image():
 
 @pytest.fixture(autouse=True)
 def isolated_batch_history(monkeypatch, tmp_path):
-    """Keep persistent batch-history tests away from the real user cache."""
+    """Keep persistent GUI/test state away from the real user profile."""
     import imgconverter
 
     monkeypatch.setattr(imgconverter, "BATCH_HISTORY_PATH", tmp_path / "batch-history.json")
+
+    def isolated_settings():
+        settings_class = imgconverter.QSettings
+        if hasattr(settings_class, "Format"):
+            return settings_class(
+                str(tmp_path / "settings.ini"),
+                settings_class.Format.IniFormat,
+            )
+        # Preserve tests that replace QSettings with a small constructor spy.
+        return settings_class("ImgConverter", "ImgConverter")
+
+    monkeypatch.setattr(imgconverter, "_app_settings", isolated_settings)

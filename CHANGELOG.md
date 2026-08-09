@@ -4,6 +4,19 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [Unreleased]
 
+## [v3.9.0] — 2026-08-08
+
+### Added
+
+- Added a persistent local-only navigation rail with first-class Convert, History, Watch folders, Plugins, and Tools workspaces.
+- Added live management pages for redacted batch history, on-demand watch profiles, exact-hash plugin trust review, file-manager integration, preferences, and privacy-safe exports.
+- Added command search to every page, an anchored conversion action dock, responsive wide/compact compositions, and a shared midnight visual system across workflow and management surfaces.
+- Added five ImageGen design references under `design/mockups/` and a deterministic, input-free Qt page snapshot renderer for visual regression and parity review.
+
+### Fixed
+
+- Preserved watch-profile conversion counts through schema sanitization so Converted today and recent automation activity survive application restarts.
+
 ## [v3.8.0] — 2026-08-08
 
 ### Added

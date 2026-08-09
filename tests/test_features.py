@@ -2744,7 +2744,12 @@ class TestWatchProfilePersistence:
         monkeypatch.setattr("imgconverter.WATCH_PROFILES_FILE", path)
 
         _save_watch_profiles([
-            {"source": str(tmp_workdir / "src"), "enabled": "yes", "extra": "drop"},
+            {
+                "source": str(tmp_workdir / "src"),
+                "enabled": "yes",
+                "last_count": "7",
+                "extra": "drop",
+            },
             {"source": ""},
         ])
 
@@ -2752,8 +2757,9 @@ class TestWatchProfilePersistence:
         assert saved["schema_version"] == 1
         assert len(saved["profiles"]) == 1
         assert saved["profiles"][0]["enabled"] is True
+        assert saved["profiles"][0]["last_count"] == 7
         assert sorted(saved["profiles"][0]) == [
-            "enabled", "last_error", "last_run", "output", "preset", "source",
+            "enabled", "last_count", "last_error", "last_run", "output", "preset", "source",
         ]
 
     def test_watch_folder_dialog_is_explicitly_on_demand(self, tmp_workdir, monkeypatch):
@@ -3591,6 +3597,66 @@ class TestQtAccessibility:
         assert [w.frames_combo.itemText(i) for i in range(3)] == [
             "First frame only", "Extract all frames", "Preserve animation",
         ]
+
+    def test_workspace_navigation_exposes_five_first_class_pages(self):
+        w = self.window
+
+        assert list(w._page_widgets) == ["convert", "history", "watch", "plugins", "tools"]
+        for key in w._page_widgets:
+            w._select_workspace_page(key)
+            assert w.page_stack.currentWidget() is w._page_widgets[key]
+            assert w._nav_buttons[key].property("active") is True
+            assert all(
+                button.property("active") is (nav_key == key)
+                for nav_key, button in w._nav_buttons.items()
+            )
+
+    def test_history_workspace_uses_redacted_live_records(self, monkeypatch):
+        import imgconverter
+
+        record = {
+            "timestamp": "2026-08-08T14:14:00+00:00",
+            "surface": "gui",
+            "preset": "Web delivery",
+            "options": {"format": "webp", "quality": 86, "workers": 8},
+            "counts": {"converted": 12, "skipped": 1, "failed": 0},
+            "bytes": {"before": 4096, "after": 2048},
+            "timing": {"wall_seconds": 2.5},
+            "artifacts": {},
+            "privacy": {"source_paths_stored": False},
+        }
+        monkeypatch.setattr(imgconverter, "_load_batch_history", lambda: [record])
+
+        self.window._select_workspace_page("history")
+
+        assert self.window.history_page_table.rowCount() == 1
+        assert self.window.history_page_table.item(0, 1).text() == "Desktop app"
+        assert self.window.history_detail_badge.text() == "Completed"
+        assert self.window.history_detail_values["format"].text() == "WEBP"
+        assert "source" not in self.window.history_detail_values["artifacts"].text().lower()
+
+    def test_plugin_workspace_surfaces_contract_and_exact_hash_actions(self):
+        row = {
+            "name": "S3 Storage Export",
+            "path": "~/.imgconverter/plugins/s3_export.py",
+            "trust_ref": "s3_export.py",
+            "status": "untrusted",
+            "hash_prefix": "8f3a7c9e1d2b",
+            "api_version": 1,
+            "capability_schema": 1,
+            "capabilities": {
+                "decoders": [], "encoders": [], "storage": ["s3"], "network": True,
+            },
+        }
+
+        self.window._apply_plugin_page_rows([row])
+        self.window.plugins_page_table.selectRow(0)
+
+        assert self.window.plugins_page_table.item(0, 2).text() == "Needs review"
+        assert self.window.plugins_detail_values["sha"].text() == "8f3a7c9e1d2b"
+        assert "Network access" in self.window.plugins_detail_values["capabilities"].text()
+        assert self.window.plugins_trust_btn.isEnabled()
+        assert not self.window.plugins_block_btn.isEnabled()
 
     def test_update_check_thread_stops_before_window_close(self, monkeypatch):
         import threading

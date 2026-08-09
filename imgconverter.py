@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ImgConverter v3.8.0 - Universal image batch converter
+ImgConverter v3.9.0 - Universal image batch converter
 Scans directories recursively and converts JPEG, PNG, HEIC, AVIF, WebP,
 JPEG XL, RAW, TIFF, BMP, JPEG 2000, QOI, and ICO files to JPEG, PNG,
 WebP, AVIF, TIFF, or JPEG XL. Auto-detects optimal format: PNG for
@@ -33,7 +33,7 @@ def _branding_icon_path() -> Path:
     return Path("icon.png")
 
 
-APP_VERSION = "3.8.0"
+APP_VERSION = "3.9.0"
 REPORT_SCHEMA_VERSION = 1
 SUPPORT_BUNDLE_SCHEMA = 1
 PERFORMANCE_EVIDENCE_SCHEMA = 1
@@ -1640,7 +1640,7 @@ try:
         QFrame, QSplitter, QStatusBar, QMessageBox, QLineEdit, QStyle,
         QSystemTrayIcon, QMenu, QToolButton, QScrollArea, QSizePolicy,
         QDialog, QTableWidget, QTableWidgetItem, QHeaderView,
-        QAbstractItemView, QInputDialog,
+        QAbstractItemView, QInputDialog, QStackedWidget,
     )
     HAS_PYQT6 = True
 except ImportError:
@@ -1663,7 +1663,7 @@ except ImportError:
     Qt = QSettings = QSize = QUrl = QLocale = QTranslator = _Stub
     QFont = QColor = QPalette = QIcon = QPixmap = QPainter = QPen = QAction = _Stub
     QDragEnterEvent = QDropEvent = QShortcut = QKeySequence = _Stub
-    QApplication = QVBoxLayout = QHBoxLayout = _Stub
+    QApplication = QVBoxLayout = QHBoxLayout = QStackedWidget = _Stub
     QLabel = QPushButton = QFileDialog = QComboBox = QSpinBox = QDoubleSpinBox = QSlider = _Stub
     QProgressBar = QPlainTextEdit = QCheckBox = QGroupBox = QGridLayout = _Stub
     QFrame = QSplitter = QStatusBar = QMessageBox = QLineEdit = QStyle = _Stub
@@ -1756,17 +1756,17 @@ def _install_gui_translator(app, explicit: str | None = None) -> tuple[str, Path
     app._imgconverter_translator = translator
     return locale, catalog
 
-# ── Catppuccin Mocha Palette ──────────────────────────────────────────────────
+# ── ImgConverter Midnight Palette ─────────────────────────────────────────────
 CAT = {
-    "base":      "#1e1e2e", "mantle":   "#181825", "crust":    "#11111b",
-    "surface0":  "#313244", "surface1": "#45475a", "surface2": "#585b70",
-    "overlay0":  "#6c7086", "overlay1": "#7f849c", "overlay2": "#9399b2",
-    "text":      "#cdd6f4", "subtext0": "#a6adc8", "subtext1": "#bac2de",
-    "lavender":  "#b4befe", "blue":     "#89b4fa", "sapphire": "#74c7ec",
-    "sky":       "#89dceb", "teal":     "#94e2d5", "green":    "#a6e3a1",
-    "yellow":    "#f9e2af", "peach":    "#fab387", "maroon":   "#eba0ac",
-    "red":       "#f38ba8", "mauve":    "#cba6f7", "pink":     "#f5c2e7",
-    "flamingo":  "#f2cdcd", "rosewater":"#f5e0dc",
+    "base":      "#08111f", "mantle":   "#0d1727", "crust":    "#050b14",
+    "surface0":  "#111c2e", "surface1": "#22314a", "surface2": "#354866",
+    "overlay0":  "#64748b", "overlay1": "#7d8da6", "overlay2": "#96a5bc",
+    "text":      "#eef2ff", "subtext0": "#a9b5ca", "subtext1": "#c2cbe0",
+    "lavender":  "#9aa7ff", "blue":     "#7183ff", "sapphire": "#5da9ff",
+    "sky":       "#67d5ef", "teal":     "#5eead4", "green":    "#4ade80",
+    "yellow":    "#fbbf24", "peach":    "#fb923c", "maroon":   "#fb7185",
+    "red":       "#fb5c68", "mauve":    "#a78bfa", "pink":     "#f0abfc",
+    "flamingo":  "#fda4af", "rosewater":"#ffe4e6",
 }
 
 _STAT_FONT = "font-size: 18px; font-weight: 700;"
@@ -2480,6 +2480,163 @@ QToolTip {{
     border: 1px solid {CAT['surface2']};
     border-radius: 4px;
     padding: 6px 8px;
+}}
+QFrame#navRail {{
+    background-color: {CAT['crust']};
+    border: none;
+    border-right: 1px solid {CAT['surface1']};
+}}
+QFrame#navBrand {{
+    background-color: transparent;
+    border: none;
+}}
+QLabel#navBrandTitle {{
+    color: {CAT['text']};
+    font-size: 18px;
+    font-weight: 800;
+}}
+QLabel#navVersion {{
+    color: {CAT['blue']};
+    font-size: 11px;
+    font-weight: 700;
+}}
+QPushButton#navButton {{
+    background-color: transparent;
+    color: {CAT['subtext1']};
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 10px 12px;
+    text-align: left;
+    min-height: 28px;
+    font-size: 13px;
+    font-weight: 600;
+}}
+QPushButton#navButton:hover {{
+    color: {CAT['text']};
+    background-color: {CAT['surface0']};
+    border-color: {CAT['surface1']};
+}}
+QPushButton#navButton[active="true"] {{
+    color: {CAT['blue']};
+    background-color: {CAT['surface0']};
+    border-color: {CAT['blue']};
+}}
+QPushButton#navButton:focus {{
+    border: 2px solid {CAT['blue']};
+}}
+QLabel#privacyLabel {{
+    color: {CAT['text']};
+    font-size: 12px;
+    font-weight: 700;
+}}
+QLabel#privacyHint {{
+    color: {CAT['overlay2']};
+    font-size: 10px;
+}}
+QComboBox#navLocale {{
+    background-color: {CAT['mantle']};
+    border-color: {CAT['surface1']};
+    min-width: 0;
+}}
+QFrame#pageHeader {{
+    background-color: transparent;
+    border: none;
+}}
+QWidget#workspacePage, QWidget#workspaceBody, QWidget#cardHeader {{
+    background-color: transparent;
+}}
+QLabel#pageTitle {{
+    color: {CAT['text']};
+    font-size: 22px;
+    font-weight: 800;
+}}
+QLabel#pageSubtitle {{
+    color: {CAT['subtext0']};
+    font-size: 12px;
+}}
+QPushButton#commandSearch {{
+    background-color: transparent;
+    color: {CAT['subtext0']};
+    border: 1px solid {CAT['surface1']};
+    border-radius: 6px;
+    padding: 7px 12px;
+    text-align: left;
+    min-width: 220px;
+}}
+QPushButton#commandSearch:hover {{
+    color: {CAT['text']};
+    border-color: {CAT['blue']};
+    background-color: {CAT['surface0']};
+}}
+QFrame#workspaceCard, QFrame#metricCard, QFrame#toolCard,
+QFrame#detailCard, QFrame#quickStrip {{
+    background-color: {CAT['mantle']};
+    border: 1px solid {CAT['surface1']};
+    border-radius: 8px;
+}}
+QFrame#toolCard:hover {{
+    border-color: {CAT['surface2']};
+    background-color: {CAT['surface0']};
+}}
+QFrame#metricCard[tone="success"] {{ border-color: {CAT['green']}; }}
+QFrame#metricCard[tone="warning"] {{ border-color: {CAT['yellow']}; }}
+QFrame#metricCard[tone="danger"] {{ border-color: {CAT['red']}; }}
+QLabel#cardTitle {{
+    color: {CAT['text']};
+    font-size: 15px;
+    font-weight: 800;
+}}
+QLabel#cardSubtitle {{
+    color: {CAT['subtext0']};
+    font-size: 11px;
+}}
+QLabel#metricValue {{
+    color: {CAT['text']};
+    font-size: 24px;
+    font-weight: 800;
+}}
+QLabel#metricLabel {{
+    color: {CAT['subtext0']};
+    font-size: 11px;
+    font-weight: 600;
+}}
+QLabel#statusBadge {{
+    color: {CAT['subtext1']};
+    background-color: {CAT['surface0']};
+    border: 1px solid {CAT['surface1']};
+    border-radius: 4px;
+    padding: 4px 7px;
+    font-size: 11px;
+    font-weight: 700;
+}}
+QLabel#statusBadge[tone="success"] {{ color: {CAT['green']}; border-color: {CAT['green']}; }}
+QLabel#statusBadge[tone="warning"] {{ color: {CAT['yellow']}; border-color: {CAT['yellow']}; }}
+QLabel#statusBadge[tone="danger"] {{ color: {CAT['red']}; border-color: {CAT['red']}; }}
+QLabel#detailKey {{
+    color: {CAT['subtext0']};
+    font-size: 11px;
+}}
+QLabel#detailValue {{
+    color: {CAT['text']};
+    font-size: 12px;
+    font-weight: 600;
+}}
+QFrame#convertDock {{
+    background-color: {CAT['crust']};
+    border: 1px solid {CAT['surface1']};
+    border-radius: 8px;
+}}
+QGroupBox#workflowCard {{
+    border-color: {CAT['surface1']};
+    border-radius: 8px;
+}}
+QTableWidget::item:selected {{
+    background-color: {CAT['surface1']};
+    color: {CAT['text']};
+}}
+QTableWidget::item:selected:!active {{
+    background-color: {CAT['surface0']};
+    color: {CAT['text']};
 }}
 """
 
@@ -8111,6 +8268,7 @@ def _loadable_watch_profiles(profiles: list[dict]) -> list[dict]:
             "enabled": _preset_bool(raw.get("enabled", True)),
             "last_run": raw.get("last_run") if isinstance(raw.get("last_run"), str) else None,
             "last_error": raw.get("last_error") if isinstance(raw.get("last_error"), str) else None,
+            "last_count": max(0, _safe_history_int(raw.get("last_count", 0))),
         })
     return cleaned
 
@@ -9175,6 +9333,15 @@ class MainWindow(QMainWindow):
         self.settings.sync()
         for code, action in getattr(self, "_locale_actions", {}).items():
             action.setChecked(code == preference)
+        for combo_name in ("nav_locale_combo", "tools_locale_combo"):
+            combo = getattr(self, combo_name, None)
+            if combo is None:
+                continue
+            index = combo.findData(preference)
+            if index >= 0 and index != combo.currentIndex():
+                combo.blockSignals(True)
+                combo.setCurrentIndex(index)
+                combo.blockSignals(False)
         label = self._gui_locale_label(preference)
         self.status_bar.showMessage(
             self.tr("Language preference saved: {}. Restart ImgConverter to apply.").format(label),
@@ -9374,11 +9541,1507 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _build_navigation_rail(self) -> QFrame:
+        rail = QFrame()
+        rail.setObjectName("navRail")
+        rail.setFixedWidth(214)
+        rail.setAccessibleName(self.tr("Primary navigation"))
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(12, 18, 12, 14)
+        layout.setSpacing(8)
+
+        brand = QFrame()
+        brand.setObjectName("navBrand")
+        brand_layout = QHBoxLayout(brand)
+        brand_layout.setContentsMargins(8, 0, 4, 18)
+        brand_layout.setSpacing(10)
+        brand_icon = QLabel()
+        brand_icon.setPixmap(self._icon.pixmap(QSize(38, 38)))
+        brand_icon.setFixedSize(40, 40)
+        brand_icon.setAccessibleName(self.tr("ImgConverter app icon"))
+        brand_layout.addWidget(brand_icon)
+        brand_copy = QVBoxLayout()
+        brand_copy.setSpacing(0)
+        self.nav_brand_title = QLabel(self.tr("ImgConverter"))
+        self.nav_brand_title.setObjectName("navBrandTitle")
+        self.nav_version = QLabel(self.tr("v{}").format(APP_VERSION))
+        self.nav_version.setObjectName("navVersion")
+        brand_copy.addWidget(self.nav_brand_title)
+        brand_copy.addWidget(self.nav_version)
+        brand_layout.addLayout(brand_copy, 1)
+        layout.addWidget(brand)
+
+        self._nav_buttons: dict[str, QPushButton] = {}
+        nav_items = (
+            ("convert", self.tr("Convert"), "export"),
+            ("history", self.tr("History"), "history"),
+            ("watch", self.tr("Watch folders"), "watch"),
+            ("plugins", self.tr("Plugins"), "plugins"),
+            ("tools", self.tr("Tools"), "file-manager"),
+        )
+        for key, label, icon_name in nav_items:
+            button = QPushButton(label)
+            button.setObjectName("navButton")
+            button.setIcon(_create_line_icon(icon_name, CAT["subtext1"], 20))
+            button.setIconSize(QSize(20, 20))
+            button.setProperty("fullText", label)
+            button.setAccessibleName(label)
+            button.setToolTip(label)
+            button.clicked.connect(
+                lambda _checked=False, page_key=key: self._select_workspace_page(page_key)
+            )
+            self._nav_buttons[key] = button
+            layout.addWidget(button)
+
+        layout.addStretch(1)
+
+        privacy_row = QHBoxLayout()
+        privacy_row.setContentsMargins(8, 0, 0, 0)
+        privacy_row.setSpacing(7)
+        privacy_dot = QLabel("●")
+        privacy_dot.setStyleSheet(f"color: {CAT['green']}; background: transparent;")
+        privacy_row.addWidget(privacy_dot)
+        self.nav_privacy_label = QLabel(self.tr("Local only"))
+        self.nav_privacy_label.setObjectName("privacyLabel")
+        privacy_row.addWidget(self.nav_privacy_label)
+        privacy_row.addStretch()
+        layout.addLayout(privacy_row)
+        self.nav_privacy_hint = QLabel(self.tr("Your files never leave this device."))
+        self.nav_privacy_hint.setObjectName("privacyHint")
+        self.nav_privacy_hint.setWordWrap(True)
+        self.nav_privacy_hint.setContentsMargins(8, 0, 4, 8)
+        layout.addWidget(self.nav_privacy_hint)
+
+        self.nav_locale_combo = QComboBox()
+        self.nav_locale_combo.setObjectName("navLocale")
+        preference = _gui_locale_preference()
+        selected = 0
+        for index, (code, _label) in enumerate(GUI_LOCALE_OPTIONS):
+            self.nav_locale_combo.addItem(self._gui_locale_label(code), code)
+            if code == preference:
+                selected = index
+        self.nav_locale_combo.setCurrentIndex(selected)
+        self.nav_locale_combo.setAccessibleName(self.tr("Application language"))
+        self.nav_locale_combo.setToolTip(self.tr("Choose a language; restart to apply a change"))
+        self.nav_locale_combo.currentIndexChanged.connect(
+            lambda index: self._select_gui_locale(
+                str(self.nav_locale_combo.itemData(index) or "system")
+            )
+        )
+        layout.addWidget(self.nav_locale_combo)
+        return rail
+
+    def _new_workspace_page(self, title: str, subtitle: str):
+        page = QWidget()
+        page.setObjectName("workspacePage")
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(16, 14, 16, 10)
+        page_layout.setSpacing(10)
+
+        header = QFrame()
+        header.setObjectName("pageHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 2)
+        header_layout.setSpacing(10)
+        copy = QVBoxLayout()
+        copy.setContentsMargins(0, 0, 0, 0)
+        copy.setSpacing(2)
+        title_label = QLabel(title)
+        title_label.setObjectName("pageTitle")
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setObjectName("pageSubtitle")
+        subtitle_label.setWordWrap(True)
+        copy.addWidget(title_label)
+        copy.addWidget(subtitle_label)
+        header_layout.addLayout(copy, 1)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
+        header_layout.addLayout(actions)
+        command_button = QPushButton(self.tr("Search commands    Ctrl+K"))
+        command_button.setObjectName("commandSearch")
+        command_button.setIcon(_create_line_icon("scan"))
+        command_button.clicked.connect(self._open_command_palette)
+        header_layout.addWidget(command_button)
+        page_layout.addWidget(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        body = QWidget()
+        body.setObjectName("workspaceBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 6, 0)
+        body_layout.setSpacing(10)
+        scroll.setWidget(body)
+        page_layout.addWidget(scroll, 1)
+        return page, body_layout, actions
+
+    def _make_metric_card(self, label: str, value: str, icon_name: str, tone: str = ""):
+        card = QFrame()
+        card.setObjectName("metricCard")
+        if tone:
+            card.setProperty("tone", tone)
+        card.setAccessibleName(label)
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(12)
+        icon = QLabel()
+        icon.setPixmap(_create_line_icon(icon_name, CAT.get(tone, CAT["lavender"]), 30).pixmap(QSize(30, 30)))
+        icon.setFixedSize(34, 34)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon)
+        copy = QVBoxLayout()
+        copy.setSpacing(1)
+        label_widget = QLabel(label)
+        label_widget.setObjectName("metricLabel")
+        value_widget = QLabel(value)
+        value_widget.setObjectName("metricValue")
+        copy.addWidget(label_widget)
+        copy.addWidget(value_widget)
+        layout.addLayout(copy, 1)
+        card._metric_value = value_widget
+        card._metric_label = label
+        return card
+
+    def _set_metric_card(self, card: QFrame, value: str, tone: str | None = None):
+        card._metric_value.setText(value)
+        card.setAccessibleDescription(self.tr("{}: {}").format(card._metric_label, value))
+        if tone is not None:
+            card.setProperty("tone", tone)
+            _refresh_widget_style(card)
+
+    def _make_card_header(self, title: str, subtitle: str = ""):
+        wrapper = QWidget()
+        wrapper.setObjectName("cardHeader")
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        title_label = QLabel(title)
+        title_label.setObjectName("cardTitle")
+        layout.addWidget(title_label)
+        if subtitle:
+            subtitle_label = QLabel(subtitle)
+            subtitle_label.setObjectName("cardSubtitle")
+            subtitle_label.setWordWrap(True)
+            layout.addWidget(subtitle_label)
+        return wrapper
+
+    def _status_badge(self, text: str, tone: str = "ready"):
+        badge = QLabel(text)
+        badge.setObjectName("statusBadge")
+        badge.setProperty("tone", tone)
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return badge
+
+    def _add_detail_row(self, grid: QGridLayout, row: int, label: str):
+        key = QLabel(label)
+        key.setObjectName("detailKey")
+        value = QLabel("—")
+        value.setObjectName("detailValue")
+        value.setWordWrap(True)
+        value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        grid.addWidget(key, row, 0)
+        grid.addWidget(value, row, 1)
+        return value
+
+    def _build_management_pages(self):
+        builders = (
+            ("history", self._build_history_page),
+            ("watch", self._build_watch_page),
+            ("plugins", self._build_plugins_page),
+            ("tools", self._build_tools_page),
+        )
+        for key, builder in builders:
+            page = builder()
+            self._page_widgets[key] = page
+            self.page_stack.addWidget(page)
+
+    def _select_workspace_page(self, key: str):
+        page = getattr(self, "_page_widgets", {}).get(key)
+        if page is None:
+            return
+        self.page_stack.setCurrentWidget(page)
+        self._active_workspace_page = key
+        for nav_key, button in self._nav_buttons.items():
+            button.setProperty("active", nav_key == key)
+            _refresh_widget_style(button)
+        if key == "history":
+            self._refresh_history_page()
+        elif key == "watch":
+            self._refresh_watch_page()
+        elif key == "plugins":
+            self._refresh_plugins_page()
+        elif key == "tools":
+            self._refresh_tools_page()
+        else:
+            self._sync_responsive_layout()
+
+    def _build_history_page(self) -> QWidget:
+        page, body, actions = self._new_workspace_page(
+            self.tr("Batch history"),
+            self.tr("Private, redacted summaries stored only on this device"),
+        )
+        refresh = QPushButton(self.tr("Refresh"))
+        refresh.setObjectName("secondaryBtn")
+        refresh.setIcon(_create_line_icon("refresh"))
+        refresh.clicked.connect(self._refresh_history_page)
+        actions.addWidget(refresh)
+
+        metrics = QGridLayout()
+        metrics.setContentsMargins(0, 0, 0, 0)
+        metrics.setHorizontalSpacing(10)
+        metrics.setVerticalSpacing(10)
+        self.history_batches_metric = self._make_metric_card(
+            self.tr("Completed batches"), "0", "check"
+        )
+        self.history_images_metric = self._make_metric_card(
+            self.tr("Images converted"), "0", "similar"
+        )
+        self.history_saved_metric = self._make_metric_card(
+            self.tr("Space saved"), "0 B", "file-manager"
+        )
+        self.history_review_metric = self._make_metric_card(
+            self.tr("Needs review"), "0", "history", "warning"
+        )
+        for column, card in enumerate((
+            self.history_batches_metric,
+            self.history_images_metric,
+            self.history_saved_metric,
+            self.history_review_metric,
+        )):
+            metrics.addWidget(card, 0, column)
+            metrics.setColumnStretch(column, 1)
+        body.addLayout(metrics)
+
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.setObjectName("historyPageSplitter")
+
+        recent_card = QFrame()
+        recent_card.setObjectName("workspaceCard")
+        recent_layout = QVBoxLayout(recent_card)
+        recent_layout.setContentsMargins(14, 14, 14, 12)
+        recent_layout.setSpacing(10)
+        recent_layout.addWidget(self._make_card_header(
+            self.tr("Recent batches"),
+            self.tr("Select a batch to inspect its recipe and redacted artifacts."),
+        ))
+        filters = QHBoxLayout()
+        filters.setSpacing(8)
+        self.history_result_filter = QComboBox()
+        self.history_result_filter.addItem(self.tr("All results"), "all")
+        self.history_result_filter.addItem(self.tr("Completed"), "completed")
+        self.history_result_filter.addItem(self.tr("Needs review"), "review")
+        self.history_surface_filter = QComboBox()
+        self.history_surface_filter.addItem(self.tr("All surfaces"), "all")
+        self.history_surface_filter.addItem(self.tr("Desktop app"), "gui")
+        self.history_surface_filter.addItem("CLI", "cli")
+        self.history_surface_filter.addItem(self.tr("Watch folder"), "watch")
+        self.history_time_filter = QComboBox()
+        self.history_time_filter.addItem(self.tr("All time"), "all")
+        filters.addWidget(self.history_result_filter)
+        filters.addWidget(self.history_surface_filter)
+        filters.addStretch(1)
+        filters.addWidget(self.history_time_filter)
+        recent_layout.addLayout(filters)
+        self.history_result_filter.currentIndexChanged.connect(self._refresh_history_page)
+        self.history_surface_filter.currentIndexChanged.connect(self._refresh_history_page)
+
+        self.history_page_table = QTableWidget(0, 5)
+        self.history_page_table.setHorizontalHeaderLabels([
+            self.tr("Started"), self.tr("Surface"), self.tr("Preset"),
+            self.tr("Result"), self.tr("Size change"),
+        ])
+        self.history_page_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.history_page_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.history_page_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.history_page_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.history_page_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.history_page_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.history_page_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.history_page_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.history_page_table.setAlternatingRowColors(True)
+        self.history_page_table.verticalHeader().setVisible(False)
+        self.history_page_table.itemSelectionChanged.connect(self._update_history_detail)
+        self.history_page_table.setAccessibleName(self.tr("Recent batch history"))
+        recent_layout.addWidget(self.history_page_table, 1)
+
+        history_actions = QHBoxLayout()
+        history_actions.setSpacing(8)
+        export_btn = QPushButton(self.tr("Export history CSV"))
+        export_btn.setObjectName("secondaryBtn")
+        export_btn.setIcon(_create_line_icon("export"))
+        export_btn.clicked.connect(self._export_history_csv)
+        support_btn = QPushButton(self.tr("Export support bundle"))
+        support_btn.setObjectName("secondaryBtn")
+        support_btn.setIcon(_create_line_icon("export"))
+        support_btn.clicked.connect(self._export_support_bundle)
+        clear_btn = QPushButton(self.tr("Clear local history"))
+        clear_btn.setObjectName("dangerBtn")
+        clear_btn.setIcon(_create_line_icon("trash", CAT["red"]))
+        clear_btn.clicked.connect(self._clear_history_from_page)
+        history_actions.addWidget(export_btn)
+        history_actions.addWidget(support_btn)
+        history_actions.addStretch(1)
+        history_actions.addWidget(clear_btn)
+        recent_layout.addLayout(history_actions)
+        privacy = QLabel(self.tr("ⓘ  Source paths are never stored in history."))
+        privacy.setObjectName("cardSubtitle")
+        recent_layout.addWidget(privacy)
+        split.addWidget(recent_card)
+
+        detail_card = QFrame()
+        detail_card.setObjectName("detailCard")
+        detail_layout = QVBoxLayout(detail_card)
+        detail_layout.setContentsMargins(16, 14, 16, 14)
+        detail_layout.setSpacing(10)
+        detail_header = QHBoxLayout()
+        detail_header.addWidget(self._make_card_header(self.tr("Batch details")))
+        detail_header.addStretch(1)
+        self.history_detail_badge = self._status_badge(self.tr("No selection"))
+        detail_header.addWidget(self.history_detail_badge)
+        detail_layout.addLayout(detail_header)
+        detail_grid = QGridLayout()
+        detail_grid.setHorizontalSpacing(16)
+        detail_grid.setVerticalSpacing(9)
+        detail_grid.setColumnStretch(1, 1)
+        self.history_detail_values = {}
+        detail_specs = (
+            ("started", self.tr("Started")),
+            ("surface", self.tr("Surface")),
+            ("preset", self.tr("Preset")),
+            ("duration", self.tr("Duration")),
+            ("format", self.tr("Format")),
+            ("quality", self.tr("Quality")),
+            ("workers", self.tr("Workers")),
+            ("metadata", self.tr("Metadata")),
+            ("size", self.tr("Size change")),
+            ("artifacts", self.tr("Artifacts")),
+        )
+        for row, (key, label) in enumerate(detail_specs):
+            self.history_detail_values[key] = self._add_detail_row(detail_grid, row, label)
+        detail_layout.addLayout(detail_grid)
+        detail_layout.addStretch(1)
+        self.history_open_output_btn = QPushButton(self.tr("Open output folder"))
+        self.history_open_output_btn.setObjectName("primaryBtn")
+        self.history_open_output_btn.setIcon(_create_line_icon("folder", CAT["crust"]))
+        self.history_open_output_btn.clicked.connect(self._open_output)
+        self.history_open_output_btn.setEnabled(False)
+        detail_layout.addWidget(self.history_open_output_btn)
+        split.addWidget(detail_card)
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 1)
+        split.setSizes([780, 390])
+        body.addWidget(split, 1)
+        self._history_records = []
+        self._history_filtered = []
+        return page
+
+    def _refresh_history_page(self, *_args):
+        if not hasattr(self, "history_page_table"):
+            return
+        records = list(reversed(_load_batch_history()))
+        self._history_records = records
+        result_filter = self.history_result_filter.currentData() or "all"
+        surface_filter = self.history_surface_filter.currentData() or "all"
+        filtered = []
+        for record in records:
+            counts = record.get("counts") if isinstance(record.get("counts"), dict) else {}
+            failed = _safe_history_int(counts.get("failed", counts.get("failure_count", 0)))
+            if result_filter == "completed" and failed:
+                continue
+            if result_filter == "review" and not failed:
+                continue
+            if surface_filter != "all" and str(record.get("surface", "")) != surface_filter:
+                continue
+            filtered.append(record)
+        self._history_filtered = filtered
+        self.history_page_table.setRowCount(len(filtered))
+        for row, record in enumerate(filtered):
+            counts = record.get("counts") if isinstance(record.get("counts"), dict) else {}
+            byte_info = record.get("bytes") if isinstance(record.get("bytes"), dict) else {}
+            converted = _safe_history_int(counts.get("converted", 0))
+            skipped = _safe_history_int(counts.get("skipped", 0))
+            failed = _safe_history_int(counts.get("failed", counts.get("failure_count", 0)))
+            result_bits = [self.tr("{} converted").format(converted)]
+            if skipped:
+                result_bits.append(self.tr("{} skipped").format(skipped))
+            if failed:
+                result_bits.append(self.tr("{} failed").format(failed))
+            started = str(record.get("timestamp", "")).replace("T", " ").replace("+00:00", " UTC")
+            surface = {
+                "gui": self.tr("Desktop app"),
+                "cli": "CLI",
+                "watch": self.tr("Watch folder"),
+            }.get(str(record.get("surface", "")), str(record.get("surface", "—")))
+            before = _safe_history_int(byte_info.get("before", 0))
+            after = _safe_history_int(byte_info.get("after", 0))
+            values = (
+                started,
+                surface,
+                str(record.get("preset") or self.tr("Manual")),
+                ", ".join(result_bits),
+                f"{_fmt_size(before)} → {_fmt_size(after)}",
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(value)
+                if column == 3 and failed:
+                    item.setForeground(QColor(CAT["red"]))
+                self.history_page_table.setItem(row, column, item)
+
+        total_images = 0
+        total_saved = 0
+        needs_review = 0
+        for record in records:
+            counts = record.get("counts") if isinstance(record.get("counts"), dict) else {}
+            bytes_info = record.get("bytes") if isinstance(record.get("bytes"), dict) else {}
+            total_images += _safe_history_int(counts.get("converted", 0))
+            before = _safe_history_int(bytes_info.get("before", 0))
+            after = _safe_history_int(bytes_info.get("after", 0))
+            total_saved += max(0, before - after)
+            if _safe_history_int(counts.get("failed", counts.get("failure_count", 0))):
+                needs_review += 1
+        self._set_metric_card(self.history_batches_metric, str(len(records)))
+        self._set_metric_card(self.history_images_metric, f"{total_images:,}")
+        self._set_metric_card(self.history_saved_metric, _fmt_size(total_saved))
+        self._set_metric_card(
+            self.history_review_metric,
+            str(needs_review),
+            "warning" if needs_review else "",
+        )
+        if filtered:
+            self.history_page_table.selectRow(0)
+        else:
+            self._update_history_detail()
+        self.history_open_output_btn.setEnabled(self._last_ok_dst is not None)
+
+    def _update_history_detail(self):
+        if not hasattr(self, "history_detail_values"):
+            return
+        row = self.history_page_table.currentRow()
+        if not (0 <= row < len(self._history_filtered)):
+            for label in self.history_detail_values.values():
+                label.setText("—")
+            self.history_detail_badge.setText(self.tr("No selection"))
+            self.history_detail_badge.setProperty("tone", "ready")
+            _refresh_widget_style(self.history_detail_badge)
+            return
+        record = self._history_filtered[row]
+        counts = record.get("counts") if isinstance(record.get("counts"), dict) else {}
+        options = record.get("options") if isinstance(record.get("options"), dict) else {}
+        timing = record.get("timing") if isinstance(record.get("timing"), dict) else {}
+        byte_info = record.get("bytes") if isinstance(record.get("bytes"), dict) else {}
+        artifacts = record.get("artifacts") if isinstance(record.get("artifacts"), dict) else {}
+        failed = _safe_history_int(counts.get("failed", counts.get("failure_count", 0)))
+        self.history_detail_badge.setText(self.tr("Needs review") if failed else self.tr("Completed"))
+        self.history_detail_badge.setProperty("tone", "warning" if failed else "success")
+        _refresh_widget_style(self.history_detail_badge)
+        surface = {
+            "gui": self.tr("Desktop app"), "cli": "CLI", "watch": self.tr("Watch folder"),
+        }.get(str(record.get("surface", "")), str(record.get("surface", "—")))
+        before = _safe_history_int(byte_info.get("before", 0))
+        after = _safe_history_int(byte_info.get("after", 0))
+        artifacts_text = ", ".join(
+            f"{key.replace('_', ' ').title()}: {value}"
+            for key, value in artifacts.items() if value
+        ) or self.tr("None")
+        values = {
+            "started": str(record.get("timestamp", "—")).replace("T", " "),
+            "surface": surface,
+            "preset": str(record.get("preset") or self.tr("Manual")),
+            "duration": _fmt_eta(float(timing.get("wall_seconds", 0) or 0)),
+            "format": str(options.get("format", "auto")).upper(),
+            "quality": str(options.get("quality", "—")),
+            "workers": str(options.get("workers", "—")),
+            "metadata": str(options.get("metadata_mode", "preserve")).replace("_", " ").title(),
+            "size": f"{_fmt_size(before)} → {_fmt_size(after)}",
+            "artifacts": artifacts_text,
+        }
+        for key, value in values.items():
+            self.history_detail_values[key].setText(value)
+
+    def _export_history_csv(self):
+        import csv
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            self.tr("Export Batch History"),
+            "imgconverter-history.csv",
+            self.tr("CSV files (*.csv);;All files (*)"),
+        )
+        if not path:
+            return
+        stream = io.StringIO(newline="")
+        writer = csv.writer(stream)
+        writer.writerow(["Started", "Surface", "Preset", "Converted", "Skipped", "Failed", "Bytes Before", "Bytes After"])
+        for record in self._history_records:
+            counts = record.get("counts") if isinstance(record.get("counts"), dict) else {}
+            byte_info = record.get("bytes") if isinstance(record.get("bytes"), dict) else {}
+            writer.writerow([
+                record.get("timestamp", ""), record.get("surface", ""), record.get("preset", ""),
+                _safe_history_int(counts.get("converted", 0)),
+                _safe_history_int(counts.get("skipped", 0)),
+                _safe_history_int(counts.get("failed", counts.get("failure_count", 0))),
+                _safe_history_int(byte_info.get("before", 0)),
+                _safe_history_int(byte_info.get("after", 0)),
+            ])
+        try:
+            _write_text_atomic(Path(path), stream.getvalue())
+            self.status_bar.showMessage(self.tr("Batch history exported."), 5000)
+        except OSError as exc:
+            QMessageBox.warning(self, self.tr("Export Failed"), str(exc))
+
+    def _clear_history_from_page(self):
+        if not self._history_records:
+            return
+        answer = QMessageBox.question(
+            self,
+            self.tr("Clear Batch History"),
+            self.tr("Delete all redacted batch summaries stored on this device?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            _write_batch_history([])
+            self._refresh_history_page()
+            self.status_bar.showMessage(self.tr("Batch history cleared."), 5000)
+        except OSError as exc:
+            QMessageBox.warning(self, self.tr("Clear Failed"), str(exc))
+
+    def _build_watch_page(self) -> QWidget:
+        page, body, actions = self._new_workspace_page(
+            self.tr("Watch folders"),
+            self.tr("Repeatable local folder-to-folder conversion workflows"),
+        )
+        add_button = QPushButton(self.tr("+  Add profile"))
+        add_button.setObjectName("primaryBtn")
+        add_button.clicked.connect(self._manage_watch_profiles)
+        actions.addWidget(add_button)
+
+        metrics = QGridLayout()
+        metrics.setContentsMargins(0, 0, 0, 0)
+        metrics.setHorizontalSpacing(10)
+        self.watch_profiles_metric = self._make_metric_card(self.tr("Profiles"), "0", "folder")
+        self.watch_last_metric = self._make_metric_card(self.tr("Last run"), self.tr("Never"), "history")
+        self.watch_converted_metric = self._make_metric_card(self.tr("Converted today"), "0", "export")
+        for column, card in enumerate((self.watch_profiles_metric, self.watch_last_metric, self.watch_converted_metric)):
+            metrics.addWidget(card, 0, column)
+            metrics.setColumnStretch(column, 1)
+        body.addLayout(metrics)
+
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.setObjectName("watchPageSplitter")
+        profile_card = QFrame()
+        profile_card.setObjectName("workspaceCard")
+        profile_layout = QVBoxLayout(profile_card)
+        profile_layout.setContentsMargins(14, 14, 14, 12)
+        profile_layout.setSpacing(10)
+        profile_layout.addWidget(self._make_card_header(
+            self.tr("Automation profiles"),
+            self.tr("Saved source, output, and preset combinations that run on demand."),
+        ))
+        filter_row = QHBoxLayout()
+        self.watch_search_edit = QLineEdit()
+        self.watch_search_edit.setPlaceholderText(self.tr("Search profiles"))
+        self.watch_search_edit.setClearButtonEnabled(True)
+        self.watch_status_filter = QComboBox()
+        self.watch_status_filter.addItem(self.tr("All statuses"), "all")
+        self.watch_status_filter.addItem(self.tr("Ready"), "ready")
+        self.watch_status_filter.addItem(self.tr("Needs attention"), "error")
+        filter_row.addWidget(self.watch_search_edit, 1)
+        filter_row.addWidget(self.watch_status_filter)
+        profile_layout.addLayout(filter_row)
+        self.watch_search_edit.textChanged.connect(self._refresh_watch_page)
+        self.watch_status_filter.currentIndexChanged.connect(self._refresh_watch_page)
+
+        self.watch_page_table = QTableWidget(0, 4)
+        self.watch_page_table.setHorizontalHeaderLabels([
+            self.tr("Profile"), self.tr("Route"), self.tr("Preset"), self.tr("Status"),
+        ])
+        self.watch_page_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.watch_page_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.watch_page_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.watch_page_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.watch_page_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.watch_page_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.watch_page_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.watch_page_table.setAlternatingRowColors(True)
+        self.watch_page_table.verticalHeader().setVisible(False)
+        self.watch_page_table.itemSelectionChanged.connect(self._update_watch_detail)
+        self.watch_page_table.doubleClicked.connect(lambda _index: self._manage_watch_profiles())
+        self.watch_page_table.setAccessibleName(self.tr("Watch folder automation profiles"))
+        profile_layout.addWidget(self.watch_page_table, 1)
+        split.addWidget(profile_card)
+
+        detail_card = QFrame()
+        detail_card.setObjectName("detailCard")
+        detail_layout = QVBoxLayout(detail_card)
+        detail_layout.setContentsMargins(16, 14, 16, 14)
+        detail_layout.setSpacing(10)
+        detail_header = QHBoxLayout()
+        detail_header.addWidget(self._make_card_header(self.tr("Profile details")))
+        detail_header.addStretch(1)
+        self.watch_detail_badge = self._status_badge(self.tr("No selection"))
+        detail_header.addWidget(self.watch_detail_badge)
+        detail_layout.addLayout(detail_header)
+        detail_grid = QGridLayout()
+        detail_grid.setHorizontalSpacing(16)
+        detail_grid.setVerticalSpacing(10)
+        detail_grid.setColumnStretch(1, 1)
+        self.watch_detail_values = {}
+        for row, (key, label) in enumerate((
+            ("name", self.tr("Name")),
+            ("source", self.tr("Source folder")),
+            ("output", self.tr("Output folder")),
+            ("preset", self.tr("Preset")),
+            ("mode", self.tr("Mode")),
+            ("last_run", self.tr("Last run")),
+            ("last_result", self.tr("Last result")),
+        )):
+            self.watch_detail_values[key] = self._add_detail_row(detail_grid, row, label)
+        detail_layout.addLayout(detail_grid)
+        local_note = QLabel(self.tr("ⓘ  Runs happen locally; no background cloud service."))
+        local_note.setObjectName("cardSubtitle")
+        local_note.setWordWrap(True)
+        detail_layout.addWidget(local_note)
+        detail_layout.addStretch(1)
+        watch_actions = QHBoxLayout()
+        self.watch_remove_btn = QPushButton(self.tr("Remove profile"))
+        self.watch_remove_btn.setObjectName("dangerBtn")
+        self.watch_remove_btn.setIcon(_create_line_icon("trash", CAT["red"]))
+        self.watch_remove_btn.clicked.connect(self._remove_watch_profile_from_page)
+        self.watch_edit_btn = QPushButton(self.tr("Edit"))
+        self.watch_edit_btn.setObjectName("secondaryBtn")
+        self.watch_edit_btn.clicked.connect(self._manage_watch_profiles)
+        self.watch_run_btn = QPushButton(self.tr("Run now"))
+        self.watch_run_btn.setObjectName("primaryBtn")
+        self.watch_run_btn.setIcon(_create_line_icon("play", CAT["crust"]))
+        self.watch_run_btn.clicked.connect(self._run_watch_profile_from_page)
+        watch_actions.addWidget(self.watch_remove_btn)
+        watch_actions.addStretch(1)
+        watch_actions.addWidget(self.watch_edit_btn)
+        watch_actions.addWidget(self.watch_run_btn)
+        detail_layout.addLayout(watch_actions)
+        split.addWidget(detail_card)
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 1)
+        split.setSizes([760, 420])
+        body.addWidget(split, 1)
+
+        activity = QFrame()
+        activity.setObjectName("workspaceCard")
+        activity_layout = QVBoxLayout(activity)
+        activity_layout.setContentsMargins(14, 12, 14, 12)
+        activity_layout.setSpacing(8)
+        activity_layout.addWidget(self._make_card_header(self.tr("Recent automation activity")))
+        self.watch_activity_table = QTableWidget(0, 3)
+        self.watch_activity_table.setHorizontalHeaderLabels([
+            self.tr("Status"), self.tr("Profile"), self.tr("Last run"),
+        ])
+        self.watch_activity_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.watch_activity_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.watch_activity_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.watch_activity_table.verticalHeader().setVisible(False)
+        self.watch_activity_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.watch_activity_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.watch_activity_table.setMaximumHeight(150)
+        activity_layout.addWidget(self.watch_activity_table)
+        body.addWidget(activity)
+        self._watch_profiles = []
+        self._watch_filtered = []
+        return page
+
+    def _refresh_watch_page(self, *_args):
+        if not hasattr(self, "watch_page_table"):
+            return
+        profiles = _load_watch_profiles()
+        self._watch_profiles = profiles
+        query = self.watch_search_edit.text().strip().lower()
+        status_filter = self.watch_status_filter.currentData() or "all"
+        filtered = []
+        for index, profile in enumerate(profiles):
+            haystack = " ".join(str(profile.get(key, "")) for key in ("source", "output", "preset")).lower()
+            has_error = bool(profile.get("last_error"))
+            if query and query not in haystack:
+                continue
+            if status_filter == "ready" and has_error:
+                continue
+            if status_filter == "error" and not has_error:
+                continue
+            filtered.append((index, profile))
+        self._watch_filtered = filtered
+        self.watch_page_table.setRowCount(len(filtered))
+        for row, (_source_index, profile) in enumerate(filtered):
+            source = str(profile.get("source", ""))
+            output = str(profile.get("output", ""))
+            name = Path(source).name or source or self.tr("Profile")
+            route = f"{source}  →  {output}"
+            error = str(profile.get("last_error") or "")
+            status = self.tr("Needs attention") if error else self.tr("Ready")
+            values = (name, route, str(profile.get("preset", "Default")), status)
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(error if column == 3 and error else value)
+                if column == 3:
+                    item.setForeground(QColor(CAT["red"] if error else CAT["green"]))
+                self.watch_page_table.setItem(row, column, item)
+        self._set_metric_card(self.watch_profiles_metric, str(len(profiles)))
+        latest_runs = [str(profile.get("last_run")) for profile in profiles if profile.get("last_run")]
+        latest = max(latest_runs) if latest_runs else self.tr("Never")
+        self._set_metric_card(self.watch_last_metric, latest.replace("T", " ")[:16])
+        converted = sum(_safe_history_int(profile.get("last_count", 0)) for profile in profiles)
+        self._set_metric_card(self.watch_converted_metric, f"{converted:,}")
+
+        recent = sorted(
+            profiles,
+            key=lambda profile: str(profile.get("last_run") or ""),
+            reverse=True,
+        )[:3]
+        self.watch_activity_table.setRowCount(len(recent))
+        for row, profile in enumerate(recent):
+            error = str(profile.get("last_error") or "")
+            status = self.tr("Needs attention") if error else (
+                self.tr("Completed") if profile.get("last_run") else self.tr("Ready")
+            )
+            name = Path(str(profile.get("source", ""))).name or str(profile.get("source", ""))
+            values = (status, name, str(profile.get("last_run") or self.tr("Never")).replace("T", " "))
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if column == 0:
+                    item.setForeground(QColor(CAT["red"] if error else CAT["green"]))
+                self.watch_activity_table.setItem(row, column, item)
+        if filtered:
+            self.watch_page_table.selectRow(0)
+        else:
+            self._update_watch_detail()
+
+    def _selected_watch_profile(self):
+        row = self.watch_page_table.currentRow()
+        if 0 <= row < len(self._watch_filtered):
+            return self._watch_filtered[row]
+        return None, None
+
+    def _update_watch_detail(self):
+        if not hasattr(self, "watch_detail_values"):
+            return
+        _source_index, profile = self._selected_watch_profile()
+        enabled = profile is not None
+        self.watch_remove_btn.setEnabled(enabled)
+        self.watch_edit_btn.setEnabled(enabled)
+        self.watch_run_btn.setEnabled(enabled)
+        if not profile:
+            for value in self.watch_detail_values.values():
+                value.setText("—")
+            self.watch_detail_badge.setText(self.tr("No selection"))
+            self.watch_detail_badge.setProperty("tone", "ready")
+            _refresh_widget_style(self.watch_detail_badge)
+            return
+        source = str(profile.get("source", ""))
+        error = str(profile.get("last_error") or "")
+        self.watch_detail_badge.setText(self.tr("Needs attention") if error else self.tr("Ready"))
+        self.watch_detail_badge.setProperty("tone", "danger" if error else "success")
+        _refresh_widget_style(self.watch_detail_badge)
+        values = {
+            "name": Path(source).name or source,
+            "source": source,
+            "output": str(profile.get("output", "")),
+            "preset": str(profile.get("preset", "Default")),
+            "mode": self.tr("Run on demand"),
+            "last_run": str(profile.get("last_run") or self.tr("Never")).replace("T", " "),
+            "last_result": error or self.tr("Ready to run"),
+        }
+        for key, value in values.items():
+            self.watch_detail_values[key].setText(value)
+
+    def _manage_watch_profiles(self, *_args):
+        row, _profile = self._selected_watch_profile() if hasattr(self, "watch_page_table") else (None, None)
+        dialog = WatchFolderDialog(self)
+        if row is not None and 0 <= row < dialog.table.rowCount():
+            dialog.table.selectRow(row)
+        _exec_dialog_and_delete(dialog)
+        self._refresh_watch_page()
+
+    def _run_watch_profile_from_page(self):
+        source_index, profile = self._selected_watch_profile()
+        if source_index is None or profile is None:
+            return
+        dialog = WatchFolderDialog(self)
+        if 0 <= source_index < dialog.table.rowCount():
+            dialog.table.selectRow(source_index)
+            QTimer.singleShot(0, dialog._run_now)
+        _exec_dialog_and_delete(dialog)
+        self._refresh_watch_page()
+
+    def _remove_watch_profile_from_page(self):
+        source_index, profile = self._selected_watch_profile()
+        if source_index is None or profile is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            self.tr("Remove Watch Profile"),
+            self.tr("Remove the selected watch profile?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        profiles = _load_watch_profiles()
+        if 0 <= source_index < len(profiles):
+            profiles.pop(source_index)
+            _save_watch_profiles(profiles)
+        self._refresh_watch_page()
+
+    def _build_plugins_page(self) -> QWidget:
+        page, body, actions = self._new_workspace_page(
+            self.tr("Plugins"),
+            self.tr("Review local extensions before allowing their code to run"),
+        )
+        refresh = QPushButton(self.tr("Refresh"))
+        refresh.setObjectName("secondaryBtn")
+        refresh.setIcon(_create_line_icon("refresh"))
+        refresh.clicked.connect(self._refresh_plugins_page)
+        actions.addWidget(refresh)
+        self.plugins_page_refresh_btn = refresh
+
+        metrics = QGridLayout()
+        metrics.setContentsMargins(0, 0, 0, 0)
+        metrics.setHorizontalSpacing(10)
+        self.plugins_installed_metric = self._make_metric_card(self.tr("Installed"), "0", "plugins")
+        self.plugins_trusted_metric = self._make_metric_card(self.tr("Trusted"), "0", "check", "success")
+        self.plugins_review_metric = self._make_metric_card(self.tr("Needs review"), "0", "history", "warning")
+        self.plugins_blocked_metric = self._make_metric_card(self.tr("Blocked"), "0", "cancel", "danger")
+        for column, card in enumerate((
+            self.plugins_installed_metric,
+            self.plugins_trusted_metric,
+            self.plugins_review_metric,
+            self.plugins_blocked_metric,
+        )):
+            metrics.addWidget(card, 0, column)
+            metrics.setColumnStretch(column, 1)
+        body.addLayout(metrics)
+
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.setObjectName("pluginsPageSplitter")
+        inventory_card = QFrame()
+        inventory_card.setObjectName("workspaceCard")
+        inventory_layout = QVBoxLayout(inventory_card)
+        inventory_layout.setContentsMargins(14, 14, 14, 12)
+        inventory_layout.setSpacing(10)
+        inventory_layout.addWidget(self._make_card_header(
+            self.tr("Installed plugins"),
+            self.tr("Only an exact trusted file hash is allowed to run."),
+        ))
+        filter_row = QHBoxLayout()
+        self.plugins_status_filter = QComboBox()
+        self.plugins_status_filter.addItem(self.tr("All statuses"), "all")
+        self.plugins_status_filter.addItem(self.tr("Trusted"), "trusted")
+        self.plugins_status_filter.addItem(self.tr("Needs review"), "review")
+        self.plugins_status_filter.addItem(self.tr("Blocked"), "blocked")
+        self.plugins_search_edit = QLineEdit()
+        self.plugins_search_edit.setPlaceholderText(self.tr("Search plugins"))
+        self.plugins_search_edit.setClearButtonEnabled(True)
+        filter_row.addWidget(self.plugins_status_filter)
+        filter_row.addWidget(self.plugins_search_edit, 1)
+        inventory_layout.addLayout(filter_row)
+        self.plugins_status_filter.currentIndexChanged.connect(self._apply_plugins_page_filter)
+        self.plugins_search_edit.textChanged.connect(self._apply_plugins_page_filter)
+
+        self.plugins_page_table = QTableWidget(0, 4)
+        self.plugins_page_table.setHorizontalHeaderLabels([
+            self.tr("Plugin"), self.tr("Origin"), self.tr("Status"), self.tr("Contract"),
+        ])
+        self.plugins_page_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.plugins_page_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.plugins_page_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.plugins_page_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.plugins_page_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.plugins_page_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.plugins_page_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.plugins_page_table.setAlternatingRowColors(True)
+        self.plugins_page_table.verticalHeader().setVisible(False)
+        self.plugins_page_table.itemSelectionChanged.connect(self._update_plugin_page_detail)
+        self.plugins_page_table.setAccessibleName(self.tr("Installed plugin trust inventory"))
+        inventory_layout.addWidget(self.plugins_page_table, 1)
+        split.addWidget(inventory_card)
+
+        review_card = QFrame()
+        review_card.setObjectName("detailCard")
+        review_layout = QVBoxLayout(review_card)
+        review_layout.setContentsMargins(16, 14, 16, 14)
+        review_layout.setSpacing(10)
+        review_header = QHBoxLayout()
+        review_header.addWidget(self._make_card_header(self.tr("Trust review")))
+        review_header.addStretch(1)
+        self.plugins_detail_badge = self._status_badge(self.tr("Not loaded"))
+        review_header.addWidget(self.plugins_detail_badge)
+        review_layout.addLayout(review_header)
+        self.plugins_detail_name = QLabel(self.tr("Select a plugin"))
+        self.plugins_detail_name.setObjectName("cardTitle")
+        review_layout.addWidget(self.plugins_detail_name)
+        detail_grid = QGridLayout()
+        detail_grid.setHorizontalSpacing(16)
+        detail_grid.setVerticalSpacing(9)
+        detail_grid.setColumnStretch(1, 1)
+        self.plugins_detail_values = {}
+        for row, (key, label) in enumerate((
+            ("source", self.tr("Source")),
+            ("sha", "SHA-256"),
+            ("contract", self.tr("Contract")),
+            ("capabilities", self.tr("Capabilities")),
+        )):
+            self.plugins_detail_values[key] = self._add_detail_row(detail_grid, row, label)
+        review_layout.addLayout(detail_grid)
+        warning = QLabel(self.tr(
+            "⚠  Trust grants this exact file hash permission to run. "
+            "Any change requires review again."
+        ))
+        warning.setObjectName("dialogStatus")
+        warning.setProperty("tone", "warning")
+        warning.setWordWrap(True)
+        review_layout.addWidget(warning)
+        review_layout.addStretch(1)
+        trust_actions = QHBoxLayout()
+        self.plugins_block_btn = QPushButton(self.tr("Keep blocked"))
+        self.plugins_block_btn.setObjectName("dangerBtn")
+        self.plugins_block_btn.clicked.connect(self._untrust_plugin_from_page)
+        self.plugins_trust_btn = QPushButton(self.tr("Trust this version"))
+        self.plugins_trust_btn.setObjectName("primaryBtn")
+        self.plugins_trust_btn.setIcon(_create_line_icon("check", CAT["crust"]))
+        self.plugins_trust_btn.clicked.connect(self._trust_plugin_from_page)
+        trust_actions.addWidget(self.plugins_block_btn)
+        trust_actions.addWidget(self.plugins_trust_btn)
+        review_layout.addLayout(trust_actions)
+        split.addWidget(review_card)
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 1)
+        split.setSizes([760, 420])
+        body.addWidget(split, 1)
+
+        explainer = QFrame()
+        explainer.setObjectName("workspaceCard")
+        explain_layout = QHBoxLayout(explainer)
+        explain_layout.setContentsMargins(16, 12, 16, 12)
+        explain_layout.setSpacing(18)
+        explain_layout.addWidget(self._make_card_header(
+            self.tr("How plugin trust works"),
+            self.tr("Plugins never run before trust is granted."),
+        ))
+        for number, title, description in (
+            ("1", self.tr("Discover locally"), self.tr("Find extensions on this device.")),
+            ("2", self.tr("Inspect capabilities"), self.tr("Review hooks, API, and network access.")),
+            ("3", self.tr("Trust exact hash"), self.tr("Changes require a fresh decision.")),
+        ):
+            step = QFrame()
+            step.setObjectName("quickStrip")
+            step_layout = QHBoxLayout(step)
+            step_layout.setContentsMargins(10, 8, 10, 8)
+            badge = self._status_badge(number, "active")
+            step_layout.addWidget(badge)
+            step_layout.addWidget(self._make_card_header(title, description), 1)
+            explain_layout.addWidget(step, 1)
+        body.addWidget(explainer)
+        self._plugin_page_rows = []
+        self._plugin_page_filtered = []
+        self._plugin_page_worker = None
+        self._plugin_page_loaded = False
+        self._update_plugin_page_detail()
+        return page
+
+    def _refresh_plugins_page(self, *_args):
+        if not hasattr(self, "plugins_page_table"):
+            return
+        worker = self._plugin_page_worker
+        if worker is not None and worker.isRunning():
+            return
+        self.plugins_page_refresh_btn.setEnabled(False)
+        self.plugins_detail_badge.setText(self.tr("Loading"))
+        self.plugins_detail_badge.setProperty("tone", "active")
+        _refresh_widget_style(self.plugins_detail_badge)
+        worker = _PluginTrustWorker(self)
+        self._plugin_page_worker = worker
+        worker.rows_ready.connect(self._apply_plugin_page_rows)
+        worker.failed.connect(self._plugin_page_failed)
+        worker.finished.connect(self._plugin_page_worker_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _plugin_page_worker_finished(self):
+        sender = self.sender()
+        if sender is self._plugin_page_worker:
+            self._plugin_page_worker = None
+        if hasattr(self, "plugins_page_refresh_btn"):
+            self.plugins_page_refresh_btn.setEnabled(True)
+
+    def _plugin_page_failed(self, message: str):
+        self._plugin_page_rows = []
+        self._plugin_page_loaded = True
+        self._apply_plugins_page_filter()
+        self.plugins_detail_badge.setText(self.tr("Load failed"))
+        self.plugins_detail_badge.setProperty("tone", "danger")
+        self.plugins_detail_badge.setToolTip(message)
+        _refresh_widget_style(self.plugins_detail_badge)
+
+    def _apply_plugin_page_rows(self, rows: list):
+        self._plugin_page_rows = list(rows)
+        self._plugin_page_loaded = True
+        trusted = sum(1 for row in rows if row.get("status") == "trusted")
+        review = sum(1 for row in rows if row.get("status") in {"untrusted", "changed"})
+        blocked = max(0, len(rows) - trusted - review)
+        self._set_metric_card(self.plugins_installed_metric, str(len(rows)))
+        self._set_metric_card(self.plugins_trusted_metric, str(trusted), "success" if trusted else "")
+        self._set_metric_card(self.plugins_review_metric, str(review), "warning" if review else "")
+        self._set_metric_card(self.plugins_blocked_metric, str(blocked), "danger" if blocked else "")
+        self._apply_plugins_page_filter()
+
+    def _plugin_contract_text(self, row: dict) -> str:
+        capabilities = row.get("capabilities")
+        if not isinstance(capabilities, dict):
+            return self.tr("Unavailable")
+        hooks = []
+        for key in ("decoders", "encoders", "storage"):
+            values = capabilities.get(key) or []
+            if values:
+                hooks.append(f"{key}: {', '.join(map(str, values))}")
+        network = capabilities.get("network")
+        hooks.append(self.tr("network on") if network is True else self.tr("network off") if network is False else self.tr("network unknown"))
+        api_version = row.get("api_version") or "?"
+        return f"API {api_version} · {' · '.join(hooks)}"
+
+    def _apply_plugins_page_filter(self, *_args):
+        if not hasattr(self, "plugins_page_table"):
+            return
+        query = self.plugins_search_edit.text().strip().lower()
+        status_filter = self.plugins_status_filter.currentData() or "all"
+        filtered = []
+        for index, row in enumerate(self._plugin_page_rows):
+            status = str(row.get("status", ""))
+            if status_filter == "trusted" and status != "trusted":
+                continue
+            if status_filter == "review" and status not in {"untrusted", "changed"}:
+                continue
+            if status_filter == "blocked" and status in {"trusted", "untrusted", "changed"}:
+                continue
+            haystack = f"{row.get('name', '')} {row.get('path', '')} {self._plugin_contract_text(row)}".lower()
+            if query and query not in haystack:
+                continue
+            filtered.append((index, row))
+        self._plugin_page_filtered = filtered
+        self.plugins_page_table.setRowCount(len(filtered))
+        for table_row, (_source_index, row) in enumerate(filtered):
+            status = str(row.get("status", ""))
+            status_label = {
+                "trusted": self.tr("Trusted"),
+                "untrusted": self.tr("Needs review"),
+                "changed": self.tr("Changed"),
+                "missing": self.tr("Missing"),
+                "incompatible": self.tr("Blocked"),
+            }.get(status, status.replace("_", " ").title() or self.tr("Blocked"))
+            path = str(row.get("path", ""))
+            origin = self.tr("Package entry point") if "site-packages" in path.lower() else self.tr("Local file")
+            values = (str(row.get("name", "")), origin, status_label, self._plugin_contract_text(row))
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(path if column in {0, 1} else value)
+                if column == 2:
+                    tone_color = CAT["green"] if status == "trusted" else CAT["yellow"] if status in {"untrusted", "changed"} else CAT["red"]
+                    item.setForeground(QColor(tone_color))
+                self.plugins_page_table.setItem(table_row, column, item)
+        if filtered:
+            self.plugins_page_table.selectRow(0)
+        else:
+            self._update_plugin_page_detail()
+
+    def _selected_plugin_page_row(self):
+        row = self.plugins_page_table.currentRow()
+        if 0 <= row < len(self._plugin_page_filtered):
+            return self._plugin_page_filtered[row][1]
+        return None
+
+    def _update_plugin_page_detail(self):
+        if not hasattr(self, "plugins_detail_values"):
+            return
+        row = self._selected_plugin_page_row()
+        if row is None:
+            self.plugins_detail_name.setText(self.tr("Select a plugin"))
+            for value in self.plugins_detail_values.values():
+                value.setText("—")
+            self.plugins_detail_badge.setText(self.tr("No plugins") if self._plugin_page_loaded else self.tr("Not loaded"))
+            self.plugins_detail_badge.setProperty("tone", "ready")
+            self.plugins_trust_btn.setEnabled(False)
+            self.plugins_block_btn.setEnabled(False)
+            _refresh_widget_style(self.plugins_detail_badge)
+            return
+        status = str(row.get("status", ""))
+        self.plugins_detail_name.setText(str(row.get("name", self.tr("Plugin"))))
+        label = {
+            "trusted": self.tr("Trusted"), "untrusted": self.tr("Needs review"),
+            "changed": self.tr("Changed"), "missing": self.tr("Missing"),
+        }.get(status, self.tr("Blocked"))
+        tone = "success" if status == "trusted" else "warning" if status in {"untrusted", "changed"} else "danger"
+        self.plugins_detail_badge.setText(label)
+        self.plugins_detail_badge.setProperty("tone", tone)
+        _refresh_widget_style(self.plugins_detail_badge)
+        capabilities = row.get("capabilities") if isinstance(row.get("capabilities"), dict) else {}
+        capability_bits = []
+        for key in ("decoders", "encoders", "storage"):
+            values = capabilities.get(key) or []
+            if values:
+                capability_bits.append(f"{key.title()}: {', '.join(map(str, values))}")
+        if capabilities.get("network") is True:
+            capability_bits.append(self.tr("Network access"))
+        elif capabilities:
+            capability_bits.append(self.tr("Network off"))
+        self.plugins_detail_values["source"].setText(str(row.get("path", "—")))
+        self.plugins_detail_values["sha"].setText(str(row.get("hash_prefix") or row.get("sha256") or "—"))
+        self.plugins_detail_values["contract"].setText(
+            self.tr("API version {}, capability schema {}").format(
+                row.get("api_version") or "?", row.get("capability_schema") or "?"
+            )
+        )
+        self.plugins_detail_values["capabilities"].setText(", ".join(capability_bits) or self.tr("Unavailable"))
+        self.plugins_trust_btn.setEnabled(status in {"untrusted", "changed"})
+        self.plugins_block_btn.setEnabled(status in {"trusted", "changed", "missing"})
+
+    def _trust_plugin_from_page(self):
+        row = self._selected_plugin_page_row()
+        if not row or row.get("status") == "missing":
+            return
+        ok, message = _trust_plugin(row.get("trust_ref") or row.get("path", ""))
+        self.status_bar.showMessage(message, 7000)
+        if ok:
+            self._refresh_plugins_page()
+
+    def _untrust_plugin_from_page(self):
+        row = self._selected_plugin_page_row()
+        if not row:
+            return
+        ok, message = _untrust_plugin(row.get("trust_ref") or row.get("name", ""))
+        self.status_bar.showMessage(message, 7000)
+        if ok:
+            self._refresh_plugins_page()
+
+    def _make_tool_card(
+        self,
+        title: str,
+        description: str,
+        badge_text: str,
+        badge_tone: str,
+        icon_name: str,
+        action_text: str,
+        callback,
+    ) -> QFrame:
+        card = QFrame()
+        card.setObjectName("toolCard")
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(14)
+        icon = QLabel()
+        icon.setPixmap(_create_line_icon(icon_name, CAT["lavender"], 34).pixmap(QSize(34, 34)))
+        icon.setFixedSize(46, 46)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon)
+        copy = QVBoxLayout()
+        copy.setSpacing(3)
+        title_label = QLabel(title)
+        title_label.setObjectName("cardTitle")
+        description_label = QLabel(description)
+        description_label.setObjectName("cardSubtitle")
+        description_label.setWordWrap(True)
+        copy.addWidget(title_label)
+        copy.addWidget(description_label)
+        badge = self._status_badge(badge_text, badge_tone)
+        badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        copy.addWidget(badge, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addLayout(copy, 1)
+        button = QPushButton(action_text)
+        button.setObjectName("secondaryBtn")
+        button.clicked.connect(callback)
+        layout.addWidget(button, 0, Qt.AlignmentFlag.AlignBottom)
+        card._status_badge = badge
+        card._action_button = button
+        return card
+
+    def _build_tools_page(self) -> QWidget:
+        page, body, _actions = self._new_workspace_page(
+            self.tr("Tools"),
+            self.tr("Local utilities, exports, and system integration"),
+        )
+        tools_grid = QGridLayout()
+        tools_grid.setContentsMargins(0, 0, 0, 0)
+        tools_grid.setHorizontalSpacing(10)
+        tools_grid.setVerticalSpacing(10)
+        similar_card = self._make_tool_card(
+            self.tr("Find similar images"),
+            self.tr("Review near-duplicate groups before conversion."),
+            self.tr("Scan required"), "ready", "similar",
+            self.tr("Scan a source"), self._tools_scan_source,
+        )
+        self.tools_shell_card = self._make_tool_card(
+            self.tr("File manager integration"),
+            self.tr("Add local Convert with ImgConverter actions to Explorer."),
+            self.tr("Checking"), "ready", "file-manager",
+            self.tr("Manage"), self._show_shell_integration_dialog,
+        )
+        commands_card = self._make_tool_card(
+            self.tr("Command palette"),
+            self.tr("Search every available action and see disabled-state reasons."),
+            "Ctrl+K", "active", "scan",
+            self.tr("Open commands"), self._open_command_palette,
+        )
+        exports_card = self._make_tool_card(
+            self.tr("Diagnostics & exports"),
+            self.tr("Create redacted reports for troubleshooting or automation."),
+            self.tr("Privacy-safe"), "success", "export",
+            self.tr("Open exports"), self._export_support_bundle,
+        )
+        for index, card in enumerate((similar_card, self.tools_shell_card, commands_card, exports_card)):
+            tools_grid.addWidget(card, index // 2, index % 2)
+            tools_grid.setColumnStretch(index % 2, 1)
+        body.addLayout(tools_grid)
+
+        detail_split = QSplitter(Qt.Orientation.Horizontal)
+        detail_split.setObjectName("toolsPageSplitter")
+        shell_card = QFrame()
+        shell_card.setObjectName("workspaceCard")
+        shell_layout = QVBoxLayout(shell_card)
+        shell_layout.setContentsMargins(16, 14, 16, 14)
+        shell_layout.setSpacing(10)
+        shell_header = QHBoxLayout()
+        shell_header.addWidget(self._make_card_header(
+            self.tr("File manager integration"),
+            self.tr("Fast, local conversions from the system file manager."),
+        ))
+        shell_header.addStretch(1)
+        self.tools_shell_status = self._status_badge(self.tr("Checking"))
+        shell_header.addWidget(self.tools_shell_status)
+        shell_layout.addLayout(shell_header)
+        command_label = QLabel(self.tr("Context menu command preview (read-only)"))
+        command_label.setObjectName("fieldLabel")
+        shell_layout.addWidget(command_label)
+        self.tools_shell_preview = QPlainTextEdit()
+        self.tools_shell_preview.setReadOnly(True)
+        self.tools_shell_preview.setMaximumHeight(82)
+        self.tools_shell_preview.setAccessibleName(self.tr("File manager command preview"))
+        shell_layout.addWidget(self.tools_shell_preview)
+        preset_row = QHBoxLayout()
+        preset_label = QLabel(self.tr("Default preset"))
+        preset_label.setObjectName("fieldLabel")
+        self.tools_shell_preset = QComboBox()
+        self.tools_shell_preset.addItem(self.tr("(none)"), None)
+        for preset_name in sorted(list_presets().keys()):
+            self.tools_shell_preset.addItem(preset_name, preset_name)
+        self.tools_shell_preset.currentIndexChanged.connect(self._refresh_tools_shell_preview)
+        preset_row.addWidget(preset_label)
+        preset_row.addWidget(self.tools_shell_preset, 1)
+        shell_layout.addLayout(preset_row)
+        shell_layout.addStretch(1)
+        shell_actions = QHBoxLayout()
+        uninstall = QPushButton(self.tr("Uninstall"))
+        uninstall.setObjectName("dangerBtn")
+        uninstall.clicked.connect(self._show_shell_integration_dialog)
+        update = QPushButton(self.tr("Update integration"))
+        update.setObjectName("primaryBtn")
+        update.clicked.connect(self._show_shell_integration_dialog)
+        shell_actions.addWidget(uninstall)
+        shell_actions.addStretch(1)
+        shell_actions.addWidget(update)
+        shell_layout.addLayout(shell_actions)
+        detail_split.addWidget(shell_card)
+
+        preferences = QFrame()
+        preferences.setObjectName("detailCard")
+        preferences_layout = QVBoxLayout(preferences)
+        preferences_layout.setContentsMargins(16, 14, 16, 14)
+        preferences_layout.setSpacing(10)
+        preferences_layout.addWidget(self._make_card_header(self.tr("Preferences")))
+        language_row = QHBoxLayout()
+        language_label = QLabel(self.tr("Language"))
+        language_label.setObjectName("fieldLabel")
+        self.tools_locale_combo = QComboBox()
+        locale_preference = _gui_locale_preference()
+        locale_index = 0
+        for index, (code, _name) in enumerate(GUI_LOCALE_OPTIONS):
+            self.tools_locale_combo.addItem(self._gui_locale_label(code), code)
+            if code == locale_preference:
+                locale_index = index
+        self.tools_locale_combo.setCurrentIndex(locale_index)
+        self.tools_locale_combo.currentIndexChanged.connect(self._tools_locale_changed)
+        language_row.addWidget(language_label)
+        language_row.addWidget(self.tools_locale_combo, 1)
+        preferences_layout.addLayout(language_row)
+        locale_hint = QLabel(self.tr("Restart required after language changes"))
+        locale_hint.setObjectName("cardSubtitle")
+        preferences_layout.addWidget(locale_hint)
+        self.tools_auto_open_chk = QCheckBox(self.tr("Auto-open output after conversion"))
+        self.tools_auto_open_chk.toggled.connect(self.auto_open_chk.setChecked)
+        preferences_layout.addWidget(self.tools_auto_open_chk)
+        self.tools_recent_chk = QCheckBox(self.tr("Remember recent folders"))
+        self.tools_recent_chk.setChecked(
+            self.settings.value("remember_recent_folders", True) in {True, "true", "1", 1}
+        )
+        self.tools_recent_chk.toggled.connect(
+            lambda checked: self.settings.setValue("remember_recent_folders", checked)
+        )
+        preferences_layout.addWidget(self.tools_recent_chk)
+        separator = QFrame()
+        separator.setObjectName("separator")
+        preferences_layout.addWidget(separator)
+        data_title = QLabel(self.tr("Data on this device"))
+        data_title.setObjectName("cardTitle")
+        preferences_layout.addWidget(data_title)
+        for label, path in (
+            (self.tr("Batch history"), BATCH_HISTORY_PATH.parent),
+            (self.tr("Presets"), USER_PRESET_DIR),
+            (self.tr("Plugin trust"), _plugin_trust_path().parent),
+        ):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            row.addStretch(1)
+            open_button = QPushButton(self.tr("Open folder"))
+            open_button.setObjectName("miniBtn")
+            open_button.clicked.connect(lambda _checked=False, target=path: _open_path(target))
+            row.addWidget(open_button)
+            preferences_layout.addLayout(row)
+        preferences_layout.addStretch(1)
+        detail_split.addWidget(preferences)
+        detail_split.setStretchFactor(0, 3)
+        detail_split.setStretchFactor(1, 2)
+        detail_split.setSizes([700, 470])
+        body.addWidget(detail_split, 1)
+
+        quick = QFrame()
+        quick.setObjectName("quickStrip")
+        quick_layout = QHBoxLayout(quick)
+        quick_layout.setContentsMargins(14, 10, 14, 10)
+        quick_layout.setSpacing(10)
+        quick_title = QLabel(self.tr("Quick exports"))
+        quick_title.setObjectName("cardTitle")
+        quick_layout.addWidget(quick_title)
+        for label, callback in (
+            (self.tr("Export log"), self._export_log),
+            (self.tr("Export CSV"), self._export_csv),
+            (self.tr("Create support bundle"), self._export_support_bundle),
+        ):
+            button = QPushButton(label)
+            button.setObjectName("secondaryBtn")
+            button.setIcon(_create_line_icon("export"))
+            button.clicked.connect(callback)
+            quick_layout.addWidget(button)
+        quick_layout.addStretch(1)
+        clear = QPushButton(self.tr("Clear activity log"))
+        clear.setObjectName("dangerBtn")
+        clear.setIcon(_create_line_icon("trash", CAT["red"]))
+        clear.clicked.connect(self._clear_log)
+        quick_layout.addWidget(clear)
+        body.addWidget(quick)
+        local_note = QLabel(self.tr("ⓘ  Everything on this page runs locally."))
+        local_note.setObjectName("cardSubtitle")
+        body.addWidget(local_note)
+        return page
+
+    def _tools_scan_source(self):
+        self._select_workspace_page("convert")
+        self.src_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def _tools_locale_changed(self, index: int):
+        preference = str(self.tools_locale_combo.itemData(index) or "system")
+        self._select_gui_locale(preference)
+        nav_index = self.nav_locale_combo.findData(preference)
+        if nav_index >= 0 and nav_index != self.nav_locale_combo.currentIndex():
+            self.nav_locale_combo.blockSignals(True)
+            self.nav_locale_combo.setCurrentIndex(nav_index)
+            self.nav_locale_combo.blockSignals(False)
+
+    def _shell_integration_installed(self) -> bool:
+        system = platform.system()
+        if system == "Windows":
+            try:
+                import winreg
+                for key_path in (
+                    r"Software\Classes\SystemFileAssociations\image\shell\ImgConverter",
+                    r"Software\Classes\*\shell\ImgConverter",
+                ):
+                    try:
+                        winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ).Close()
+                        return True
+                    except (FileNotFoundError, OSError):
+                        continue
+            except (ImportError, OSError):
+                return False
+            return False
+        if system == "Linux":
+            return (Path.home() / ".local/share/applications/imgconverter.desktop").exists()
+        return False
+
+    def _refresh_tools_shell_preview(self, *_args):
+        if not hasattr(self, "tools_shell_preview"):
+            return
+        preset_name = self.tools_shell_preset.currentData()
+        preset_arg = f" --preset {subprocess.list2cmdline([str(preset_name)])}" if preset_name else ""
+        exe = sys.executable
+        script = str(Path(__file__).resolve())
+        if platform.system() == "Windows":
+            preview = (
+                f'Files:   "{exe}" "{script}"{preset_arg} --files "%1"\n'
+                f'Folders: "{exe}" "{script}"{preset_arg} --input "%1"'
+            )
+        else:
+            preview = (
+                f"Files:   {shlex.quote(exe)} {shlex.quote(script)}{preset_arg} --files %F\n"
+                f"Folders: {shlex.quote(exe)} {shlex.quote(script)}{preset_arg} --input %F"
+            )
+        self.tools_shell_preview.setPlainText(preview)
+
+    def _refresh_tools_page(self):
+        if not hasattr(self, "tools_shell_status"):
+            return
+        installed = self._shell_integration_installed()
+        label = self.tr("Installed") if installed else self.tr("Not installed")
+        tone = "success" if installed else "ready"
+        for badge in (self.tools_shell_status, self.tools_shell_card._status_badge):
+            badge.setText(label)
+            badge.setProperty("tone", tone)
+            _refresh_widget_style(badge)
+        self.tools_auto_open_chk.blockSignals(True)
+        self.tools_auto_open_chk.setChecked(self.auto_open_chk.isChecked())
+        self.tools_auto_open_chk.blockSignals(False)
+        preference = _gui_locale_preference()
+        index = self.tools_locale_combo.findData(preference)
+        if index >= 0:
+            self.tools_locale_combo.blockSignals(True)
+            self.tools_locale_combo.setCurrentIndex(index)
+            self.tools_locale_combo.blockSignals(False)
+        self._refresh_tools_shell_preview()
+
+    def _show_shell_integration_dialog(self):
+        _exec_dialog_and_delete(ShellIntegrationDialog(self))
+        self._refresh_tools_page()
+
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(16, 12, 16, 8)
+        shell = QHBoxLayout(central)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+
+        self.nav_rail = self._build_navigation_rail()
+        shell.addWidget(self.nav_rail)
+
+        self.page_stack = QStackedWidget()
+        self.page_stack.setObjectName("workspaceStack")
+        shell.addWidget(self.page_stack, 1)
+
+        convert_page = QWidget()
+        convert_page.setObjectName("workspacePage")
+        self.convert_page = convert_page
+        self._page_widgets = {"convert": convert_page}
+        self.page_stack.addWidget(convert_page)
+
+        root = QVBoxLayout(convert_page)
+        root.setContentsMargins(16, 14, 16, 10)
         root.setSpacing(10)
 
         # ── Scroll area for controls ──
@@ -9394,27 +11057,23 @@ class MainWindow(QMainWindow):
 
         # ── Header ──
         header = QFrame()
-        header.setObjectName("appHeader")
+        header.setObjectName("pageHeader")
         hdr = QHBoxLayout(header)
-        hdr.setContentsMargins(14, 12, 14, 12)
+        hdr.setContentsMargins(0, 0, 0, 2)
         hdr.setSpacing(12)
-
-        icon_label = QLabel()
-        icon_label.setPixmap(self._icon.pixmap(QSize(32, 32)))
-        icon_label.setFixedSize(34, 34)
-        icon_label.setAccessibleName(self.tr("ImgConverter app icon"))
-        hdr.addWidget(icon_label)
 
         title_block = QVBoxLayout()
         title_block.setContentsMargins(0, 0, 0, 0)
         title_block.setSpacing(2)
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(8)
-        title = QLabel(self.tr("ImgConverter"))
-        title.setObjectName("appTitle")
-        ver = QLabel(self.tr("v{}").format(APP_VERSION))
-        ver.setObjectName("appVersion")
+        title = QLabel(self.tr("Convert images"))
+        title.setObjectName("pageTitle")
+        desc = QLabel(self.tr("Build a local batch recipe, scan, then convert"))
+        desc.setObjectName("pageSubtitle")
+        desc.setWordWrap(True)
+        title_block.addWidget(title)
+        title_block.addWidget(desc)
+        hdr.addLayout(title_block, 1)
+
         self.workflow_state = QLabel(self.tr("Ready to scan"))
         self.workflow_state.setObjectName("workflowState")
         self.workflow_state.setProperty("tone", "ready")
@@ -9422,20 +11081,18 @@ class MainWindow(QMainWindow):
         self.workflow_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.workflow_state.setAccessibleName(self.tr("Workflow status"))
         self.workflow_state.setAccessibleDescription(self.tr("Current batch workflow state"))
-        title_row.addWidget(title)
-        title_row.addWidget(ver)
-        title_row.addStretch()
-        desc = QLabel(self.tr("Private, local batch conversion"))
-        desc.setObjectName("appSubtitle")
-        desc.setWordWrap(True)
-        title_block.addLayout(title_row)
-        title_block.addWidget(desc)
-        hdr.addLayout(title_block, 1)
         hdr.addWidget(self.workflow_state)
         self._header_tools = QHBoxLayout()
         self._header_tools.setContentsMargins(0, 0, 0, 0)
         self._header_tools.setSpacing(4)
         hdr.addLayout(self._header_tools)
+
+        self.command_search_btn = QPushButton(self.tr("Search commands    Ctrl+K"))
+        self.command_search_btn.setObjectName("commandSearch")
+        self.command_search_btn.setIcon(_create_line_icon("scan"))
+        self.command_search_btn.setToolTip(self.tr("Open the command palette (Ctrl+K)"))
+        self.command_search_btn.clicked.connect(self._open_command_palette)
+        self._header_tools.addWidget(self.command_search_btn)
         root.addWidget(header)
 
         # ── Source / Output ──
@@ -9569,7 +11226,7 @@ class MainWindow(QMainWindow):
         self.filter_toggle.setCheckable(True)
         self.filter_toggle.setChecked(False)
         self.filter_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self.filter_toggle.setText(self.tr("Show input format filters"))
+        self.filter_toggle.setText(self.tr("Show input format filters    All common image formats"))
         self.filter_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.filter_toggle.setToolTip(self.tr("Show or hide input format family filters"))
         self.filter_toggle.toggled.connect(self._toggle_filters)
@@ -9778,7 +11435,7 @@ class MainWindow(QMainWindow):
         self.adv_toggle.setCheckable(True)
         self.adv_toggle.setChecked(False)
         self.adv_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self.adv_toggle.setText(self.tr("Advanced options"))
+        self.adv_toggle.setText(self.tr("Advanced encoding    Auto chroma, quality mapping"))
         self.adv_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.adv_toggle.toggled.connect(self._toggle_advanced)
         scroll_layout.addWidget(self.adv_toggle)
@@ -10140,6 +11797,7 @@ class MainWindow(QMainWindow):
 
         # ── Actions ──
         action_bar = QFrame()
+        action_bar.setParent(convert_page)
         action_bar.setObjectName("actionBar")
         actions = QVBoxLayout(action_bar)
         actions.setContentsMargins(12, 10, 12, 10)
@@ -10264,13 +11922,12 @@ class MainWindow(QMainWindow):
         actions.addLayout(secondary_actions)
         actions.addLayout(output_actions)
 
-        # Management surfaces live in the compact header; infrequent actions
-        # move into an overflow menu so the batch workflow stays dominant.
+        # Keep the legacy management controls alive for command/API parity.
+        # The redesigned shell exposes these destinations through the rail.
         self._utility_sink = action_bar
         self._utility_sink.setVisible(False)
         for button in (self.history_btn, self.watch_folders_btn, self.manage_plugins_btn):
             button.setObjectName("topNavBtn")
-            self._header_tools.addWidget(button)
 
         self.more_btn = QToolButton()
         self.more_btn.setObjectName("topNavBtn")
@@ -10301,7 +11958,7 @@ class MainWindow(QMainWindow):
             )
             self._locale_actions[code] = action
         self.more_btn.setMenu(more_menu)
-        self._header_tools.addWidget(self.more_btn)
+        secondary_actions.addWidget(self.more_btn)
 
         # ── Stats bar ──
         stats_frame = QFrame()
@@ -10445,6 +12102,34 @@ class MainWindow(QMainWindow):
         summary_layout.addLayout(when_done_row)
         summary_layout.addWidget(self.open_output_btn)
 
+        # Match the redesigned two-step workspace: Source and Output recipe
+        # share the first row, while power-user controls remain disclosed only
+        # when requested.
+        scroll_layout.removeWidget(io_group)
+        scroll_layout.removeWidget(opt_group)
+        self.recipe_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.recipe_splitter.setObjectName("recipeSplitter")
+        self.recipe_splitter.addWidget(io_group)
+        self.recipe_splitter.addWidget(opt_group)
+        self.recipe_splitter.setStretchFactor(0, 1)
+        self.recipe_splitter.setStretchFactor(1, 1)
+        self.recipe_splitter.setSizes([620, 540])
+        scroll_layout.insertWidget(0, self.recipe_splitter)
+
+        adv_grid.removeWidget(self.edit_group)
+        self.edit_group.setVisible(False)
+        self.edit_toggle = QToolButton()
+        self.edit_toggle.setObjectName("advancedToggle")
+        self.edit_toggle.setCheckable(True)
+        self.edit_toggle.setChecked(False)
+        self.edit_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.edit_toggle.setText(self.tr("Batch edits    No adjustments"))
+        self.edit_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.edit_toggle.setToolTip(self.tr("Show or hide batch image adjustments"))
+        self.edit_toggle.toggled.connect(self._toggle_batch_edits)
+        scroll_layout.addWidget(self.edit_toggle)
+        scroll_layout.addWidget(self.edit_group)
+
         scroll_layout.addStretch(1)
 
         # ── Log + controls ──
@@ -10494,7 +12179,8 @@ class MainWindow(QMainWindow):
 
         log_container = QFrame()
         log_container.setObjectName("activityPanel")
-        log_container.setMaximumHeight(190)
+        log_container.setMaximumHeight(240)
+        self.log_container = log_container
         log_container_layout = QVBoxLayout(log_container)
         log_container_layout.setContentsMargins(12, 8, 12, 10)
         log_container_layout.setSpacing(6)
@@ -10530,27 +12216,51 @@ class MainWindow(QMainWindow):
         log_body_layout.addWidget(self.log_view, 1)
         log_container_layout.addWidget(self.log_body, 1)
 
-        # ── Splitter: controls scroll area + log ──
+        # ── Splitters: recipe above, Activity + Batch summary below ──
         workspace = QSplitter(Qt.Orientation.Horizontal)
         workspace.setObjectName("workspaceSplitter")
         self.workspace_splitter = workspace
-        workspace.addWidget(scroll)
+        workspace.addWidget(log_container)
         workspace.addWidget(summary_panel)
         workspace.setStretchFactor(0, 1)
         workspace.setStretchFactor(1, 0)
         workspace.setSizes([820, 320])
+        summary_panel.setMaximumHeight(240)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
+        self.main_splitter = splitter
+        splitter.addWidget(scroll)
         splitter.addWidget(workspace)
-        splitter.addWidget(log_container)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
-        splitter.setSizes([620, 150])
+        splitter.setSizes([590, 220])
         root.addWidget(splitter, 1)
+
+        self.convert_action_dock = QFrame()
+        self.convert_action_dock.setObjectName("convertDock")
+        dock = QHBoxLayout(self.convert_action_dock)
+        dock.setContentsMargins(10, 8, 10, 8)
+        dock.setSpacing(10)
+        self.paste_btn.setMinimumWidth(116)
+        self.scan_btn.setMinimumWidth(150)
+        self.convert_btn.setMinimumWidth(170)
+        self.open_output_btn.setMinimumWidth(140)
+        dock.addWidget(self.paste_btn)
+        dock.addWidget(self.scan_btn)
+        dock.addWidget(self.convert_btn)
+        dock.addWidget(self.open_output_btn)
+        dock.addStretch(1)
+        dock.addWidget(self.when_done_label)
+        dock.addWidget(self.when_done_combo)
+        root.addWidget(self.convert_action_dock)
+
+        self._build_management_pages()
+        self._select_workspace_page("convert")
 
         # ── Status bar ──
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+        self.status_bar.setVisible(False)
         self._apply_tab_order()
         self._set_workflow_state(
             self.tr("Ready to scan"),
@@ -10581,20 +12291,44 @@ class MainWindow(QMainWindow):
     def _sync_responsive_layout(self):
         if not hasattr(self, "workspace_splitter"):
             return
-        compact = self.width() < 940
-        if getattr(self, "_compact_layout", None) == compact:
+        compact = self.width() < 1120
+        rail_compact = self.width() < 900
+        if (
+            getattr(self, "_compact_layout", None) == compact
+            and getattr(self, "_rail_compact", None) == rail_compact
+        ):
             return
         self._compact_layout = compact
+        self._rail_compact = rail_compact
+        self.nav_rail.setFixedWidth(72 if rail_compact else 214)
+        self.nav_brand_title.setVisible(not rail_compact)
+        self.nav_version.setVisible(not rail_compact)
+        self.nav_privacy_label.setVisible(not rail_compact)
+        self.nav_privacy_hint.setVisible(not rail_compact)
+        self.nav_locale_combo.setVisible(not rail_compact)
+        for button in self._nav_buttons.values():
+            button.setText("" if rail_compact else str(button.property("fullText") or ""))
         self.workspace_splitter.setOrientation(
             Qt.Orientation.Vertical if compact else Qt.Orientation.Horizontal
         )
+        self.recipe_splitter.setOrientation(
+            Qt.Orientation.Vertical if compact else Qt.Orientation.Horizontal
+        )
+        for object_name in ("historyPageSplitter", "watchPageSplitter", "pluginsPageSplitter", "toolsPageSplitter"):
+            page_splitter = self.findChild(QSplitter, object_name)
+            if page_splitter is not None:
+                page_splitter.setOrientation(
+                    Qt.Orientation.Vertical if compact else Qt.Orientation.Horizontal
+                )
         self.summary_panel.setMinimumWidth(0 if compact else 272)
         self.summary_panel.setMaximumWidth(16777215 if compact else 360)
         self.summary_panel.setMinimumHeight(220 if compact else 0)
+        self.summary_panel.setMaximumHeight(16777215 if compact else 240)
+        self.log_container.setMaximumHeight(16777215 if compact else 240)
         has_scan = self._scan_result is not None and bool(self._scan_result.files)
         self.summary_empty.setVisible(not compact and not has_scan)
         self.summary_separator.setVisible(not compact)
-        self.auto_open_chk.setVisible(not compact)
+        self.auto_open_chk.setVisible(False)
         self.when_done_label.setVisible(not compact)
         self.when_done_combo.setVisible(not compact)
         self.open_output_btn.setVisible(not compact)
@@ -10602,10 +12336,7 @@ class MainWindow(QMainWindow):
             not compact and has_scan
         )
         self.workspace_splitter.setSizes([420, 240] if compact else [820, 320])
-        for button in (self.history_btn, self.watch_folders_btn, self.manage_plugins_btn, self.more_btn):
-            full_text = button.property("fullText") or button.text()
-            button.setProperty("fullText", full_text)
-            button.setText("" if compact else full_text)
+        self.main_splitter.setSizes([500, 330] if compact else [590, 220])
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -10643,7 +12374,17 @@ class MainWindow(QMainWindow):
         self.adv_group.setVisible(checked)
         self.adv_toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
         self.adv_toggle.setText(
-            self.tr("Hide advanced options") if checked else self.tr("Advanced options")
+            self.tr("Hide advanced encoding")
+            if checked else self.tr("Advanced encoding    Auto chroma, quality mapping")
+        )
+
+    def _toggle_batch_edits(self, checked: bool):
+        self.edit_group.setVisible(checked)
+        self.edit_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
+        self.edit_toggle.setText(
+            self.tr("Hide batch edits") if checked else self.tr("Batch edits    No adjustments")
         )
 
     def _toggle_activity(self, checked: bool):
@@ -10659,7 +12400,8 @@ class MainWindow(QMainWindow):
         self.filter_group.setVisible(checked)
         self.filter_toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
         self.filter_toggle.setText(
-            self.tr("Hide input format filters") if checked else self.tr("Show input format filters")
+            self.tr("Hide input format filters")
+            if checked else self.tr("Show input format filters    All common image formats")
         )
 
     def _toggle_review_table(self, checked: bool):
@@ -10916,26 +12658,16 @@ class MainWindow(QMainWindow):
             self.log_view.setPlaceholderText(self.tr("Scan a source folder to see matching files, warnings, and conversion results."))
 
     def _open_plugin_trust(self):
-        dialog = PluginTrustDialog(self)
-        _exec_dialog_and_delete(dialog)
-        rows = get_plugin_trust_rows()
-        self._log(f"Plugin trust inventory: {len(rows)} entr{'y' if len(rows) == 1 else 'ies'}")
+        self._select_workspace_page("plugins")
 
     def _open_watch_folders(self):
-        dialog = WatchFolderDialog(self)
-        _exec_dialog_and_delete(dialog)
-        profiles = _load_watch_profiles()
-        self._log(f"Watch folder profiles: {len(profiles)} on-demand profile(s)")
+        self._select_workspace_page("watch")
 
     def _open_batch_history(self):
-        dialog = BatchHistoryDialog(self)
-        _exec_dialog_and_delete(dialog)
-        records = _load_batch_history()
-        self._log(f"Batch history: {len(records)} completed session{'s' if len(records) != 1 else ''}")
+        self._select_workspace_page("history")
 
     def _open_shell_integration(self):
-        dialog = ShellIntegrationDialog(self)
-        _exec_dialog_and_delete(dialog)
+        self._select_workspace_page("tools")
 
     def _check_duplicates(self):
         if (
@@ -11279,6 +13011,9 @@ class MainWindow(QMainWindow):
     # ── Recent directories ──
     def _add_recent_dir(self, path: str):
         """Add a directory to the recent list (max 10, deduplicated)."""
+        remember = self.settings.value("remember_recent_folders", True)
+        if remember not in {True, "true", "1", 1}:
+            return
         candidate = os.path.normpath(os.path.expanduser(str(path).strip()))
         candidate_key = os.path.normcase(os.path.abspath(candidate))
         recent = self._get_recent_dirs()
@@ -12322,6 +14057,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("edit_border_color", self.border_color_edit.text())
         self.settings.setValue("filters_expanded", self.filter_toggle.isChecked())
         self.settings.setValue("adv_expanded", self.adv_toggle.isChecked())
+        self.settings.setValue("edits_expanded", self.edit_toggle.isChecked())
+        self.settings.setValue("active_page", getattr(self, "_active_workspace_page", "convert"))
         self.settings.setValue("geometry", self.saveGeometry())
         # Format filter states
         filter_state = {name: chk.isChecked() for name, chk in self._format_filters.items()}
@@ -12535,6 +14272,10 @@ class MainWindow(QMainWindow):
             expanded = v == "true" or v is True
             self.adv_toggle.setChecked(expanded)
             self._toggle_advanced(expanded)
+        if (v := self.settings.value("edits_expanded")) is not None:
+            expanded = v == "true" or v is True
+            self.edit_toggle.setChecked(expanded)
+            self._toggle_batch_edits(expanded)
         if v := self.settings.value("geometry"):
             self.restoreGeometry(v)
         # Restore format filter states
@@ -12546,10 +14287,21 @@ class MainWindow(QMainWindow):
                         self._format_filters[name].setChecked(checked)
             except (json.JSONDecodeError, TypeError):
                 pass
+        active_page = str(self.settings.value("active_page", "convert") or "convert")
+        self._select_workspace_page(
+            active_page if active_page in self._page_widgets else "convert"
+        )
 
     def closeEvent(self, event):
         self._closing = True
         self._save_state()
+        plugin_worker = getattr(self, "_plugin_page_worker", None)
+        if plugin_worker is not None and plugin_worker.isRunning():
+            plugin_worker.requestInterruption()
+            if not plugin_worker.wait(5000):
+                self.status_bar.showMessage(self.tr("Waiting for plugin inventory to stop..."))
+                event.ignore()
+                return
         if self._update_worker:
             try:
                 self._update_worker.result.disconnect(self._on_update_result)
