@@ -70,7 +70,7 @@ Run `imgconverter --install-deps` to install all required + optional Python pack
 - **Persistent batch history** — completed GUI and CLI batches append a redacted local summary with counts, byte deltas, options, and report/support-bundle pointers
 - **Crash-recoverable batch journal** — CLI batches atomically persist per-file conversion states and hashed source/output evidence, so `--resume` retries incomplete work and validates committed artifacts without storing absolute source paths
 - **CLI mode** — headless conversion via `--input` flag with full feature parity (all GUI options exposed as flags)
-- **Plugin trust manager** — GUI inventory for trusted, changed, missing, and untrusted file or package entry-point plugins without executing them
+- **Plugin trust manager** — GUI inventory for trusted, changed, missing, and untrusted file or package entry-point plugins without executing them; v1 API and network/storage declarations are reviewed alongside the hash
 - **In-place conversion** — convert next to the original and delete the source file
 - **Atomic writes** — in-place mode uses temp file + atomic rename for crash-safe conversion
 - **Output validation** — verifies file exists, size > 0, and passes integrity check before accepting
@@ -328,6 +328,18 @@ Parser, GUI, and README parity is guarded by `build_cli_parity_matrix()` and the
 Decode resource limits apply before and during source materialization across Pillow, HEIF, RAW, animated, and trusted-plugin decoders. The defaults are 64 million pixels, 512 MiB of estimated decoded pixels, and 256 frames. A limit failure is reported per file with stable error code `1001`; `--max-decode-seconds 0` leaves the time budget disabled.
 
 Trusted plugins may register decoder, encoder, and storage shapes from `PLUGINS.md`. File plugins are pinned by file SHA-256, and package entry-point plugins are pinned by a digest of their installed module and distribution metadata files. Registered decoders are included in scans, registered encoders can be selected with `--format <fmt>` or from the GUI format menu, and registered storage schemes appear in the startup support summary.
+
+Plugin hooks use API version `1` and capability schema `1`. A hook-bearing
+plugin must declare `PLUGIN_API_VERSION = 1` and a literal
+`PLUGIN_CAPABILITIES` map with `decoders`, `encoders`, `storage`, and boolean
+`network` keys; those lists must exactly match the hooks returned by
+`register(opts)`. Remote storage schemes such as `s3`, `https`, and `webdav`
+must declare `network: True`. Incompatible, incomplete, or mismatched
+registrations are rejected before any hook reaches conversion. The trust
+manifest migrates older schema-1 records without discarding hashes, and the
+review/support inventories show the declared API, storage, and network policy.
+Trusted plugin code still runs in ImgConverter's process and is not sandboxed;
+hash trust is consent and change detection, not containment.
 
 `--backend pillow` is the default fidelity path. `--backend vips` is an experimental quality-only fast path for huge images; it requires explicit `--format` and `--strip-metadata`, and rejects Pillow-only transforms such as resize, watermark, canvas, tone-map, ICC override, quality targets, and XMP sidecars. Run `python imgconverter.py --backend-info` for the current capability matrix, or add `--backend-benchmark ./image.jpg` for an opt-in single-image timing report.
 

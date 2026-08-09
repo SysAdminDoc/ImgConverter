@@ -666,12 +666,19 @@ def _benchmark_backends(src: Path) -> dict[str, object]:
 # Plugin system — drop trusted .py files into ~/.imgconverter/plugins/ defining
 # a top-level register(opts) callable. Decoder / Encoder hook signatures are
 # documented in PLUGINS.md.
-PLUGIN_TRUST_SCHEMA = 1
+PLUGIN_API_VERSION = 1
+PLUGIN_CAPABILITY_SCHEMA = 1
+PLUGIN_TRUST_SCHEMA = 2
 PLUGIN_TRUST_FILE = "trusted-plugins.json"
 PLUGIN_DECODERS: dict[str, object] = {}
 PLUGIN_ENCODERS: dict[str, object] = {}
 PLUGIN_STORAGE: dict[str, object] = {}
-PLUGIN_CAPABILITIES: dict[str, dict[str, list[str]]] = {}
+PLUGIN_CAPABILITIES: dict[str, dict[str, object]] = {}
+PLUGIN_CAPABILITY_KEYS = frozenset({"decoders", "encoders", "storage", "network"})
+PLUGIN_REMOTE_STORAGE_SCHEMES = frozenset({
+    "az", "azure", "ftp", "ftps", "gs", "gcs", "http", "https", "minio",
+    "r2", "s3", "sftp", "swift", "webdav",
+})
 
 
 def _reset_plugin_registry():
@@ -689,29 +696,154 @@ def _as_plugin_list(value) -> list:
     return [value]
 
 
-def _register_plugin_capabilities(plugin_name: str, payload) -> dict[str, list[str]]:
-    """Validate and register Decoder/Encoder/Storage objects returned by register()."""
-    summary = {"decoders": [], "encoders": [], "storage": []}
-    if not payload:
-        return summary
+def _normalize_plugin_capabilities(value) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError("plugin capabilities must be a dict")
+    unknown = sorted(set(value) - PLUGIN_CAPABILITY_KEYS)
+    if unknown:
+        raise ValueError(f"plugin capabilities contain unknown keys: {', '.join(unknown)}")
+
+    normalized: dict[str, object] = {}
+    for key in ("decoders", "encoders", "storage"):
+        raw = value.get(key)
+        if not isinstance(raw, (list, tuple, set, frozenset)):
+            raise ValueError(f"plugin capabilities.{key} must be a list")
+        values = []
+        for item in raw:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"plugin capabilities.{key} entries must be non-empty strings")
+            item = item.strip().lower()
+            if key == "decoders" and not item.startswith("."):
+                item = f".{item}"
+            if key == "storage":
+                item = item.rstrip(":")
+            values.append(item)
+        normalized[key] = sorted(set(values))
+
+    network = value.get("network")
+    if not isinstance(network, bool):
+        raise ValueError("plugin capabilities.network must be a boolean")
+    normalized["network"] = network
+    return normalized
+
+
+def _plugin_contract_payload(payload) -> tuple[dict[str, object], bool]:
+    """Return a normalized API contract and whether it is a legacy no-op."""
+    if payload is None:
+        return {
+            "api_version": PLUGIN_API_VERSION,
+            "capability_schema": PLUGIN_CAPABILITY_SCHEMA,
+            "capabilities": {
+                "decoders": [], "encoders": [], "storage": [], "network": False,
+            },
+            "legacy": True,
+        }, True
     if not isinstance(payload, dict):
         raise ValueError("register() must return a dict or None")
 
-    for decoder in _as_plugin_list(payload.get("decoders")):
+    hook_keys = ("decoders", "encoders", "storage")
+    has_hooks = any(_as_plugin_list(payload.get(key)) for key in hook_keys)
+    has_contract = any(
+        key in payload for key in ("api_version", "capability_schema", "capabilities")
+    )
+    if not has_contract and not has_hooks:
+        return {
+            "api_version": PLUGIN_API_VERSION,
+            "capability_schema": PLUGIN_CAPABILITY_SCHEMA,
+            "capabilities": {
+                "decoders": [], "encoders": [], "storage": [], "network": False,
+            },
+            "legacy": True,
+        }, True
+    if "api_version" not in payload or "capabilities" not in payload:
+        raise ValueError(
+            "plugin API contract requires api_version and capabilities for registered hooks"
+        )
+    api_version = payload["api_version"]
+    if isinstance(api_version, bool) or not isinstance(api_version, int):
+        raise ValueError("plugin api_version must be an integer")
+    if api_version != PLUGIN_API_VERSION:
+        raise ValueError(
+            f"unsupported plugin API version {api_version}; expected {PLUGIN_API_VERSION}"
+        )
+    capability_schema = payload.get("capability_schema", PLUGIN_CAPABILITY_SCHEMA)
+    if isinstance(capability_schema, bool) or not isinstance(capability_schema, int):
+        raise ValueError("plugin capability_schema must be an integer")
+    if capability_schema != PLUGIN_CAPABILITY_SCHEMA:
+        raise ValueError(
+            f"unsupported plugin capability schema {capability_schema}; "
+            f"expected {PLUGIN_CAPABILITY_SCHEMA}"
+        )
+    capabilities = _normalize_plugin_capabilities(payload["capabilities"])
+    return {
+        "api_version": api_version,
+        "capability_schema": capability_schema,
+        "capabilities": capabilities,
+        "legacy": False,
+    }, False
+
+
+def _plugin_payload_with_module_contract(module, payload):
+    """Merge declarative module constants into a register() result."""
+    if payload is None:
+        merged = None
+    elif isinstance(payload, dict):
+        merged = dict(payload)
+    else:
+        return payload
+
+    module_api = getattr(module, "PLUGIN_API_VERSION", None)
+    module_schema = getattr(module, "PLUGIN_CAPABILITY_SCHEMA", None)
+    module_caps = getattr(module, "PLUGIN_CAPABILITIES", None)
+    if module_api is not None:
+        if merged is None:
+            merged = {}
+        if "api_version" in merged and merged["api_version"] != module_api:
+            raise ValueError("plugin module API version disagrees with register()")
+        merged["api_version"] = module_api
+    if module_schema is not None:
+        if merged is None:
+            merged = {}
+        if "capability_schema" in merged and merged["capability_schema"] != module_schema:
+            raise ValueError("plugin module capability schema disagrees with register()")
+        merged["capability_schema"] = module_schema
+    if module_caps is not None:
+        if merged is None:
+            merged = {}
+        if "capabilities" in merged:
+            if _normalize_plugin_capabilities(merged["capabilities"]) != _normalize_plugin_capabilities(module_caps):
+                raise ValueError("plugin module capabilities disagree with register()")
+        merged["capabilities"] = module_caps
+    return merged
+
+
+def _register_plugin_capabilities(plugin_name: str, payload) -> dict[str, object]:
+    """Validate and atomically register a plugin's declared hooks and contract."""
+    contract, legacy = _plugin_contract_payload(payload)
+    declared = contract["capabilities"]
+    staged_decoders: dict[str, object] = {}
+    staged_encoders: dict[str, object] = {}
+    staged_storage: dict[str, object] = {}
+    actual = {"decoders": [], "encoders": [], "storage": []}
+
+    for decoder in _as_plugin_list(payload.get("decoders") if isinstance(payload, dict) else None):
         extensions = getattr(decoder, "extensions", None)
         open_fn = getattr(decoder, "open", None)
         if not extensions or not callable(open_fn):
             raise ValueError("decoder must expose extensions and open(src)")
+        decoder_extensions = []
         for ext in extensions:
             ext = str(ext).strip().lower()
-            if not ext:
-                continue
-            if not ext.startswith("."):
+            if ext and not ext.startswith("."):
                 ext = f".{ext}"
-            PLUGIN_DECODERS[ext] = decoder
-            summary["decoders"].append(ext)
+            if ext:
+                decoder_extensions.append(ext)
+                staged_decoders[ext] = decoder
+        if not decoder_extensions:
+            raise ValueError("decoder must expose at least one non-empty extension")
+        actual["decoders"].extend(decoder_extensions)
 
-    for encoder in _as_plugin_list(payload.get("encoders")):
+    for encoder in _as_plugin_list(payload.get("encoders") if isinstance(payload, dict) else None):
         fmt = str(getattr(encoder, "fmt", "")).strip().lower()
         extension = str(getattr(encoder, "extension", "")).strip().lower()
         save_fn = getattr(encoder, "save", None)
@@ -720,20 +852,40 @@ def _register_plugin_capabilities(plugin_name: str, payload) -> dict[str, list[s
         if not extension.startswith("."):
             extension = f".{extension}"
         setattr(encoder, "extension", extension)
-        PLUGIN_ENCODERS[fmt] = encoder
-        summary["encoders"].append(fmt)
+        staged_encoders[fmt] = encoder
+        actual["encoders"].append(fmt)
 
-    for storage in _as_plugin_list(payload.get("storage")):
+    for storage in _as_plugin_list(payload.get("storage") if isinstance(payload, dict) else None):
         scheme = str(getattr(storage, "scheme", "")).strip().lower().rstrip(":")
         write_fn = getattr(storage, "write", None)
         if not scheme or not callable(write_fn):
             raise ValueError("storage must expose scheme and write(src, dst_uri)")
-        PLUGIN_STORAGE[scheme] = storage
-        summary["storage"].append(scheme)
+        staged_storage[scheme] = storage
+        actual["storage"].append(scheme)
 
-    PLUGIN_CAPABILITIES[plugin_name] = {
-        key: sorted(set(values)) for key, values in summary.items() if values
+    actual = {key: sorted(set(values)) for key, values in actual.items()}
+    for key in ("decoders", "encoders", "storage"):
+        if actual[key] != declared[key]:
+            raise ValueError(
+                f"plugin capabilities.{key} does not match registered {key}"
+            )
+    if any(scheme in PLUGIN_REMOTE_STORAGE_SCHEMES for scheme in actual["storage"]):
+        if declared["network"] is not True:
+            raise ValueError("remote storage capabilities require network=true")
+
+    summary = {
+        "api_version": contract["api_version"],
+        "capability_schema": contract["capability_schema"],
+        "contract": "legacy" if legacy else "v1",
+        "capabilities": declared,
+        **actual,
     }
+    # No global registry is changed until the complete declaration and all
+    # hooks have passed validation.
+    PLUGIN_DECODERS.update(staged_decoders)
+    PLUGIN_ENCODERS.update(staged_encoders)
+    PLUGIN_STORAGE.update(staged_storage)
+    PLUGIN_CAPABILITIES[plugin_name] = summary
     return summary
 
 
@@ -745,6 +897,13 @@ def get_plugin_capability_summary() -> str:
         parts.append("Plugin encoders " + ", ".join(sorted(PLUGIN_ENCODERS)))
     if PLUGIN_STORAGE:
         parts.append("Plugin storage " + ", ".join(f"{s}://" for s in sorted(PLUGIN_STORAGE)))
+    network_plugins = sorted(
+        name for name, summary in PLUGIN_CAPABILITIES.items()
+        if isinstance(summary.get("capabilities"), dict)
+        and summary["capabilities"].get("network") is True
+    )
+    if network_plugins:
+        parts.append("Plugin network access " + ", ".join(network_plugins))
     return "; ".join(parts)
 
 
@@ -821,6 +980,94 @@ def _plugin_name_from_ref(ref: str | Path) -> str:
     if Path(name).suffix == "":
         name += ".py"
     return name
+
+
+def _plugin_contract_inventory(py: Path, record: dict | None = None) -> dict[str, object]:
+    """Inspect declarative plugin metadata without importing or executing it."""
+    import ast
+
+    inventory: dict[str, object] = {
+        "api_version": None,
+        "capability_schema": None,
+        "capabilities": {},
+        "contract_status": "not available before import",
+    }
+    record = record if isinstance(record, dict) else {}
+    if "api_version" in record:
+        inventory["api_version"] = record.get("api_version")
+    if "capability_schema" in record:
+        inventory["capability_schema"] = record.get("capability_schema")
+    if "capabilities" in record:
+        try:
+            inventory["capabilities"] = _normalize_plugin_capabilities(record["capabilities"])
+            inventory["contract_status"] = "manifest"
+        except ValueError:
+            inventory["contract_status"] = "invalid"
+
+    try:
+        source = py.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(py))
+    except (OSError, UnicodeError, SyntaxError) as exc:
+        inventory["contract_status"] = "invalid"
+        inventory["contract_error"] = f"cannot inspect declarations: {exc}"
+        return inventory
+
+    values = {}
+    for node in tree.body:
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            if not isinstance(target, ast.Name) or target.id not in {
+                "PLUGIN_API_VERSION", "PLUGIN_CAPABILITY_SCHEMA", "PLUGIN_CAPABILITIES",
+            }:
+                continue
+            try:
+                values[target.id] = ast.literal_eval(node.value)
+            except (ValueError, TypeError, SyntaxError):
+                inventory["contract_status"] = "invalid"
+                inventory["contract_error"] = f"{target.id} must be a literal declaration"
+                return inventory
+
+    if not values:
+        return inventory
+    if "PLUGIN_API_VERSION" not in values or "PLUGIN_CAPABILITIES" not in values:
+        inventory["contract_status"] = "invalid"
+        inventory["contract_error"] = (
+            "PLUGIN_API_VERSION and PLUGIN_CAPABILITIES must be declared together"
+        )
+        return inventory
+    api_version = values["PLUGIN_API_VERSION"]
+    capability_schema = values.get("PLUGIN_CAPABILITY_SCHEMA", PLUGIN_CAPABILITY_SCHEMA)
+    try:
+        if isinstance(api_version, bool) or not isinstance(api_version, int):
+            raise ValueError("PLUGIN_API_VERSION must be an integer")
+        if api_version != PLUGIN_API_VERSION:
+            raise ValueError(
+                f"unsupported plugin API version {api_version}; expected {PLUGIN_API_VERSION}"
+            )
+        if isinstance(capability_schema, bool) or not isinstance(capability_schema, int):
+            raise ValueError("PLUGIN_CAPABILITY_SCHEMA must be an integer")
+        if capability_schema != PLUGIN_CAPABILITY_SCHEMA:
+            raise ValueError(
+                f"unsupported plugin capability schema {capability_schema}; "
+                f"expected {PLUGIN_CAPABILITY_SCHEMA}"
+            )
+        capabilities = _normalize_plugin_capabilities(values["PLUGIN_CAPABILITIES"])
+    except ValueError as exc:
+        inventory["contract_status"] = "invalid"
+        inventory["contract_error"] = str(exc)
+        return inventory
+    inventory.update({
+        "api_version": api_version,
+        "capability_schema": capability_schema,
+        "capabilities": capabilities,
+        "contract_status": "declared",
+    })
+    inventory.pop("contract_error", None)
+    return inventory
 
 
 def _plugin_trust_status(
@@ -948,6 +1195,9 @@ def _trust_plugin(ref: str | Path) -> tuple[bool, str]:
                     "sha256": digest,
                     "trusted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
+                for key in ("api_version", "capability_schema", "capabilities"):
+                    if key in ep_info:
+                        records[ref_str][key] = ep_info[key]
                 _write_plugin_trust(records)
                 return True, (
                     f"[plugins] trusted entry-point {ep_info['name']} "
@@ -958,11 +1208,16 @@ def _trust_plugin(ref: str | Path) -> tuple[bool, str]:
         py = _resolve_plugin_ref(ref)
         digest = _file_sha256(py)
         records = _load_plugin_trust()
-        records[py.name] = {
+        record = {
             "sha256": digest,
             "trusted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "path": str(py),
         }
+        contract = _plugin_contract_inventory(py)
+        for key in ("api_version", "capability_schema", "capabilities"):
+            if contract.get(key) not in (None, {}):
+                record[key] = contract[key]
+        records[py.name] = record
         _write_plugin_trust(records)
         return True, f"[plugins] trusted {py.name} ({digest[:12]})"
     except (OSError, ValueError) as e:
@@ -1024,7 +1279,7 @@ def get_plugin_trust_rows() -> list[dict]:
                     digest = _file_sha256(py)
                 except OSError:
                     digest = ""
-            rows.append({
+            row = {
                 "name": py.name,
                 "path": str(py),
                 "trust_ref": str(py),
@@ -1032,11 +1287,13 @@ def get_plugin_trust_rows() -> list[dict]:
                 "hash_prefix": digest[:12],
                 "sha256": digest,
                 "reason": "trusted file matches manifest" if status == "trusted" else detail,
-            })
+            }
+            row.update(_plugin_contract_inventory(py, records.get(py.name)))
+            rows.append(row)
     for name in sorted(set(records) - seen):
         if name.startswith("ep:"):
             continue
-        rows.append({
+        row = {
             "name": name,
             "path": str(plugin_dir / name),
             "trust_ref": name,
@@ -1044,11 +1301,13 @@ def get_plugin_trust_rows() -> list[dict]:
             "hash_prefix": str(records[name].get("sha256", ""))[:12],
             "sha256": str(records[name].get("sha256", "")),
             "reason": "trusted manifest entry has no file on disk",
-        })
+        }
+        row.update(_plugin_contract_inventory(plugin_dir / name, records.get(name)))
+        rows.append(row)
 
     for ep_info in _discover_entrypoint_plugins():
         status, detail = _entrypoint_trust_status(ep_info, records)
-        rows.append({
+        row = {
             "name": ep_info["trust_key"],
             "path": ep_info["module"],
             "trust_ref": ep_info["trust_key"],
@@ -1056,7 +1315,17 @@ def get_plugin_trust_rows() -> list[dict]:
             "hash_prefix": str(ep_info.get("sha256", ""))[:12],
             "sha256": str(ep_info.get("sha256", "")),
             "reason": detail,
+        }
+        row.update({
+            "api_version": ep_info.get("api_version"),
+            "capability_schema": ep_info.get("capability_schema"),
+            "capabilities": ep_info.get("capabilities", {}),
+            "contract_status": (
+                "declared" if ep_info.get("capabilities") is not None
+                else "not available before import"
+            ),
         })
+        rows.append(row)
     return rows
 
 
@@ -1132,18 +1401,27 @@ def _load_plugins() -> list[str]:
                     mod = importlib.util.module_from_spec(spec)
                     code = compile(source_bytes, str(py), "exec")
                     exec(code, mod.__dict__)
-                    if hasattr(mod, "register"):
-                        capabilities = mod.register({"app_version": APP_VERSION})
-                        registered = _register_plugin_capabilities(py.stem, capabilities)
-                        details = []
-                        if registered.get("decoders"):
-                            details.append("decoders=" + ",".join(registered["decoders"]))
-                        if registered.get("encoders"):
-                            details.append("encoders=" + ",".join(registered["encoders"]))
-                        if registered.get("storage"):
-                            details.append("storage=" + ",".join(registered["storage"]))
-                        if details:
-                            print(f"[plugins] {py.name}: registered {'; '.join(details)}")
+                    register_fn = getattr(mod, "register", None)
+                    if not callable(register_fn):
+                        raise ValueError("plugin must expose callable register(opts)")
+                    capabilities = register_fn({
+                        "app_version": APP_VERSION,
+                        "plugin_api_version": PLUGIN_API_VERSION,
+                        "capability_schema": PLUGIN_CAPABILITY_SCHEMA,
+                    })
+                    capabilities = _plugin_payload_with_module_contract(mod, capabilities)
+                    registered = _register_plugin_capabilities(py.stem, capabilities)
+                    details = []
+                    if registered.get("decoders"):
+                        details.append("decoders=" + ",".join(registered["decoders"]))
+                    if registered.get("encoders"):
+                        details.append("encoders=" + ",".join(registered["encoders"]))
+                    if registered.get("storage"):
+                        details.append("storage=" + ",".join(registered["storage"]))
+                    if registered.get("capabilities", {}).get("network"):
+                        details.append("network=true")
+                    if details:
+                        print(f"[plugins] {py.name}: registered {'; '.join(details)}")
                     loaded.append(py.stem)
             except Exception as e:
                 print(f"[plugins] failed to load {py.name}: {e}", file=sys.stderr)
@@ -1160,8 +1438,15 @@ def _load_plugins() -> list[str]:
             else:
                 register_fn = getattr(mod, "register", None)
             if callable(register_fn):
-                capabilities = register_fn({"app_version": APP_VERSION})
+                capabilities = register_fn({
+                    "app_version": APP_VERSION,
+                    "plugin_api_version": PLUGIN_API_VERSION,
+                    "capability_schema": PLUGIN_CAPABILITY_SCHEMA,
+                })
+                capabilities = _plugin_payload_with_module_contract(mod, capabilities)
                 _register_plugin_capabilities(ep_info["name"], capabilities)
+            else:
+                raise ValueError("entry-point plugin must expose callable register(opts)")
             loaded.append(ep_info["name"])
             print(f"[plugins] entry-point: loaded {ep_info['name']} ({ep_info['package']})")
         except Exception as e:
@@ -6809,6 +7094,12 @@ def _build_support_bundle_payload(settings_snapshot: dict | None = None) -> dict
         "formats": _format_support_payload(),
         "format_capability_matrix": build_format_capability_matrix(),
         "plugins": {
+            "contract": {
+                "api_version": PLUGIN_API_VERSION,
+                "capability_schema": PLUGIN_CAPABILITY_SCHEMA,
+                "trust_schema": PLUGIN_TRUST_SCHEMA,
+                "network_policy": "storage plugins must declare network=true for remote schemes",
+            },
             "trust_rows": _plugin_trust_payload(),
             "loaded_capabilities": PLUGIN_CAPABILITIES,
         },
@@ -7340,15 +7631,17 @@ class PluginTrustDialog(QDialog):
         self.empty_label.setVisible(False)
         layout.addWidget(self.empty_label)
 
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels([
-            self.tr("Plugin"), self.tr("Path"), self.tr("Status"), self.tr("Hash (first 12)"), self.tr("Reason")
+            self.tr("Plugin"), self.tr("Path"), self.tr("Status"), self.tr("Hash (first 12)"),
+            self.tr("Reason"), self.tr("Contract"),
         ])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAccessibleName(self.tr("Plugin trust inventory"))
         self.table.setAccessibleDescription(self.tr(
-            "Installed plugin files with a short hash and the full SHA-256 available on hover"
+            "Installed plugin files with trust, API, capability, and network declarations; "
+            "the full SHA-256 is available on hover"
         ))
         _configure_inventory_table(self.table)
         self.table.itemSelectionChanged.connect(self._update_actions)
@@ -7449,10 +7742,36 @@ class PluginTrustDialog(QDialog):
         self._rows = list(rows)
         self.table.setRowCount(len(self._rows))
         for row_idx, row in enumerate(self._rows):
-            for col_idx, key in enumerate(("name", "path", "status", "hash_prefix", "reason")):
-                item = QTableWidgetItem(str(row.get(key, "")))
+            capabilities = row.get("capabilities")
+            if isinstance(capabilities, dict):
+                hook_parts = []
+                for key in ("decoders", "encoders", "storage"):
+                    values = capabilities.get(key) or []
+                    if values:
+                        hook_parts.append(f"{key}={','.join(map(str, values))}")
+                network = capabilities.get("network")
+                hook_parts.append(f"network={'on' if network is True else 'off' if network is False else '?'}")
+                contract = (
+                    f"API {row.get('api_version') or '?'} / schema "
+                    f"{row.get('capability_schema') or '?'}; "
+                    f"{'; '.join(hook_parts) if hook_parts else 'no hooks'}"
+                )
+            else:
+                contract = "unavailable"
+            values = {
+                "name": row.get("name", ""),
+                "path": row.get("path", ""),
+                "status": row.get("status", ""),
+                "hash_prefix": row.get("hash_prefix", ""),
+                "reason": row.get("reason", ""),
+                "contract": contract,
+            }
+            for col_idx, key in enumerate(("name", "path", "status", "hash_prefix", "reason", "contract")):
+                item = QTableWidgetItem(str(values[key]))
                 if key == "hash_prefix":
                     item.setToolTip(str(row.get("sha256") or row.get(key, "")))
+                elif key == "contract":
+                    item.setToolTip(str(capabilities or row.get("contract_status", "")))
                 else:
                     item.setToolTip(str(row.get(key, "")))
                 self.table.setItem(row_idx, col_idx, item)
@@ -12865,7 +13184,7 @@ PERSISTED_STATE_SCHEMAS = {
         "schema_version": PLUGIN_TRUST_SCHEMA,
         "storage": "JSON",
         "legacy_versions": [0, 1],
-        "migration": "accept schema and rewrite the canonical schema_version key",
+        "migration": "preserve trust hashes and rewrite schema 1 records with the canonical schema_version key",
         "newer": "ignore the manifest and preserve it",
         "corrupt": "quarantine and require trust decisions again",
     },

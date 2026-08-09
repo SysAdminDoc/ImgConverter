@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 
@@ -30,6 +31,8 @@ def test_entrypoint_discovery_reports_metadata_failures(monkeypatch):
 def _plugin_source(marker, text):
     return (
         "from pathlib import Path\n"
+        "PLUGIN_API_VERSION = 1\n"
+        "PLUGIN_CAPABILITIES = {'decoders': [], 'encoders': [], 'storage': [], 'network': False}\n"
         "def register(opts):\n"
         f"    Path({str(marker)!r}).write_text({text!r}, encoding='utf-8')\n"
     )
@@ -313,6 +316,14 @@ def test_trusted_plugin_registers_decoder_encoder_and_storage(tmp_workdir, monke
 from pathlib import Path
 from PIL import Image
 
+PLUGIN_API_VERSION = 1
+PLUGIN_CAPABILITIES = {
+    'decoders': ['.demo'],
+    'encoders': ['demoout'],
+    'storage': ['mem'],
+    'network': False,
+}
+
 class DemoDecoder:
     extensions = {'.demo'}
     def open(self, src):
@@ -360,6 +371,113 @@ def register(opts):
     assert encoded.dst.suffix == ".demoout"
     assert encoded.dst.read_text(encoding="utf-8") == "5x2 q=81"
     assert any("plugin encoder: demoout" in w for w in encoded.warnings)
+
+
+def test_plugin_contract_rejects_incompatible_api_without_mutating_registry(monkeypatch):
+    import imgconverter
+
+    class Decoder:
+        extensions = {".bad"}
+
+        def open(self, _src):
+            return Image.new("RGB", (1, 1)), {}
+
+    imgconverter._reset_plugin_registry()
+    with pytest.raises(ValueError, match="unsupported plugin API version"):
+        imgconverter._register_plugin_capabilities(
+            "bad",
+            {
+                "api_version": 99,
+                "capabilities": {
+                    "decoders": [".bad"],
+                    "encoders": [],
+                    "storage": [],
+                    "network": False,
+                },
+                "decoders": [Decoder()],
+            },
+        )
+    assert imgconverter.PLUGIN_DECODERS == {}
+    assert imgconverter.PLUGIN_CAPABILITIES == {}
+
+
+def test_plugin_contract_rejects_incomplete_capability_declaration():
+    import imgconverter
+
+    class Decoder:
+        extensions = {".bad"}
+
+        def open(self, _src):
+            return Image.new("RGB", (1, 1)), {}
+
+    imgconverter._reset_plugin_registry()
+    with pytest.raises(ValueError, match="does not match registered decoders"):
+        imgconverter._register_plugin_capabilities(
+            "bad",
+            {
+                "api_version": imgconverter.PLUGIN_API_VERSION,
+                "capabilities": {
+                    "decoders": [],
+                    "encoders": [],
+                    "storage": [],
+                    "network": False,
+                },
+                "decoders": [Decoder()],
+            },
+        )
+    assert imgconverter.PLUGIN_DECODERS == {}
+    assert imgconverter.PLUGIN_CAPABILITIES == {}
+
+
+def test_plugin_network_storage_capability_is_in_support_inventory():
+    import imgconverter
+
+    class Storage:
+        scheme = "s3"
+
+        def write(self, _src, _dst_uri):
+            return True
+
+    imgconverter._reset_plugin_registry()
+    summary = imgconverter._register_plugin_capabilities(
+        "remote",
+        {
+            "api_version": imgconverter.PLUGIN_API_VERSION,
+            "capabilities": {
+                "decoders": [],
+                "encoders": [],
+                "storage": ["s3"],
+                "network": True,
+            },
+            "storage": [Storage()],
+        },
+    )
+    assert summary["capabilities"]["network"] is True
+    assert "Plugin network access remote" in imgconverter.get_plugin_capability_summary()
+    support = imgconverter._build_support_bundle_payload()
+    assert support["plugins"]["contract"]["api_version"] == imgconverter.PLUGIN_API_VERSION
+    assert support["plugins"]["loaded_capabilities"]["remote"]["capabilities"]["network"] is True
+
+
+def test_plugin_review_inventory_reads_declarations_without_execution(tmp_workdir, monkeypatch):
+    import imgconverter
+
+    plugin_dir = tmp_workdir / "plugins"
+    plugin_dir.mkdir()
+    plugin = plugin_dir / "04-remote.py"
+    plugin.write_text(
+        "PLUGIN_API_VERSION = 1\n"
+        "PLUGIN_CAPABILITIES = {'decoders': [], 'encoders': [], 'storage': ['s3'], 'network': True}\n"
+        "def register(opts):\n    return {'storage': []}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(imgconverter, "_plugin_dir", lambda: plugin_dir)
+
+    row = imgconverter.get_plugin_trust_rows()[0]
+    assert row["contract_status"] == "declared"
+    assert row["api_version"] == imgconverter.PLUGIN_API_VERSION
+    assert row["capabilities"]["storage"] == ["s3"]
+    assert row["capabilities"]["network"] is True
 
 
 def test_symlink_plugin_rejected_on_trust(tmp_workdir, monkeypatch):

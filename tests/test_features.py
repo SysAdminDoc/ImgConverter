@@ -2902,6 +2902,11 @@ class TestWatchProfilePersistence:
             "hash_prefix": digest[:12],
             "sha256": digest,
             "reason": "review required",
+            "api_version": 1,
+            "capability_schema": 1,
+            "capabilities": {
+                "decoders": [], "encoders": [], "storage": ["s3"], "network": True,
+            },
         }])
         dialog = imgconverter.PluginTrustDialog()
         try:
@@ -2909,6 +2914,9 @@ class TestWatchProfilePersistence:
             assert dialog.table.horizontalHeaderItem(3).text() == "Hash (first 12)"
             assert dialog.table.item(0, 3).text() == digest[:12]
             assert dialog.table.item(0, 3).toolTip() == digest
+            assert dialog.table.horizontalHeaderItem(5).text() == "Contract"
+            assert "storage=s3" in dialog.table.item(0, 5).text()
+            assert "network=on" in dialog.table.item(0, 5).text()
         finally:
             dialog.close()
             dialog.deleteLater()

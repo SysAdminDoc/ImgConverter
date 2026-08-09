@@ -14,6 +14,7 @@ All notable changes to ImgConverter will be documented in this file.
 - Added a Qt runtime localization pipeline with OS/explicit GUI locale selection, persisted restart-safe language preferences, Spanish `.ts`/`.qm` catalogs, accessibility coverage, and reproducible Linguist extraction/compile tooling.
 - Added unified persisted-state schema contracts and migrations for settings, presets, history, watch profiles, plugin trust, queues, journals, and the conversion cache, including safe newer-schema handling and corrupt-state quarantine.
 - Added versioned performance evidence to JSON reports, backend benchmarks, and support bundles with redacted paths, dimensions, byte/timing/warning fields, native-codec inventory, and an optional Python allocation sample.
+- Added a versioned plugin API and capability contract with atomic registration validation, explicit network/storage declarations, schema-2 trust-manifest migration, and review/support inventory coverage.
 
 ## [v3.7.0] — 2026-08-03
 
