@@ -22,7 +22,7 @@ def test_release_gate_reads_source_version_and_builds_pypi_sbom():
         {"name": "Pillow", "version": "12.3.0"},
     ])
 
-    assert version == "3.9.1"
+    assert version == "3.9.2"
     assert sbom["schema_version"] == gate.GATE_SCHEMA_VERSION
     assert sbom["components"][0]["purl"] == "pkg:pypi/pillow/12.3.0"
     assert sbom["components"][1]["purl"] == "pkg:pypi/pyqt6-qt6/6.10.0"

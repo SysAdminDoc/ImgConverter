@@ -4,6 +4,12 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [Unreleased]
 
+## [v3.9.2] — 2026-08-09
+
+### Changed
+
+- Synchronized release metadata after draining the active roadmap.
+
 ## [v3.9.1] — 2026-08-08
 
 ### Changed
