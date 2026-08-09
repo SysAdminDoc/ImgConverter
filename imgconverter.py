@@ -3833,6 +3833,20 @@ def _convert_animated_or_sequence(
                     frames.append(
                         _apply_multiframe_transforms(source_frame, dict(meta), opts, result)
                     )
+                if fmt_pil == "PNG" and len({frame.mode for frame in frames}) > 1:
+                    # Pillow's APNG writer requires compatible frame modes. GIF
+                    # inputs commonly expose a palette first frame followed by
+                    # RGB frames, so normalize the sequence before saving.
+                    has_alpha = any(
+                        frame.mode in ("RGBA", "LA", "PA")
+                        or "transparency" in frame.info
+                        for frame in frames
+                    )
+                    output_mode = "RGBA" if has_alpha else "RGB"
+                    frames = [
+                        frame if frame.mode == output_mode else frame.convert(output_mode)
+                        for frame in frames
+                    ]
                 dst = dest_dir / f"{src.stem}{ext}"
                 if opts.name_template:
                     dst = _multiframe_output_path(src, dest_dir, ext, opts, 1, frames[0].size)
