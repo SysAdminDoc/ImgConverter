@@ -1,27 +1,9 @@
 # ImgConverter Roadmap
 
-**Current version:** v3.7.0 (released 2026-08-03) · **Roadmap revision:** 2026-08-03
+Actionable work only. Historical and completed roadmap material is archived in CHANGELOG.md; blocked work is kept in Roadmap_Blocked.md.
 
-## Working Rules
+## Actionable Items
 
-- Keep `ROADMAP.md` actionable-only. Do not store completed items here.
-- Move true blockers to `Roadmap_Blocked.md`.
-- When a blocker is resolved, move it back here and implement it in priority order.
-- Record completed work in `CHANGELOG.md` and git history.
+- [ ] Move true blockers to `Roadmap_Blocked.md`.
 
-## Deep-Audit Backlog (2026-07-16)
-
-Findings from a five-agent deep audit of v3.6.0. Every item below was verified
-reachable against the current source before being listed (high-false-positive
-areas were re-checked; rejected suspicions are not listed). Line numbers refer
-to `imgconverter.py` at commit `53fb9a3`.
-
-### P1 — Broken flagship behavior / security
-
-### P2 — Correctness / reliability
-
-### P3 — Edge cases, polish, maintainability
-
-### Audited and found sound (do not re-chase)
-
-Verified non-issues this pass: subprocess calls are all list-form/shell=False (no injection); `_write_text_atomic` is a correct atomic pattern; template/prefix path-traversal guards hold; plugin symlink/hash pinning works as documented (except items above); c2pa-python SDK path already uses `Reader.try_create` + `get_validation_state()` (the researched `is_valid()` claim was fixed in v3.4.0); QSettings bool/combo restores are range-checked; pause/stop deadlock, countdown escape routes, log growth caps, stale-scan guards, dedup-dialog escape semantics all correct; stylesheet colors flow from CAT tokens.
+- [ ] When a blocker is resolved, move it back here and implement it in priority order.

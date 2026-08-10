@@ -582,3 +582,56 @@ The roadmap's "Now" tier — 24 items shipped against a 2026-05-17 plan.
 - Added: Atomic writes, output validation, dark title bar, presets, smart option visibility, log context menu, overlap guard, speed stats
 - Added: Image resize, filename prefix/suffix, progressive JPEG, lossless WebP, recent dirs, dark scrollbars
 - Added: Drag & drop, format filter, skip existing, EXIF auto-rotate, ETA progress, tray notifications, log export, PyInstaller CI/CD
+
+## Roadmap archive — 2026-08-10 — ROADMAP.md
+
+<details>
+<summary>Original roadmap snapshot</summary>
+
+```markdown
+# ImgConverter Roadmap
+
+**Current version:** v3.7.0 (released 2026-08-03) · **Roadmap revision:** 2026-08-03
+
+## Working Rules
+
+- Keep `ROADMAP.md` actionable-only. Do not store completed items here.
+- Move true blockers to `Roadmap_Blocked.md`.
+- When a blocker is resolved, move it back here and implement it in priority order.
+- Record completed work in `CHANGELOG.md` and git history.
+
+## Deep-Audit Backlog (2026-07-16)
+
+Findings from a five-agent deep audit of v3.6.0. Every item below was verified
+reachable against the current source before being listed (high-false-positive
+areas were re-checked; rejected suspicions are not listed). Line numbers refer
+to `imgconverter.py` at commit `53fb9a3`.
+
+### P1 — Broken flagship behavior / security
+
+### P2 — Correctness / reliability
+
+### P3 — Edge cases, polish, maintainability
+
+### Audited and found sound (do not re-chase)
+
+Verified non-issues this pass: subprocess calls are all list-form/shell=False (no injection); `_write_text_atomic` is a correct atomic pattern; template/prefix path-traversal guards hold; plugin symlink/hash pinning works as documented (except items above); c2pa-python SDK path already uses `Reader.try_create` + `get_validation_state()` (the researched `is_valid()` claim was fixed in v3.4.0); QSettings bool/combo restores are range-checked; pause/stop deadlock, countdown escape routes, log growth caps, stale-scan guards, dedup-dialog escape semantics all correct; stylesheet colors flow from CAT tokens.
+
+## Research-Driven Additions
+
+Research pass completed 2026-08-08. These are net-new items after comparison
+with the live source, this roadmap, and `Roadmap_Blocked.md`. See the matching
+RD identifiers in `RESEARCH.md`.
+
+### P0
+
+_No new P0 item is justified by this research pass._
+
+### P1
+
+### P2
+
+### P3
+```
+
+</details>
