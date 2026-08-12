@@ -4,6 +4,13 @@ All notable changes to ImgConverter will be documented in this file.
 
 ## [Unreleased]
 
+## [v3.9.3] — 2026-08-12
+
+### Changed
+
+- Drained the actionable roadmap after confirming remaining work is already captured in `Roadmap_Blocked.md`.
+- Synchronized release metadata and recorded the local baseline verification results.
+
 ## [v3.9.2] — 2026-08-09
 
 ### Changed
